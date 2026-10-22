@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-18T10:12:00Z",
+  "generatedAt": "2026-10-22T22:12:00Z",
   "title": "Design System: Folio",
   "extensions": {
     "colorMeta": {
@@ -73,6 +73,14 @@
     ]
   },
   "components": [
+    {
+      "name": "Writing Setting",
+      "kind": "input",
+      "refersTo": "writing-setting",
+      "description": "A compact semantic field for PDF text size or pen width.",
+      "html": "<label class=\"ds-writing-setting\">Text size (pt)<input type=\"number\" min=\"6\" max=\"96\" value=\"14\"/></label>",
+      "css": ".ds-writing-setting{display:flex;align-items:center;justify-content:space-between;gap:9px;color:var(--secondary,#4a5c77);font:11px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.ds-writing-setting input{width:77px;min-height:33px;padding:5px 9px;border:1px solid var(--control-border,#8191a8);border-radius:5px;background:var(--input-bg,#fcfdff);color:var(--ink,#293241);font:inherit;font-variant-numeric:tabular-nums}.ds-writing-setting input:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:3px}"
+    },
     {
       "name": "Primary Button",
       "kind": "button",

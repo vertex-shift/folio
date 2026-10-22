@@ -4,6 +4,7 @@ import { TextLayer } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PageViewport, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import { errorMessage, selectionQuads } from "../lib/geometry";
 import { findMatches, mapText } from "../lib/search";
+import { isRecord } from "../lib/navigation";
 import type { AnnotationInfo, Point, Quad, Tool, Zoom } from "../lib/types";
 
 interface Props {
@@ -22,6 +23,11 @@ interface Props {
   onScale(scale: number): void;
   onHighlight(quads: Quad[], text: string): void;
   onNote(point: Point): void;
+  onText(rect: [number, number, number, number]): void;
+  onInk(points: Point[]): void;
+  onLink(destination: unknown, url: string | null): void;
+  penColor: string;
+  penWidth: number;
   onAnnotation(id: string): void;
   onError(message: string): void;
 }
@@ -78,6 +84,9 @@ export default function PdfPage(props: Props) {
   const [failure, setFailure] = useState<string | null>(null);
   const [searchRects, setSearchRects] = useState<SearchRect[]>([]);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [links, setLinks] = useState<{ rect: number[]; destination: unknown; url: string | null }[]>([]);
+  const [stroke, setStroke] = useState<Point[]>([]);
+  const strokeRef = useRef<Point[]>([]);
   const customScale = props.zoom.mode === "custom" ? props.zoom.scale : 1;
 
   useEffect(() => {
@@ -88,6 +97,9 @@ export default function PdfPage(props: Props) {
     setFailure(null);
     setLayout(null);
     setSelection(null);
+    setLinks([]);
+    strokeRef.current = [];
+    setStroke([]);
 
     async function draw() {
       const page = await props.pdf.getPage(props.page + 1);
@@ -135,6 +147,16 @@ export default function PdfPage(props: Props) {
       await layer.render();
       if (cancelled) return;
       const items = content.items.filter((item) => "str" in item);
+      const annotations: unknown[] = await page.getAnnotations({ intent: "display" });
+      if (cancelled) return;
+      const links = annotations.filter((item) => isRecord(item) && item.annotationType === 2);
+      setLinks(links.map((item) => {
+        if (!isRecord(item) || !Array.isArray(item.rect) || item.rect.length !== 4
+          || !item.rect.every((value) => typeof value === "number" && Number.isFinite(value))) {
+          throw new Error("A document link has invalid page coordinates.");
+        }
+        return { rect: item.rect, destination: item.dest, url: typeof item.url === "string" ? item.url : null };
+      }));
       setLayout({ viewport, layer, text: mapText(items) });
       setLoading(false);
     }
@@ -192,10 +214,12 @@ export default function PdfPage(props: Props) {
 
   useEffect(() => {
     setSelection(null);
+    strokeRef.current = [];
+    setStroke([]);
   }, [props.tool]);
 
   function captureSelection(autoHighlight: boolean) {
-    if (props.disabled || !layout || !paperRef.current || props.tool === "hand" || props.tool === "note") return;
+    if (props.disabled || !layout || !paperRef.current || !["select", "highlight"].includes(props.tool)) return;
     const current = window.getSelection();
     if (!current || current.isCollapsed || !current.rangeCount) {
       setSelection(null);
@@ -227,6 +251,13 @@ export default function PdfPage(props: Props) {
     });
   }
 
+  function localPoint(event: { clientX: number; clientY: number }): Point {
+    const rect = paperRef.current?.getBoundingClientRect();
+    if (!rect) throw new Error("The PDF page is not ready.");
+    return [Math.max(0, Math.min(size.width, event.clientX - rect.left)),
+      Math.max(0, Math.min(size.height, event.clientY - rect.top))];
+  }
+
   return (
     <div
       ref={paperRef}
@@ -236,7 +267,39 @@ export default function PdfPage(props: Props) {
       aria-label={`PDF page ${props.page + 1}`}
       aria-busy={loading}
       data-page={props.page + 1}
-      onPointerUp={() => {
+      onPointerDown={(event) => {
+        if (props.tool !== "ink" || props.disabled || !layout || event.button !== 0
+          || event.target instanceof Element && event.target.closest("button")) return;
+        event.preventDefault();
+        strokeRef.current = [localPoint(event)];
+        setStroke(strokeRef.current);
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={(event) => {
+        if (!strokeRef.current.length || props.tool !== "ink") return;
+        const point = localPoint(event);
+        const last = strokeRef.current.at(-1);
+        if (last && Math.hypot(point[0] - last[0], point[1] - last[1]) < 1) return;
+        if (strokeRef.current.length >= 20_000) {
+          strokeRef.current = []; setStroke([]);
+          props.onError("This stroke is too long. Draw several shorter strokes.");
+          return;
+        }
+        strokeRef.current = [...strokeRef.current, point];
+        setStroke(strokeRef.current);
+      }}
+      onPointerCancel={() => { strokeRef.current = []; setStroke([]); }}
+      onPointerUp={(event) => {
+        if (strokeRef.current.length && layout) {
+          const points = strokeRef.current;
+          strokeRef.current = []; setStroke([]);
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+          if (points.length >= 2) props.onInk(points.map(([x, y]) => {
+            const point = layout.viewport.convertToPdfPoint(x, y);
+            return [point[0], point[1]];
+          }));
+          return;
+        }
         requestAnimationFrame(() => {
           try { captureSelection(true); } catch (error) { props.onError(errorMessage(error)); }
         });
@@ -245,13 +308,38 @@ export default function PdfPage(props: Props) {
         try { captureSelection(false); } catch (error) { props.onError(errorMessage(error)); }
       }}
       onClick={(event) => {
-        if (props.tool !== "note" || props.disabled || !layout || event.target instanceof Element && event.target.closest("button")) return;
-        const rectangle = event.currentTarget.getBoundingClientRect();
-        const point = layout.viewport.convertToPdfPoint(event.clientX - rectangle.left, event.clientY - rectangle.top);
-        if (Number.isFinite(point[0]) && Number.isFinite(point[1])) props.onNote([point[0], point[1]]);
+        if (!["note", "text"].includes(props.tool) || props.disabled || !layout || event.target instanceof Element && event.target.closest("button")) return;
+        const [x, y] = localPoint(event);
+        if (props.tool === "note") {
+          const point = layout.viewport.convertToPdfPoint(x, y);
+          if (Number.isFinite(point[0]) && Number.isFinite(point[1])) props.onNote([point[0], point[1]]);
+        } else {
+          const scale = layout.viewport.scale * layout.viewport.userUnit;
+          const width = Math.min(300 * scale, size.width - 8 * scale);
+          const height = Math.min(150 * scale, size.height - 8 * scale);
+          const left = Math.max(0, Math.min(x, size.width - width));
+          const top = Math.max(0, Math.min(y, size.height - height));
+          const a = layout.viewport.convertToPdfPoint(left, top);
+          const b = layout.viewport.convertToPdfPoint(left + width, top + height);
+          props.onText([Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]);
+        }
       }}
     >
       <div ref={hostRef} className="page-content" />
+      {layout && links.map((link, index) => {
+        const a = layout.viewport.convertToViewportPoint(link.rect[0], link.rect[1]);
+        const b = layout.viewport.convertToViewportPoint(link.rect[2], link.rect[3]);
+        return <button className="pdf-link" key={index} disabled={props.tool !== "select"}
+          style={{ left: Math.min(a[0], b[0]), top: Math.min(a[1], b[1]), width: Math.abs(a[0] - b[0]), height: Math.abs(a[1] - b[1]) }}
+          title={link.url ? `Open link: ${link.url}` : "Go to document destination"}
+          aria-label={link.url ? `Open link: ${link.url}` : `Go to document link ${index + 1}`}
+          onClick={(event) => { event.stopPropagation(); props.onLink(link.destination, link.url); }}
+        />;
+      })}
+      {stroke.length > 0 && <svg className="ink-preview" width={size.width} height={size.height} aria-hidden="true">
+        <polyline points={stroke.map(([x, y]) => `${x},${y}`).join(" ")} fill="none" stroke={props.penColor}
+          strokeWidth={props.penWidth * (layout?.viewport.scale ?? 1) * (layout?.viewport.userUnit ?? 1)} strokeLinecap="round" strokeLinejoin="round" />
+      </svg>}
       {searchRects.map((rectangle, index) => (
         <span key={index} data-search-index={rectangle.index}
           className={`search-mark ${rectangle.index === props.activeMatch ? "current" : ""}`}

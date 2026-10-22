@@ -6,6 +6,7 @@ import {
   MessageSquarePlus, Minus, MousePointer2, PanelLeft, PanelLeftClose,
   PanelRightClose, Plus, Redo2, RotateCcw, RotateCw, ScanLine, Search,
   ShieldCheck, Trash2, Undo2, X,
+  Bookmark, FilePlus2, FileInput, FileOutput, Pencil, Type, SquarePen, ExternalLink,
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -14,25 +15,40 @@ import Dialog from "./components/Dialog";
 import IconButton from "./components/IconButton";
 import AppearancePicker from "./components/AppearancePicker";
 import PdfPage, { Thumbnail } from "./components/PdfPage";
+import BookmarksPanel from "./components/BookmarksPanel";
 import { bridge, native, runtimeIssue } from "./lib/bridge";
 import { errorMessage, formatBytes, pageFromInput } from "./lib/geometry";
 import { loadPdf } from "./lib/pdf";
 import { useSearch } from "./lib/useSearch";
+import { PAGE_SIZES, parsePageRange, parseWritingNumber, rgbFromHex } from "./lib/pages";
+import { destinationPage, safeExternalUrl } from "./lib/navigation";
 import type { DocumentInfo, Edit, Mode, Panel, Point, Quad, Tool, Zoom } from "./lib/types";
 
 type Action = { type: "open" | "example" | "close" }
-  | { type: "file"; file: File } | { type: "path"; path: string };
+  | { type: "file"; file: File } | { type: "path"; path: string }
+  | { type: "create"; width: number; height: number };
 type Modal = { type: "shortcuts" | "about" }
   | { type: "unsaved"; action: Action }
   | { type: "delete"; page: number }
-  | { type: "note"; page: number; point: Point; text: string };
+  | { type: "note"; page: number; point: Point; text: string }
+  | { type: "text"; page: number; rect: [number, number, number, number]; text: string }
+  | { type: "edit-annotation"; id: string; text: string }
+  | { type: "create" | "blank"; size: keyof typeof PAGE_SIZES; landscape: boolean }
+  | { type: "extract"; range: string }
+  | { type: "external"; url: string };
 
 const quickTools = [
   { tool: "select", icon: MousePointer2, label: "Select text (V)" },
   { tool: "hand", icon: Hand, label: "Pan document (H)" },
   { tool: "highlight", icon: Highlighter, label: "Highlight text (M)" },
   { tool: "note", icon: MessageSquarePlus, label: "Add a note (N)" },
+  { tool: "text", icon: Type, label: "Add text (T)" },
+  { tool: "ink", icon: Pencil, label: "Draw with pen (D)" },
 ] as const;
+const panelLabels: Record<Panel, string> = {
+  tools: "Document tools", search: "Find in document", comments: "Comments",
+  bookmarks: "Bookmarks", write: "Writing tools",
+};
 
 function typingTarget(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
@@ -58,13 +74,20 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal | null>(null);
+  const pendingDraft = Boolean(modal && "text" in modal && modal.text.trim());
+  const pendingDraftRef = useRef(pendingDraft);
+  pendingDraftRef.current = pendingDraft;
   const [dragActive, setDragActive] = useState(false);
   const [draggedPage, setDraggedPage] = useState<number | null>(null);
   const [overPage, setOverPage] = useState<number | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 800, height: 740 });
+  const [textSize, setTextSize] = useState("14");
+  const [penWidth, setPenWidth] = useState("2");
+  const [writingColor, setWritingColor] = useState("#253b57");
   const viewerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const importRef = useRef<HTMLInputElement>(null);
   const infoRef = useRef(info);
   const pageRef = useRef(page);
   const busyRef = useRef(false);
@@ -153,12 +176,20 @@ export default function App() {
       case "file": await adopt(await bridge.openFile(action.file, true)); break;
       case "path": await adopt(await bridge.openPath(action.path, true)); break;
       case "close": await bridge.close(); break;
+      case "create":
+        await adopt(await bridge.create(action.width, action.height, true));
+        setMode("write"); setPanel("write"); setPanelOpen(true);
+        break;
     }
   }
 
   function requestAction(action: Action) {
     if (busyRef.current) {
       setToast("Wait for the current document action to finish.");
+      return;
+    }
+    if (pendingDraftRef.current) {
+      setError("Finish or cancel the current text or note before leaving this document.");
       return;
     }
     if (infoRef.current?.dirty) {
@@ -191,26 +222,29 @@ export default function App() {
   }
 
   function chooseTool(next: Tool) {
-    if ((next === "highlight" || next === "note") && readOnly) {
+    if (!["select", "hand"].includes(next) && readOnly) {
       setError(info?.readOnlyReason ?? "This PDF is read-only.");
       return;
     }
     setTool(next);
     if (mode === "organize") setMode("read");
     if (next === "highlight" || next === "note") setMode("comment");
+    if (next === "text" || next === "ink") { setMode("write"); setPanel("write"); setPanelOpen(true); }
   }
 
   function changeMode(next: Mode) {
     setMode(next);
     setTool("select");
     if (next === "comment") { setPanel("comments"); setPanelOpen(true); }
+    if (next === "write") { setPanel("write"); setPanelOpen(true); }
   }
 
-  function edit(change: Edit, label: string) {
+  function edit(change: Edit, label: string, onSuccess?: () => void) {
     void run(label, async () => {
       const current = infoRef.current;
       if (!current) throw new Error("Open a PDF before editing.");
       await adopt(await bridge.edit(current, change));
+      onSuccess?.();
       if (change.type === "highlight") {
         setToast("Highlight added to the PDF.");
       } else if (change.type === "note") {
@@ -218,8 +252,43 @@ export default function App() {
         setPanel("comments"); setPanelOpen(true);
       } else if (change.type === "delete") {
         setToast("Page removed. Undo is available.");
+      } else if (change.type === "text" || change.type === "ink" || change.type === "set_annotation_text") {
+        setToast("Writing saved in the working PDF. Save a copy to keep it.");
       }
     });
+  }
+
+  function importPages(file?: File) {
+    if (!native && !file) { importRef.current?.click(); return; }
+    void run("Inserting PDF pages...", async () => {
+      const current = infoRef.current;
+      if (!current) throw new Error("Open or create a PDF before inserting pages.");
+      const at = pageRef.current + 1;
+      const next = file ? await bridge.importFile(current, file, at) : await bridge.import(current, at);
+      if (!next) return;
+      await adopt(next); setPage(at); setMode("organize");
+      setToast("PDF pages inserted. Undo is available.");
+    });
+  }
+
+  function navigateLink(destination: unknown, url: string | null) {
+    if (url) {
+      try { setModal({ type: "external", url: safeExternalUrl(url) }); }
+      catch (error) { setError(errorMessage(error)); }
+      return;
+    }
+    void run("Following document link...", async () => {
+      if (!pdf) throw new Error("Wait for the PDF to finish loading.");
+      const target = await destinationPage(pdf, destination);
+      setPage(target); setSelectedAnnotation(null); setMode("read");
+    });
+  }
+
+  function draw(points: Point[]) {
+    try {
+      edit({ type: "ink", page, points, color: rgbFromHex(writingColor),
+        width: parseWritingNumber(penWidth, 0.5, 12, "Pen width") }, "Saving drawing...");
+    } catch (error) { setError(errorMessage(error)); }
   }
 
   function highlight(quads: Quad[], text: string) {
@@ -273,6 +342,7 @@ export default function App() {
     }
     if (modal) return;
     switch (id) {
+      case "new": setModal({ type: "create", size: "letter", landscape: false }); break;
       case "open": open(); break;
       case "example": requestAction({ type: "example" }); break;
       case "save": save(false); break;
@@ -311,6 +381,15 @@ export default function App() {
   useEffect(() => setPageInput(String(page + 1)), [page]);
 
   useEffect(() => {
+    if (!native || !info) return;
+    let active = true;
+    void bridge.draft(info.id, pendingDraft).catch((error: unknown) => {
+      if (active) setError(`Native draft protection could not be updated: ${errorMessage(error)}`);
+    });
+    return () => { active = false; };
+  }, [info?.id, pendingDraft]);
+
+  useEffect(() => {
     if (panelOpen && panel === "search") searchRef.current?.focus();
   }, [panel, panelOpen]);
 
@@ -333,17 +412,18 @@ export default function App() {
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (infoRef.current?.dirty) { event.preventDefault(); event.returnValue = ""; }
+      if (infoRef.current?.dirty || pendingDraftRef.current) { event.preventDefault(); event.returnValue = ""; }
     };
     const keydown = (event: KeyboardEvent) => {
       const actions = actionRef.current;
       const key = event.key.toLowerCase();
       const mod = event.metaKey || event.ctrlKey;
       if (actions.hasModal) return;
-      if (mod && ["o", "s", "f", "z", "y", "+", "=", "-"].includes(key)) {
+      if (mod && ["o", "n", "s", "f", "z", "y", "+", "=", "-"].includes(key)) {
         if (typingTarget(event.target) && (key === "z" || key === "y")) return;
         event.preventDefault();
         if (key === "o") actions.open();
+        else if (key === "n") actions.menu("new");
         else if (key === "s") actions.save(event.shiftKey);
         else if (key === "f") actions.find();
         else if (key === "z" || key === "y") actions.history(event.shiftKey || key === "y");
@@ -355,6 +435,8 @@ export default function App() {
         if (key === "h") actions.tool("hand");
         if (key === "m") actions.tool("highlight");
         if (key === "n") actions.tool("note");
+        if (key === "t") actions.tool("text");
+        if (key === "d") actions.tool("ink");
         if (key === "escape") actions.escape();
       }
     };
@@ -434,6 +516,8 @@ export default function App() {
         if (file) requestAction({ type: "file", file });
         event.currentTarget.value = "";
       }} />
+    <input ref={importRef} className="file-input" type="file" accept=".pdf,application/pdf" aria-label="Choose PDF to insert"
+      onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) importPages(file); event.currentTarget.value = ""; }} />
 
     <header className="titlebar" data-tauri-drag-region={native || undefined}>
       <div className="brand" data-tauri-drag-region={native || undefined}>
@@ -442,7 +526,7 @@ export default function App() {
       <div className="document-tab" title={info?.name}>
         <FileText size={16} className="tab-file-icon" />
         <span>{info?.name ?? "PDF workspace"}</span>
-        {info?.dirty && <span className="unsaved-dot" aria-label="Unsaved changes" />}
+        {(info?.dirty || pendingDraft) && <span className="unsaved-dot" aria-label="Unsaved changes" />}
       </div>
       <IconButton label="Open another PDF" className="new-document" disabled={Boolean(busy)} onClick={open}><Plus size={18} /></IconButton>
       <div className="titlebar-space" data-tauri-drag-region={native || undefined} />
@@ -459,7 +543,7 @@ export default function App() {
         <PanelLeft size={17} /><span>All tools</span>
       </button>
       <nav className="mode-tabs" aria-label="Document workspace">
-        {([{ mode: "read", label: "Read", icon: BookOpen }, { mode: "comment", label: "Comment", icon: MessageSquare },
+        {([{ mode: "read", label: "Read", icon: BookOpen }, { mode: "write", label: "Write", icon: SquarePen }, { mode: "comment", label: "Comment", icon: MessageSquare },
           { mode: "organize", label: "Organize", icon: LayoutGrid }] as const).map((item) =>
           <button key={item.mode} className={mode === item.mode ? "selected" : ""}
             aria-label={item.label} title={item.label}
@@ -482,9 +566,9 @@ export default function App() {
     {info?.readOnlyReason && <div className="readonly-banner" role="status"><LockKeyhole size={15} />{info.readOnlyReason}</div>}
 
     <div className="workspace">
-      {panelOpen && <aside className={`tools-panel panel-${panel}`} aria-label={panel === "tools" ? "PDF tools" : panel === "search" ? "Search document" : "Comments"}>
+      {panelOpen && <aside className={`tools-panel panel-${panel}`} aria-label={panel === "tools" ? "PDF tools" : panelLabels[panel]}>
         <div className="panel-heading">
-          <h2>{panel === "tools" ? "Document tools" : panel === "search" ? "Find in document" : "Comments"}</h2>
+          <h2>{panelLabels[panel]}</h2>
           {panel === "comments" && <span className="count-badge">{info?.annotations.length ?? 0}</span>}
           <IconButton label="Close side panel" onClick={() => setPanelOpen(false)}><PanelLeftClose size={16} /></IconButton>
         </div>
@@ -499,6 +583,8 @@ export default function App() {
             <button className={tool === "note" ? "chosen" : ""} disabled={editDisabled} onClick={() => chooseTool("note")}>
               <span className="tool-icon violet"><MessageSquarePlus size={19} /></span><span>Add a note</span><ChevronRight size={14} className="list-arrow" />
             </button>
+            <button disabled={editDisabled} onClick={() => chooseTool("text")}><span className="tool-icon blue"><Type size={19} /></span><span>Add text</span><ChevronRight size={14} className="list-arrow" /></button>
+            <button disabled={editDisabled} onClick={() => chooseTool("ink")}><span className="tool-icon violet"><Pencil size={19} /></span><span>Draw with pen</span><ChevronRight size={14} className="list-arrow" /></button>
             <button className={mode === "organize" ? "chosen" : ""} disabled={disabled} onClick={() => changeMode("organize")}>
               <span className="tool-icon teal"><LayoutGrid size={19} /></span><span>Organize pages</span><ChevronRight size={14} className="list-arrow" />
             </button>
@@ -509,6 +595,7 @@ export default function App() {
             <button disabled={Boolean(busy)} onClick={open}>
               <span className="tool-icon neutral"><FolderOpen size={18} /></span><span>Open PDF</span><kbd>Cmd+O</kbd>
             </button>
+            <button disabled={Boolean(busy)} onClick={() => setModal({ type: "create", size: "letter", landscape: false })}><span className="tool-icon neutral"><FilePlus2 size={18} /></span><span>Create a PDF</span></button>
           </div>
           <div className="panel-spacer" />
           <div className="quick-tip"><Highlighter size={18} /><h3>A small mark. A useful memory.</h3>
@@ -516,6 +603,20 @@ export default function App() {
           </div>
           <button className="shortcuts-link" onClick={() => setModal({ type: "shortcuts" })}><Keyboard size={16} />Keyboard shortcuts</button>
         </>}
+        {panel === "bookmarks" && <BookmarksPanel pdf={pdf} disabled={disabled} onNavigate={navigateLink} />}
+        {panel === "write" && <div className="panel-scroll writing-settings">
+          <p>Add text or freehand marks without changing the original page content.</p>
+          <div className="writing-tool-buttons">
+            <button className={`button ${tool === "text" ? "primary" : "secondary"}`} disabled={editDisabled} onClick={() => chooseTool("text")}><Type size={16} />Add text</button>
+            <button className={`button ${tool === "ink" ? "primary" : "secondary"}`} disabled={editDisabled} onClick={() => chooseTool("ink")}><Pencil size={16} />Pen</button>
+          </div>
+          <label className="setting-field">Text size (pt)<input type="number" min="6" max="96" step="1" value={textSize} onChange={(event) => setTextSize(event.target.value)} disabled={editDisabled} /></label>
+          <label className="setting-field">Pen width (pt)<input type="number" min="0.5" max="12" step="0.5" value={penWidth} onChange={(event) => setPenWidth(event.target.value)} disabled={editDisabled} /></label>
+          <label className="setting-field">Writing color<input type="color" value={writingColor} onChange={(event) => setWritingColor(event.target.value)} disabled={editDisabled} /></label>
+          <p className="writing-hint">{tool === "text" ? "Click the page to place a text box. Text stays editable in Comments." : tool === "ink" ? "Drag on the page to draw. Each stroke can be removed or undone." : "Choose a writing tool, then work directly on the page."}</p>
+          <p>Text uses an embedded Noto Sans font and supports Latin, Greek, and Cyrillic. This does not rewrite existing PDF text.</p>
+          <button className="button secondary" onClick={() => showPanel("comments")}><MessageSquare size={15} />Review your marks</button>
+        </div>}
         {panel === "search" && <>
           <div className="search-controls">
             <label className="search-field"><Search size={16} /><input ref={searchRef} aria-label="Search PDF text" value={query} maxLength={200}
@@ -553,13 +654,14 @@ export default function App() {
             {info?.annotations.map((annotation) =>
               <article className={`comment-item ${selectedAnnotation === annotation.id ? "selected" : ""}`} key={annotation.id}>
                 <div className="comment-author"><span className={`annotation-type ${annotation.kind}`}>
-                  {annotation.kind === "highlight" ? <Highlighter size={14} /> : <MessageSquare size={14} />}</span>
+                  {annotation.kind === "highlight" ? <Highlighter size={14} /> : annotation.kind === "text" ? <Type size={14} /> : annotation.kind === "ink" ? <Pencil size={14} /> : <MessageSquare size={14} />}</span>
                   <strong>{annotation.author}</strong>
+                  {annotation.editable && <IconButton label="Edit annotation text" disabled={editDisabled} onClick={() => setModal({ type: "edit-annotation", id: annotation.id, text: annotation.text })}><SquarePen size={13} /></IconButton>}
                   <IconButton label="Remove annotation" disabled={editDisabled || !annotation.deletable}
                     onClick={() => edit({ type: "remove_annotation", id: annotation.id }, "Removing annotation...")}><Trash2 size={13} /></IconButton>
                 </div>
                 <button className="comment-content" onClick={() => selectAnnotation(annotation.id)}>
-                  <span className="comment-kind">{annotation.kind === "highlight" ? "Highlighted text" : "Note"}</span>
+                  <span className="comment-kind">{{ highlight: "Highlighted text", note: "Note", text: "Placed text", ink: "Pen drawing" }[annotation.kind]}</span>
                   <p>{annotation.text || "Highlighted passage"}</p><span className="comment-page">Page {annotation.page + 1}<ChevronRight size={12} /></span>
                 </button>
               </article>)}
@@ -571,6 +673,12 @@ export default function App() {
         {mode === "organize" && info && pdf ? <>
           <div className="organize-heading"><div><h1>Every page in its place.</h1><p>Drag to reorder, or select a page and use the controls.</p></div>
             <button className="button secondary" onClick={() => changeMode("read")}><BookOpen size={15} />Back to document</button>
+          </div>
+          <div className="page-actions" role="toolbar" aria-label="Page authoring actions">
+            <button className="button secondary" disabled={editDisabled} onClick={() => setModal({ type: "blank", size: "letter", landscape: false })}><FilePlus2 size={15} />Blank page</button>
+            <button className="button secondary" disabled={editDisabled} onClick={() => importPages()}><FileInput size={15} />Insert PDF</button>
+            <button className="button secondary" disabled={editDisabled} onClick={() => edit({ type: "duplicate", page }, "Duplicating page...", () => setPage(page + 1))}><Copy size={15} />Duplicate</button>
+            <button className="button secondary" disabled={editDisabled} onClick={() => setModal({ type: "extract", range: String(page + 1) })}><FileOutput size={15} />Extract pages</button>
           </div>
           <div className="organize-toolbar"><span><strong>{info.pageCount}</strong> {info.pageCount === 1 ? "page" : "pages"}</span>
             <div className="organize-selection"><span>Page {page + 1} selected</span>
@@ -629,6 +737,8 @@ export default function App() {
                 query={panel === "search" && panelOpen ? query : ""} matchCase={matchCase}
                 activeMatch={currentMatch?.page === page ? currentMatch.index : -1}
                 onScale={onScale} onHighlight={highlight} onNote={(point) => setModal({ type: "note", page, point, text: "" })}
+                onText={(rect) => setModal({ type: "text", page, rect, text: "" })} onInk={draw} onLink={navigateLink}
+                penColor={writingColor} penWidth={Number.isFinite(Number(penWidth)) ? Math.max(0.5, Math.min(12, Number(penWidth))) : 2}
                 onAnnotation={selectAnnotation} onError={notifyError}
               /> : <div className="workspace-empty">
                 {busy ? <><LoaderCircle size={30} className="spin" /><h2>{busy}</h2><p>Your document stays on this device.</p></>
@@ -642,7 +752,7 @@ export default function App() {
             {quickTools.map((item, index) => <span key={item.tool}>
               {index === 2 && <span className="quick-tool-divider" />}
               <IconButton label={item.label} active={tool === item.tool}
-                disabled={disabled || readOnly && (item.tool === "highlight" || item.tool === "note")}
+                disabled={disabled || readOnly && !["select", "hand"].includes(item.tool)}
                 onClick={() => chooseTool(item.tool)}><item.icon size={19} />
                 {item.tool === "highlight" && <span className="highlighter-swatch" />}
               </IconButton>
@@ -678,6 +788,8 @@ export default function App() {
           </div>}
           {tool === "note" && !disabled && <div className="tool-instruction" role="status"><MessageSquarePlus size={14} />Click on the page to add a note.</div>}
           {tool === "highlight" && !disabled && <div className="tool-instruction" role="status"><Highlighter size={14} />Drag across text to highlight.</div>}
+          {tool === "text" && !disabled && <div className="tool-instruction" role="status"><Type size={14} />Click to place a text box.</div>}
+          {tool === "ink" && !disabled && <div className="tool-instruction" role="status"><Pencil size={14} />Drag to draw. Undo removes a stroke.</div>}
         </>}
         {busy && info && <div className="document-busy" role="status"><LoaderCircle size={14} className="spin" />{busy}</div>}
       </main>
@@ -697,6 +809,7 @@ export default function App() {
       <nav className="utility-rail" aria-label="Document panels">
         <IconButton label="Toggle page thumbnails" active={railOpen && mode !== "organize"} disabled={disabled} onClick={() => { setRailOpen((open) => !open); if (mode === "organize") setMode("read"); }}><FileText size={18} /></IconButton>
         <IconButton label="Show comments" active={panelOpen && panel === "comments"} disabled={disabled} onClick={() => showPanel("comments")}><MessageSquare size={18} />{Boolean(info?.annotations.length) && <span className="utility-dot" />}</IconButton>
+        <IconButton label="Show bookmarks" active={panelOpen && panel === "bookmarks"} disabled={disabled} onClick={() => showPanel("bookmarks")}><Bookmark size={18} /></IconButton>
         <IconButton label="Search document" active={panelOpen && panel === "search"} disabled={disabled} onClick={() => showPanel("search")}><Search size={18} /></IconButton>
         <span className="utility-spacer" />
         <IconButton label="Rotate current page clockwise" disabled={editDisabled} onClick={() => edit({ type: "rotate", page, degrees: 90 }, "Rotating page...")}><RotateCw size={18} /></IconButton>
@@ -704,20 +817,85 @@ export default function App() {
     </div>
 
     <footer className="statusbar">
-      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
+      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : pendingDraft ? <><span className="status-dot dirty" />Uncommitted writing</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
       <div className="document-status">{info && <><span>{info.pageCount} {info.pageCount === 1 ? "page" : "pages"}</span><span className="status-separator" /><span>{formatBytes(info.byteLength)}</span></>}</div>
       <div className="privacy-status"><ShieldCheck size={12} /><span>{runtimeIssue ? "Desktop runtime unavailable" : native ? "Local files. No uploads." : "Preview uses the real Rust engine"}</span></div>
     </footer>
 
     {dragActive && <div className="drop-overlay"><div><FolderOpen size={38} /><h2>Drop your PDF here.</h2><p>Open one document at a time.</p></div></div>}
-    {error && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
+    {error && !modal && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
     {toast && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
 
-    {modal?.type === "note" && <Dialog title={`A note on page ${modal.page + 1}`} busy={Boolean(busy)} onClose={() => setModal(null)}
+    {(modal?.type === "create" || modal?.type === "blank") && <Dialog title={modal.type === "create" ? "Create a PDF" : "Insert a blank page"} error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
+      actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Cancel</button>
+        <button className="button primary" disabled={Boolean(busy)} onClick={() => {
+          const size = PAGE_SIZES[modal.size];
+          const width = modal.landscape ? size.height : size.width;
+          const height = modal.landscape ? size.width : size.height;
+          if (modal.type === "create") { setModal(null); requestAction({ type: "create", width, height }); }
+          else edit({ type: "blank_page", at: page + 1, width, height }, "Inserting blank page...", () => { setModal(null); setPage(page + 1); });
+        }}><FilePlus2 size={15} />{modal.type === "create" ? "Create PDF" : "Insert page"}</button></>}>
+      <p>{modal.type === "create" ? "Start a new document, then add text, draw, or insert pages from another PDF." : `A new page will be inserted after page ${page + 1}.`}</p>
+      <label className="setting-field">Page size<select data-autofocus value={modal.size} onChange={(event) => {
+        if (event.target.value === "letter" || event.target.value === "a4") setModal({ ...modal, size: event.target.value });
+      }}>{Object.entries(PAGE_SIZES).map(([id, size]) => <option key={id} value={id}>{size.label}</option>)}</select></label>
+      <label className="checkbox-setting"><input type="checkbox" checked={modal.landscape} onChange={(event) => setModal({ ...modal, landscape: event.target.checked })} />Landscape orientation</label>
+    </Dialog>}
+
+    {modal?.type === "text" && <Dialog title={`Add text on page ${modal.page + 1}`} error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
+      actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Cancel</button>
+        <button className="button primary" disabled={Boolean(busy) || !modal.text.trim()} onClick={() => {
+          try {
+            edit({ type: "text", page: modal.page, rect: modal.rect, text: modal.text,
+              size: parseWritingNumber(textSize, 6, 96, "Text size"), color: rgbFromHex(writingColor) },
+              "Adding text...", () => setModal(null));
+          } catch (error) { setError(errorMessage(error)); }
+        }}><Type size={15} />Place text</button></>}>
+      <label htmlFor="placed-text" className="note-label">Text to place</label>
+      <textarea id="placed-text" value={modal.text} maxLength={4000} rows={5} placeholder="Write directly on your PDF."
+        onChange={(event) => setModal({ ...modal, text: event.target.value })} />
+      <label className="setting-field">Text size (pt)<input type="number" min="6" max="96" value={textSize} onChange={(event) => setTextSize(event.target.value)} /></label>
+      <p className="muted">This creates editable PDF text, with a bundled font. It does not replace existing document text. Latin, Greek, and Cyrillic are supported.</p>
+    </Dialog>}
+
+    {modal?.type === "edit-annotation" && <Dialog title="Edit annotation text" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
+      actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Cancel</button>
+        <button className="button primary" disabled={Boolean(busy) || !modal.text.trim()} onClick={() => edit({ type: "set_annotation_text", id: modal.id, text: modal.text }, "Updating annotation...", () => setModal(null))}>Save text</button></>}>
+      <label htmlFor="annotation-text" className="note-label">Annotation text</label>
+      <textarea id="annotation-text" maxLength={4000} rows={5} value={modal.text} onChange={(event) => setModal({ ...modal, text: event.target.value })} />
+      <p className="muted">Placed text keeps its original size, color, and text box. If the replacement does not fit, shorten it.</p>
+    </Dialog>}
+
+    {modal?.type === "extract" && <Dialog title="Extract pages" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
+      actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Cancel</button>
+        <button className="button primary" disabled={Boolean(busy) || !modal.range.trim()} onClick={() => {
+          void run("Exporting pages...", async () => {
+            const current = infoRef.current;
+            if (!current) throw new Error("Open a PDF before extracting pages.");
+            if (await bridge.extract(current, parsePageRange(modal.range, current.pageCount))) {
+              setModal(null); setToast("Pages exported as a separate PDF. The working document is unchanged.");
+            }
+          });
+        }}><FileOutput size={15} />Export pages</button></>}>
+      <p>Create a separate PDF in the order you enter. The working document will not be changed.</p>
+      <label className="setting-field">Pages<input data-autofocus type="text" value={modal.range} placeholder="1-3, 5" onChange={(event) => setModal({ ...modal, range: event.target.value })} /></label>
+      <p className="muted">Use page numbers or ranges, such as 1-3, 5. This is not secure redaction or metadata sanitization.</p>
+    </Dialog>}
+
+    {modal?.type === "external" && <Dialog title="Open this link?" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
+      actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Cancel</button>
+        <button className="button primary" disabled={Boolean(busy)} onClick={() => {
+          void run("Opening link...", async () => { await bridge.external(modal.url); setModal(null); });
+        }}><ExternalLink size={15} />Open link</button></>}>
+      <p>This address is supplied by the PDF. It will open in your default browser or email application.</p>
+      <p className="external-address">{modal.url}</p>
+    </Dialog>}
+
+    {modal?.type === "note" && <Dialog title={`A note on page ${modal.page + 1}`} error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
       actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Cancel</button>
         <button className="button primary" disabled={Boolean(busy) || !modal.text.trim()} onClick={() => {
           const change: Edit = { type: "note", page: modal.page, point: modal.point, text: modal.text };
-          setModal(null); edit(change, "Adding note...");
+          edit(change, "Adding note...", () => setModal(null));
         }}><MessageSquarePlus size={15} />Add note</button></>}>
       <label className="note-label" htmlFor="note-text">What would you like to remember?</label>
       <textarea id="note-text" value={modal.text} maxLength={4000} rows={5} placeholder="Leave a thought for your next review."
@@ -731,7 +909,7 @@ export default function App() {
       <p>The page will be removed from this working copy. You can undo the change before closing the document.</p>
     </Dialog>}
 
-    {modal?.type === "unsaved" && <Dialog title="Keep your changes?" busy={Boolean(busy)} onClose={() => setModal(null)}
+    {modal?.type === "unsaved" && <Dialog title="Keep your changes?" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
       actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Cancel</button>
         <button className="button text-danger" disabled={Boolean(busy)} onClick={() => {
           const action = modal.action; setModal(null); void run("Opening PDF...", () => perform(action));
@@ -752,10 +930,10 @@ export default function App() {
 
     {modal?.type === "shortcuts" && <Dialog title="A few useful shortcuts" onClose={() => setModal(null)}>
       <dl className="shortcut-list">
-        {[["Open PDF", "Command + O"], ["Save", "Command + S"], ["Save a copy", "Command + Shift + S"],
+        {[["New PDF", "Command + N"], ["Open PDF", "Command + O"], ["Save", "Command + S"], ["Save a copy", "Command + Shift + S"],
           ["Find in document", "Command + F"], ["Undo / redo", "Command + Z / Shift + Z"],
           ["Previous / next page", "Left / Right"], ["Zoom in / out", "Command + Plus / Minus"],
-          ["Select / pan", "V / H"], ["Highlight / add note", "M / N"]].map(([label, key]) =>
+          ["Select / pan", "V / H"], ["Highlight / add note", "M / N"], ["Add text / pen", "T / D"]].map(([label, key]) =>
           <div key={label}><dt>{label}</dt><dd><kbd>{key}</kbd></dd></div>)}
       </dl><p className="muted">On Windows and Linux, use Control in place of Command.</p>
     </Dialog>}
@@ -763,7 +941,7 @@ export default function App() {
     {modal?.type === "about" && <Dialog title="Meet Folio." onClose={() => setModal(null)}>
       <div className="about-brand"><img src="/folio.svg" width="52" height="52" alt="" /><div><h3>A little less paperwork.</h3><p>Version 0.1.0 - macOS-first MVP</p></div></div>
       <p>An independently built PDF workspace. Tauri connects this interface to a Rust document engine; PDF.js renders the pages.</p>
-      <p>Read, search, highlight, leave notes, organize pages, and save edited copies. OCR, PDF text editing, Office conversion, encryption, and cryptographic signing are not included.</p>
+      <p>Create, read, search, add editable text or drawings, review, combine, and extract PDF pages. Existing-text reflow, interactive forms, OCR, Office conversion, encryption, and cryptographic signing are not included.</p>
       <p className="muted">Not affiliated with Adobe. No code, fonts, icons, or artwork have been extracted from Acrobat. Open-source dependencies carry their own licenses. Files stay on this device. This is an MVP, not a full Acrobat replacement.</p>
       {!native && <div className="preview-explanation"><FileText size={17} /><p><strong>You are in browser preview.</strong>The same Rust engine processes your edits through a loopback-only development bridge. Use the desktop app for native open/save dialogs.</p></div>}
     </Dialog>}

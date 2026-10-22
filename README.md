@@ -1,7 +1,8 @@
 # Folio
 
 An independent, macOS-first PDF workspace built with **Tauri, Rust, React,
-and PDF.js**. This is the agreed working MVP, not a full Acrobat clone.
+and PDF.js**. This is an evolving reader and authoring application, not yet
+a full Acrobat replacement.
 Its familiar PDF-editor layout is independently implemented; no proprietary
 code, fonts, icons, artwork, or licensing logic was extracted from Acrobat.
 
@@ -39,18 +40,51 @@ toolchain failure.
 | --- | --- |
 | Open PDFs | Native file picker, drag-and-drop, Finder PDF association; one document at a time |
 | Read | Real PDF rendering, selectable/copyable text, lazy thumbnails, page navigation, zoom, fit page/width, hand panning |
+| Navigate | Document bookmarks and internal links; web/email links require confirmation before opening outside Folio |
+| Create | New blank US Letter or A4 PDFs, in portrait or landscape |
+| Write | Placed, editable `/FreeText` annotations with embedded Noto Sans; supported Latin, Greek, and Cyrillic text |
+| Draw | Standard `/Ink` annotations with selectable color and stroke width |
 | Search | Case-insensitive or case-sensitive text and phrases, including across line breaks; result snippets and on-page marks |
 | Highlight | Select a passage and choose Highlight, or drag across text with the highlighter |
 | Notes | Place a note on the page, enter Unicode text, and revisit it in Comments |
-| Annotations | Saved inside the PDF as standard `/Highlight` and `/Text` annotations, not an external sidecar |
-| Organize | Drag pages or use accessible move buttons; rotate and remove pages |
+| Annotations | Portable PDF appearance streams; edit note/placed-text contents, remove marks, and undo changes |
+| Organize | Move, rotate, delete, duplicate, and insert blank pages; import another PDF after the selected page |
+| Extract | Export page numbers/ranges to a separate PDF, in the requested order, without changing the working document |
 | Undo/redo | Document changes, including annotations and page operations; saved-state tracking |
 | Save | Save an edited copy by default; subsequent Save can update that chosen copy; atomic file replacement |
 | Appearance | System, Light, Dark, Sepia, and High Contrast; saved locally with matching native light/dark chrome |
 | Safety | Unsaved-change prompts; failed opens preserve the current document; signed PDFs are read-only |
 
 The included three-page quick-start PDF is original example content, generated
-by `scripts/prepare-assets.mjs`. It is editable and labeled as an example.
+by `scripts/prepare-assets.mjs`. It is editable, labeled as an example, and
+contains real bookmarks and links for trying the navigation tools.
+
+## Writing and page workflows
+
+Use **Write** to place text or draw on a page. Text size is 6-96 PDF points;
+pen width is 0.5-12 points. The writing color applies to new text and strokes,
+independently of the workspace theme. Placed text remains upright when added
+to a rotated page and uses an embedded, OFL-licensed Noto Sans font, so the
+saved appearance does not depend on the next reader's installed fonts.
+
+Placed text is a **FreeText annotation**, not a replacement or reflow of the
+original content stream. Edit or remove it in **Comments**. Text boxes are
+created at the clicked location, with a bounded default size; text wraps to
+the box, and overflow or unsupported scripts are rejected without losing the
+draft. Notes continue to support arbitrary Unicode text. Find in document
+searches the PDF page text layer, not annotation contents.
+
+Use **Organize** to insert a blank page, duplicate the selected page, or
+insert another PDF. Each operation is one undoable change. Duplicated
+annotations are independent of the originals. Import preserves page
+resources, inherited dimensions/rotations, and supported links; imported
+named destinations are resolved before the donor catalog is discarded.
+The donor's document-level JavaScript and bookmarks are not imported.
+
+**Extract pages** accepts ranges such as `1-3, 5`, or an explicit order such
+as `3, 1`. Invalid ranges and repeated pages are rejected. Export does not
+alter the document, its saved state, or its undo history. Native extraction
+refuses to overwrite the active PDF. Extraction is not sanitization.
 
 ## Appearance
 
@@ -74,15 +108,24 @@ roles. Preference validation and system/native mappings live in `src/lib/themes.
 
 ## Important boundaries
 
-- **Not full Acrobat parity.** No PDF text/content editing, OCR, Office
-  conversion, PDF creation from arbitrary inputs, cryptographic signing,
+- **Not full Acrobat parity.** No replacement/reflow of existing PDF text or
+  images, OCR, Office conversion, PDF creation from arbitrary inputs,
+  cryptographic signing,
   certificate validation, cloud storage, collaboration, AI assistant,
   accessibility remediation, preflight, or print-production workflows.
 - Password-protected PDFs are rejected rather than silently decrypted or
   rewritten. Existing signatures are detected conservatively and force
   read-only mode; they are **not cryptographically verified**.
-- Interactive forms and document hyperlinks are rendered but are not
-  interactive. Removing pages from PDFs with form fields or XFA is refused.
+- Interactive forms are rendered but cannot yet be filled or authored.
+  Deleting, duplicating, importing, or extracting pages in PDFs with form
+  fields or XFA is refused. Duplicate pages with popup/reply annotations
+  and imported documents with optional-content layers also require a
+  flattened copy.
+- Signed PDFs remain read-only, including for extraction and import as a
+  donor. Folio does not claim that extracted pages retain a document signature.
+- Bookmarks are read-only navigation. Link targets that are unresolved,
+  malformed, use embedded credentials, or are not HTTP, HTTPS, or mailto
+  are reported rather than executed.
 - Edits use a full PDF rewrite, not an incremental update. Work on copies.
   Complex portfolios, tagged-PDF structure, uncommon annotations, and advanced
   page-label/destination semantics need broader compatibility work.
@@ -139,7 +182,9 @@ Rust Session / lopdf: annotations, page tree, snapshots, atomic save
 
 `src-tauri/src/document.rs` owns PDF mutations and serialization.
 `workspace.rs` provides the same revision-checked operations to both
-`desktop.rs` and the development-only `bin/preview.rs`.
+`desktop.rs` and the development-only `bin/preview.rs`. `pages.rs` implements
+page creation/import/extraction/duplication; `writing.rs` generates standard
+annotation appearances and embedded font maps.
 
 Reordering first materializes inherited resources, page boxes, and rotations
 before rebuilding the page tree. Deletion prunes unreachable objects and
@@ -188,9 +233,18 @@ theme mappings, standard and rotated selection coordinates, phrase search,
 Unicode annotation persistence, annotation removal, inherited page properties,
 page deletion, destination retargeting, save/reopen, source preservation,
 signature read-only handling, undo/redo, stale revisions, and failed opens.
+Additional authoring coverage checks new-document dirty state, embedded text
+appearances, Unicode normalization and supported scripts, overflow rejection,
+rotated text matrices, independent annotation copies, imported links and
+resources, safe extraction, form/signature guards, and page-range/URL parsing.
 
 The blue app mark is authored in `public/folio.svg`; native icons are generated
 with `npm run tauri -- icon public/folio.svg`. PDF.js includes independently
 licensed open-source font/CMap/profile data. Third-party dependencies retain
 their own licenses; review licensing, signing, and document compatibility
 before distributing a production release.
+
+The unmodified Noto Sans font is from the
+[Noto fonts project](https://github.com/notofonts/noto-fonts/tree/main/hinted/ttf/NotoSans).
+Its copyright and SIL Open Font License are in `src-tauri/resources/fonts/OFL.txt`
+and included in the application's third-party notices.

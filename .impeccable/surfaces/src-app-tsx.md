@@ -53,3 +53,13 @@ title-bar picker. System follows live device changes; explicit choices
 persist locally and synchronize native light/dark application chrome.
 Semantic color roles change without changing composition, PDF pixels,
 annotation colors, document bytes, or document dirty state.
+
+## Read/write authoring extension
+
+The user asked to continue toward Acrobat read/write parity. This milestone
+adds new PDFs, placed text and ink, page import/duplication/extraction, document
+bookmarks, and links. Extend the established workspace and themes, not its
+identity. Write and Organize expose only working operations. Clearly distinguish
+editable text annotations from rewriting existing content, and preserve drafts
+when validation fails. Actual PDF save/reopen is the acceptance condition;
+unsupported forms, signatures, scripts, and complex structures remain explicit.

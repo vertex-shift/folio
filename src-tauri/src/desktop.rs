@@ -6,7 +6,7 @@ use tauri::{
 };
 
 use crate::{
-    document::{DocumentInfo, Edit, Error, Result, atomic_write},
+    document::{DocumentInfo, Edit, Error, Result, Session, atomic_write},
     workspace::Workspace,
 };
 
@@ -16,6 +16,7 @@ struct DesktopState {
     pending_path: Option<PathBuf>,
     ui_ready: bool,
     allow_exit: bool,
+    pending_draft: bool,
 }
 
 type SharedState = Mutex<DesktopState>;
@@ -89,6 +90,103 @@ async fn open_example(
     discard_changes: bool,
 ) -> std::result::Result<DocumentInfo, String> {
     with_state(app, move |state| state.workspace.open_demo(discard_changes)).await
+}
+
+#[tauri::command]
+async fn create_document(
+    app: AppHandle,
+    width: f32,
+    height: f32,
+    discard_changes: bool,
+) -> std::result::Result<DocumentInfo, String> {
+    with_state(app, move |state| {
+        state
+            .workspace
+            .create_document(width, height, discard_changes)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn import_document_pages(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+    at: usize,
+) -> std::result::Result<Option<DocumentInfo>, String> {
+    with_state(app.clone(), move |state| {
+        state.workspace.check_revision(document_id, revision)?;
+        Ok(())
+    })
+    .await?;
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .set_title("Insert pages from a PDF")
+        .add_filter("PDF document", &["pdf"])
+        .pick_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    let path = file.path().to_path_buf();
+    with_state(app, move |state| {
+        let donor = Session::from_path(path, 0)?;
+        state
+            .workspace
+            .current_mut(document_id, revision)?
+            .import_pages(donor.bytes().to_vec(), at)
+    })
+    .await
+    .map(Some)
+}
+
+#[tauri::command]
+async fn extract_document_pages(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+    pages: Vec<usize>,
+) -> std::result::Result<Option<String>, String> {
+    let (bytes, name) = with_state(app.clone(), move |state| {
+        let session = state.workspace.check_revision(document_id, revision)?;
+        let stem = std::path::Path::new(&session.name)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        Ok((session.extract_pages(&pages)?, format!("{stem}-pages.pdf")))
+    })
+    .await?;
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .set_title("Save extracted pages")
+        .add_filter("PDF document", &["pdf"])
+        .set_file_name(&name)
+        .save_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    let path = pdf_output_path(file.path().to_path_buf())?;
+    with_state(app, move |state| {
+        let session = state.workspace.check_revision(document_id, revision)?;
+        for original in [&session.source_path, &session.saved_path].into_iter().flatten() {
+            if path == *original || (path.exists() && original.exists() && path.canonicalize()? == original.canonicalize()?) {
+                return Err(Error::Invalid("Choose a different filename; extracting pages must not overwrite the active PDF.".into()));
+            }
+        }
+        atomic_write(&path, &bytes)?;
+        Ok(path.to_string_lossy().into_owned())
+    }).await.map(Some)
+}
+
+fn pdf_output_path(mut path: PathBuf) -> std::result::Result<PathBuf, String> {
+    if path.extension().is_none() {
+        path.set_extension("pdf");
+    } else if !path
+        .extension()
+        .is_some_and(|value| value.eq_ignore_ascii_case("pdf"))
+    {
+        return Err("Use a .pdf filename for the saved document.".into());
+    }
+    Ok(path)
 }
 
 #[tauri::command]
@@ -188,17 +286,10 @@ async fn save_document(
             .await
             .map(|file| file.path().to_path_buf())
     };
-    let Some(mut path) = path else {
+    let Some(path) = path else {
         return Ok(None);
     };
-    if path.extension().is_none() {
-        path.set_extension("pdf");
-    } else if !path
-        .extension()
-        .is_some_and(|value| value.eq_ignore_ascii_case("pdf"))
-    {
-        return Err("Use a .pdf filename for the saved document.".into());
-    }
+    let path = pdf_output_path(path)?;
     with_state(app, move |state| {
         let session = state.workspace.current_mut(document_id, revision)?;
         atomic_write(&path, &bytes)?;
@@ -222,10 +313,28 @@ fn close_application(app: AppHandle) -> std::result::Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn set_document_draft(
+    app: AppHandle,
+    document_id: u64,
+    pending: bool,
+) -> std::result::Result<(), String> {
+    with_state(app, move |state| {
+        if state.workspace.current()?.id != document_id {
+            return Err(Error::Invalid(
+                "The draft belongs to a different document.".into(),
+            ));
+        }
+        state.pending_draft = pending;
+        Ok(())
+    })
+    .await
+}
+
 fn protect_exit(app: &AppHandle) -> bool {
     let state = app.state::<SharedState>();
     match state.try_lock() {
-        Ok(state) => !state.allow_exit && state.workspace.is_dirty(),
+        Ok(state) => !state.allow_exit && (state.workspace.is_dirty() || state.pending_draft),
         Err(_) => true,
     }
 }
@@ -265,6 +374,7 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         "File",
         true,
         &[
+            &MenuItem::with_id(app, "new", "New PDF...", true, Some("CmdOrCtrl+N"))?,
             &MenuItem::with_id(app, "open", "Open PDF...", true, Some("CmdOrCtrl+O"))?,
             &MenuItem::with_id(app, "example", "Open Example Document", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
@@ -314,6 +424,7 @@ pub fn run() {
             .is_some_and(|value| value.eq_ignore_ascii_case("pdf"))
     });
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(Mutex::new(DesktopState {
             pending_path,
             ..Default::default()
@@ -323,6 +434,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            create_document,
+            import_document_pages,
+            extract_document_pages,
             bootstrap,
             open_document,
             open_document_path,
@@ -333,10 +447,12 @@ pub fn run() {
             redo_document,
             save_document,
             close_application,
+            set_document_draft,
         ])
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
             if [
+                "new",
                 "open",
                 "example",
                 "save",

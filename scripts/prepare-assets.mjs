@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, PDFName, PDFString, StandardFonts, rgb } from "pdf-lib";
 import { collectNotices } from "./collect-notices.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -121,6 +121,33 @@ section(third, "Keep only what you need",
 third.drawRectangle({ x: 54, y: 116, width: 504, height: 69, color: tint });
 text(third, "Ready for your own document?", 72, 158, 13, blue, bold);
 text(third, "Use Open PDF, or drop a PDF into the window.", 72, 136, 11, ink);
+
+const outlineRoot = pdf.context.nextRef();
+const pages = pdf.getPages();
+const outlineItems = ["Getting started", "A closer look", "Everything in order"].map((title, index) =>
+  pdf.context.obj({ Title: PDFString.of(title), Parent: outlineRoot,
+    Dest: [pages[index].ref, PDFName.of("Fit")] }));
+const outlineRefs = outlineItems.map((item) => pdf.context.register(item));
+outlineItems.forEach((item, index) => {
+  if (index > 0) item.set(PDFName.of("Prev"), outlineRefs[index - 1]);
+  if (index + 1 < outlineRefs.length) item.set(PDFName.of("Next"), outlineRefs[index + 1]);
+});
+pdf.context.assign(outlineRoot, pdf.context.obj({
+  Type: PDFName.of("Outlines"), Count: outlineRefs.length,
+  First: outlineRefs[0], Last: outlineRefs.at(-1),
+}));
+pdf.catalog.set(PDFName.of("Outlines"), outlineRoot);
+first.node.addAnnot(pdf.context.register(pdf.context.obj({
+  Type: PDFName.of("Annot"), Subtype: PDFName.of("Link"),
+  Rect: [54, 104, 558, 126], Border: [0, 0, 0],
+  Dest: [second.ref, PDFName.of("Fit")],
+})));
+text(third, "Folio on GitHub", 406, 40, 9, blue);
+third.node.addAnnot(pdf.context.register(pdf.context.obj({
+  Type: PDFName.of("Annot"), Subtype: PDFName.of("Link"),
+  Rect: [403, 35, 482, 49], Border: [0, 0, 0],
+  A: { S: PDFName.of("URI"), URI: PDFString.of("https://github.com/vertex-shift/folio") },
+})));
 
 mkdirSync(`${root}src-tauri/resources`, { recursive: true });
 const sample = await pdf.save({ useObjectStreams: false });

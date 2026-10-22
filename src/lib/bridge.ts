@@ -1,6 +1,8 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getIdentifier } from "@tauri-apps/api/app";
 import type { DocumentInfo, Edit } from "./types";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { safeExternalUrl } from "./navigation";
 import { resolveRuntime } from "./runtime";
 
 const runtime = await resolveRuntime({
@@ -60,6 +62,14 @@ function post(value: object): RequestInit {
   return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) };
 }
 
+function downloadPdf(bytes: Uint8Array, name: string) {
+  const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }));
+  const link = document.createElement("a");
+  link.href = url; link.download = name;
+  document.body.append(link); link.click(); link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
 export const bridge = {
   bootstrap(): Promise<DocumentInfo> {
     if (runtimeIssue) return Promise.reject(new Error(runtimeIssue));
@@ -91,6 +101,27 @@ export const bridge = {
       ? invoke("open_example", { discardChanges })
       : previewJson("/demo", { method: "POST", headers: { "X-Discard-Changes": String(discardChanges) } });
   },
+  create(width: number, height: number, discardChanges: boolean): Promise<DocumentInfo> {
+    return native ? invoke("create_document", { width, height, discardChanges })
+      : previewJson("/create", post({ width, height, discardChanges }));
+  },
+  import(info: DocumentInfo, at: number): Promise<DocumentInfo | null> {
+    if (!native) throw new Error("Use the preview's PDF import file picker.");
+    return invoke("import_document_pages", { ...revision(info), at });
+  },
+  importFile(info: DocumentInfo, file: File, at: number): Promise<DocumentInfo> {
+    if (file.size > 128 * 1024 * 1024) throw new Error("The imported PDF exceeds the 128 MiB limit.");
+    return previewJson("/import", { method: "POST", headers: {
+      "X-Document-Id": String(info.id), "X-Revision": String(info.revision), "X-Insert-At": String(at),
+      "Content-Type": "application/pdf",
+    }, body: file });
+  },
+  async extract(info: DocumentInfo, pages: number[]): Promise<boolean> {
+    if (native) return (await invoke<string | null>("extract_document_pages", { ...revision(info), pages })) !== null;
+    const response = await previewResponse("/extract", post({ ...revision(info), pages }));
+    downloadPdf(new Uint8Array(await response.arrayBuffer()), info.name.replace(/\.pdf$/i, "") + "-pages.pdf");
+    return true;
+  },
   async bytes(info: DocumentInfo): Promise<Uint8Array> {
     if (native) {
       const buffer = await invoke<ArrayBuffer>("document_bytes", revision(info));
@@ -115,15 +146,18 @@ export const bridge = {
   async save(info: DocumentInfo, saveAs = true): Promise<DocumentInfo | null> {
     if (native) return invoke("save_document", { ...revision(info), saveAs });
     const bytes = await bridge.bytes(info);
-    const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = info.name.replace(/\.pdf$/i, "") + "-edited.pdf";
-    document.body.append(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    downloadPdf(bytes, info.name.replace(/\.pdf$/i, "") + "-edited.pdf");
     return info;
+  },
+  async external(url: string): Promise<void> {
+    const address = safeExternalUrl(url);
+    if (native) return openUrl(address);
+    const opened = window.open(address, "_blank");
+    if (!opened) throw new Error("The browser blocked this link. Allow pop-ups for the local preview and try again.");
+    opened.opener = null;
+  },
+  draft(documentId: number, pending: boolean): Promise<void> {
+    return native ? invoke("set_document_draft", { documentId, pending }) : Promise.resolve();
   },
   close(): Promise<void> {
     if (!native) throw new Error("Close the browser tab to leave the browser preview.");

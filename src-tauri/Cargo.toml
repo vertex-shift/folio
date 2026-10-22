@@ -20,7 +20,7 @@ required-features = ["preview"]
 
 [features]
 default = ["desktop"]
-desktop = ["dep:tauri", "dep:tauri-build", "dep:rfd"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:rfd", "dep:tauri-plugin-opener"]
 preview = ["dep:tiny_http", "dep:percent-encoding"]
 custom-protocol = ["tauri/custom-protocol"]
 
@@ -30,7 +30,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 thiserror = "2"
+ttf-parser = "0.25"
+unicode-normalization = "0.1"
 tauri = { version = "2", optional = true, features = [] }
+tauri-plugin-opener = { version = "2", optional = true }
 rfd = { version = "0.17", optional = true }
 tiny_http = { version = "0.12", optional = true }
 percent-encoding = { version = "2", optional = true }

@@ -95,6 +95,13 @@ components:
     textColor: "{colors.ink}"
     rounded: "{rounded.toolbar}"
     width: "296px"
+  writing-setting:
+    backgroundColor: "{colors.input}"
+    textColor: "{colors.ink}"
+    typography: "{typography.detail}"
+    rounded: "{rounded.control}"
+    padding: "5px 9px"
+    height: "33px"
 ---
 
 # Design System: Folio
@@ -172,6 +179,8 @@ rail is 157px, and the utility rail is 43px.
 The document scroll area owns page overflow, including at high zoom.
 The page and zoom toolbar stays near the bottom of that area. A floating
 vertical review toolbar groups selection/panning separately from annotations.
+The mode bar now includes Read, Write, Comment, and Organize. Writing settings
+replace the side-panel content without replacing the document canvas.
 
 At 1199px and below the shell becomes denser. Tool panels become overlays
 at 899px and below. Below 700px, the browser preview uses icon-only controls
@@ -214,6 +223,18 @@ The search field is a compact outlined group, with a visible focus-within
 state. The mode navigation uses a blue underline plus text/icon state;
 color alone does not identify the current mode. Page thumbnails use both
 an outlined selection and a selected page-number treatment.
+
+The writing panel reuses secondary buttons and outlined setting fields for
+text size, pen width, and on-document color. The page-authoring action row
+wraps at narrow widths; it does not add a second navigation hierarchy.
+Bookmarks are an indented list of standard buttons. Document links are
+transparent hit targets over actual PDF geometry, with visible keyboard focus.
+External links require an explicit confirmation that displays the address.
+
+Text-entry dialogs retain their contents and display errors inline when a
+PDF operation is rejected. Uncommitted note/text drafts participate in exit
+protection. The on-page ink preview is a live rendering of the user's stroke,
+not decorative artwork; it commits as a PDF annotation when the pointer lifts.
 
 Appearance is a nonmodal title-bar popover, not an interrupting settings
 dialog. Its standard radio group supports keyboard navigation, visible

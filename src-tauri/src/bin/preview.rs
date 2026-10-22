@@ -22,6 +22,22 @@ struct EditRequest {
     edit: Edit,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateRequest {
+    width: f32,
+    height: f32,
+    discard_changes: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ExtractRequest {
+    document_id: u64,
+    revision: u64,
+    pages: Vec<usize>,
+}
+
 enum Payload {
     Json(serde_json::Value),
     Pdf(Vec<u8>),
@@ -87,6 +103,27 @@ fn handle(request: &mut Request, workspace: &mut Workspace) -> Result<Payload, E
         (&Method::Post, "/demo") => {
             workspace.open_demo(header(request, "X-Discard-Changes").as_deref() == Some("true"))?
         }
+        (&Method::Post, "/create") => {
+            let input: CreateRequest = json_body(request)?;
+            workspace.create_document(input.width, input.height, input.discard_changes)?
+        }
+        (&Method::Post, "/import") => {
+            let document_id = numeric_header(request, "X-Document-Id")?;
+            let revision = numeric_header(request, "X-Revision")?;
+            let at = usize::try_from(numeric_header(request, "X-Insert-At")?)
+                .map_err(|_| Error::Invalid("The insertion position is invalid.".into()))?;
+            workspace
+                .current_mut(document_id, revision)?
+                .import_pages(body(request)?, at)?
+        }
+        (&Method::Post, "/extract") => {
+            let input: ExtractRequest = json_body(request)?;
+            return Ok(Payload::Pdf(
+                workspace
+                    .check_revision(input.document_id, input.revision)?
+                    .extract_pages(&input.pages)?,
+            ));
+        }
         (&Method::Post, "/open") => {
             let name = header(request, "X-File-Name")
                 .ok_or_else(|| Error::Invalid("The PDF filename is missing.".into()))?;
@@ -134,6 +171,12 @@ fn handle(request: &mut Request, workspace: &mut Workspace) -> Result<Payload, E
     Ok(Payload::Json(serde_json::to_value(info).map_err(
         |error| Error::Invalid(format!("Could not serialize document state: {error}")),
     )?))
+}
+
+fn numeric_header(request: &Request, name: &'static str) -> Result<u64, Error> {
+    header(request, name)
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| Error::Invalid(format!("The {name} request header is missing or invalid.")))
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

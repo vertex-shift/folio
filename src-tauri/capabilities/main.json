@@ -3,5 +3,8 @@
   "identifier": "main",
   "description": "Local PDF desktop window; no shell or network plugins.",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-start-dragging", "core:app:allow-identifier", "core:app:allow-set-app-theme"]
+  "permissions": [
+    "core:default", "core:window:allow-start-dragging", "core:app:allow-identifier", "core:app:allow-set-app-theme",
+    { "identifier": "opener:allow-open-url", "allow": [{ "url": "https://*" }, { "url": "http://*" }, { "url": "mailto:*" }] }
+  ]
 }

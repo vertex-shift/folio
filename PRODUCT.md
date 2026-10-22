@@ -32,15 +32,23 @@ The desktop app processes document contents locally.
 
 - MVP: PDF viewing, zoom, navigation, thumbnails, text search, highlights,
   sticky notes, page reordering, rotation, deletion, undo/redo, and saving copies.
+- Authoring milestone: Letter/A4 blank PDFs; editable placed-text and pen
+  annotations; duplicate/blank/imported pages; extraction by page range;
+  bookmark and internal-link navigation; confirmed external web/email links.
+  Placed text uses an embedded Noto Sans font for Latin, Greek, and Cyrillic.
+  It does not replace or reflow existing PDF text or images.
 - Appearance: user-requested dark mode and additional themes, implemented as
   System, Light, Dark, Sepia, and High Contrast. Persist the preference locally;
   follow live device changes in System mode and match native light/dark chrome.
   Theme the workspace without changing PDF content or annotation colors.
 - Preserve the original file by default; expose unsaved changes and failures.
 - Existing digital signatures must not be invalidated silently.
-- Password-protected PDFs, text reflow/editing, OCR, Office conversion,
-  cryptographic signing, cloud collaboration, and full Acrobat feature parity
-  are outside this milestone.
+- Password-protected PDFs, arbitrary existing-content editing/reflow,
+  interactive forms, OCR, Office conversion, cryptographic signing, cloud
+  collaboration, and full Acrobat parity remain incomplete capabilities.
+- New annotations, imported pages, and created/extracted documents must remain
+  real, interoperable PDFs after save/reopen. Unsupported forms, signed donors,
+  and incompatible page structures are rejected explicitly rather than damaged.
 - Do not copy Adobe code, fonts, icons, artwork, branding, or licensing logic.
 - A development-only browser bridge exercises the same Rust document engine.
   It must be clearly distinguished from the native desktop app.

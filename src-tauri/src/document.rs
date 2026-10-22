@@ -45,6 +45,7 @@ pub struct AnnotationInfo {
     pub rect: [f32; 4],
     pub color: [f32; 3],
     pub deletable: bool,
+    pub editable: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -90,6 +91,31 @@ pub enum Edit {
     },
     RemoveAnnotation {
         id: String,
+    },
+    SetAnnotationText {
+        id: String,
+        text: String,
+    },
+    Text {
+        page: usize,
+        rect: [f32; 4],
+        text: String,
+        size: f32,
+        color: [f32; 3],
+    },
+    Ink {
+        page: usize,
+        points: Vec<[f32; 2]>,
+        color: [f32; 3],
+        width: f32,
+    },
+    BlankPage {
+        at: usize,
+        width: f32,
+        height: f32,
+    },
+    Duplicate {
+        page: usize,
     },
 }
 
@@ -184,6 +210,19 @@ impl Session {
         )
     }
 
+    pub fn blank(width: f32, height: f32, id: u64) -> Result<Self> {
+        let mut document = Document::with_version("1.7");
+        let page = crate::pages::blank_page(&mut document, width, height)?;
+        let root = document.add_object(dictionary! { "Type" => "Catalog" });
+        document.trailer.set("Root", root);
+        rebuild_page_tree(&mut document, &[page])?;
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes)?;
+        let mut session = Self::from_bytes(bytes, "Untitled.pdf".into(), None, id)?;
+        session.saved_revision = u64::MAX;
+        Ok(session)
+    }
+
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
@@ -224,11 +263,32 @@ impl Session {
     }
 
     pub fn apply(&mut self, edit: Edit) -> Result<DocumentInfo> {
+        let revision = self.next_revision;
+        self.mutate(|next| apply_edit(next, edit, revision))
+    }
+
+    pub fn import_pages(&mut self, bytes: Vec<u8>, at: usize) -> Result<DocumentInfo> {
+        let donor = Self::from_bytes(bytes, "Imported PDF".into(), None, 0)?;
+        donor.ensure_writable()?;
+        self.mutate(|next| crate::pages::import_pages(next, donor.document, at))
+    }
+
+    pub fn extract_pages(&self, pages: &[usize]) -> Result<Vec<u8>> {
+        self.ensure_writable()?;
+        crate::pages::extract_pages(&self.document, pages)
+    }
+
+    fn ensure_writable(&self) -> Result<()> {
         if let Some(reason) = &self.read_only_reason {
             return Err(invalid(reason));
         }
+        Ok(())
+    }
+
+    fn mutate(&mut self, change: impl FnOnce(&mut Document) -> Result<()>) -> Result<DocumentInfo> {
+        self.ensure_writable()?;
         let mut next = self.document.clone();
-        apply_edit(&mut next, edit, self.next_revision)?;
+        change(&mut next)?;
         annotations(&next)?;
         let mut bytes = Vec::new();
         next.save_to(&mut bytes)?;
@@ -333,7 +393,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn invalid(message: impl Into<String>) -> Error {
+pub(crate) fn invalid(message: impl Into<String>) -> Error {
     Error::Invalid(message.into())
 }
 
@@ -341,7 +401,7 @@ fn object_key(id: ObjectId) -> String {
     format!("{}:{}", id.0, id.1)
 }
 
-fn page_id(document: &Document, index: usize) -> Result<ObjectId> {
+pub(crate) fn page_id(document: &Document, index: usize) -> Result<ObjectId> {
     document
         .get_pages()
         .values()
@@ -350,7 +410,7 @@ fn page_id(document: &Document, index: usize) -> Result<ObjectId> {
         .ok_or_else(|| invalid("That page is no longer in the document."))
 }
 
-fn inherited(document: &Document, id: ObjectId, key: &[u8]) -> Result<Option<Object>> {
+pub(crate) fn inherited(document: &Document, id: ObjectId, key: &[u8]) -> Result<Option<Object>> {
     let mut current = id;
     let mut visited = HashSet::new();
     loop {
@@ -370,7 +430,7 @@ fn inherited(document: &Document, id: ObjectId, key: &[u8]) -> Result<Option<Obj
     }
 }
 
-fn page_rotation(document: &Document, id: ObjectId) -> Result<i32> {
+pub(crate) fn page_rotation(document: &Document, id: ObjectId) -> Result<i32> {
     let Some(value) = inherited(document, id, b"Rotate")? else {
         return Ok(0);
     };
@@ -383,7 +443,7 @@ fn page_rotation(document: &Document, id: ObjectId) -> Result<i32> {
     Ok(rotation.rem_euclid(360) as i32)
 }
 
-fn page_bounds(document: &Document, id: ObjectId) -> Result<[f32; 4]> {
+pub(crate) fn page_bounds(document: &Document, id: ObjectId) -> Result<[f32; 4]> {
     let value = inherited(document, id, b"CropBox")?
         .or(inherited(document, id, b"MediaBox")?)
         .ok_or_else(|| invalid("This page does not define its dimensions."))?;
@@ -406,6 +466,54 @@ fn page_bounds(document: &Document, id: ObjectId) -> Result<[f32; 4]> {
 
 fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> {
     match edit {
+        Edit::BlankPage { at, width, height } => {
+            let mut order: Vec<_> = document.get_pages().into_values().collect();
+            if at > order.len() {
+                return Err(invalid("Choose a valid page insertion position."));
+            }
+            let id = crate::pages::blank_page(document, width, height)?;
+            order.insert(at, id);
+            rebuild_page_tree(document, &order)?;
+        }
+        Edit::Duplicate { page } => crate::pages::duplicate_page(document, page)?,
+        Edit::Text {
+            page,
+            rect,
+            text,
+            size,
+            color,
+        } => {
+            let id = page_id(document, page)?;
+            let annotation =
+                crate::writing::text_annotation(document, id, rect, &text, size, color, revision)?;
+            append_annotation(document, id, annotation)?;
+        }
+        Edit::Ink {
+            page,
+            points,
+            color,
+            width,
+        } => {
+            let id = page_id(document, page)?;
+            let annotation =
+                crate::writing::ink_annotation(document, id, points, color, width, revision)?;
+            append_annotation(document, id, annotation)?;
+        }
+        Edit::SetAnnotationText { id, text } => {
+            let annotation = annotations(document)?
+                .into_iter()
+                .find(|annotation| annotation.id == id && annotation.editable)
+                .ok_or_else(|| invalid("This annotation's text cannot be edited."))?;
+            validate_text(&text, false)?;
+            let object_id = parse_object_key(&id)?;
+            if annotation.kind == "text" {
+                crate::writing::update_text(document, object_id, &text)?;
+            } else {
+                document
+                    .get_dictionary_mut(object_id)?
+                    .set("Contents", text_string(text.trim()));
+            }
+        }
         Edit::Rotate { page, degrees } => {
             if ![-90, 90, 180].contains(&degrees) {
                 return Err(invalid("Rotate by 90, -90, or 180 degrees."));
@@ -528,18 +636,7 @@ fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> 
                 .into_iter()
                 .find(|annotation| annotation.id == id && annotation.deletable)
                 .ok_or_else(|| invalid("This annotation cannot be removed."))?;
-            let (number, generation) = annotation
-                .id
-                .split_once(':')
-                .ok_or_else(|| invalid("The annotation identifier is invalid."))?;
-            let object_id = (
-                number
-                    .parse()
-                    .map_err(|_| invalid("Invalid annotation identifier."))?,
-                generation
-                    .parse()
-                    .map_err(|_| invalid("Invalid annotation identifier."))?,
-            );
+            let object_id = parse_object_key(&annotation.id)?;
             let id = page_id(document, annotation.page)?;
             let mut entries = annotation_entries(document, id)?;
             entries.retain(|entry| entry.as_reference().ok() != Some(object_id));
@@ -551,7 +648,7 @@ fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> 
     Ok(())
 }
 
-fn rebuild_page_tree(document: &mut Document, order: &[ObjectId]) -> Result<()> {
+pub(crate) fn rebuild_page_tree(document: &mut Document, order: &[ObjectId]) -> Result<()> {
     // Reparenting without copying these inherited values loses fonts, page boxes,
     // or rotations on PDFs whose original page tree supplies them.
     let mut inherited_values = Vec::new();
@@ -581,7 +678,7 @@ fn rebuild_page_tree(document: &mut Document, order: &[ObjectId]) -> Result<()> 
     Ok(())
 }
 
-fn retarget_destinations(object: &mut Object, removed: ObjectId, replacement: ObjectId) {
+pub(crate) fn retarget_destinations(object: &mut Object, removed: ObjectId, replacement: ObjectId) {
     match object {
         Object::Array(values) => {
             let is_destination = values.len() >= 2
@@ -620,7 +717,7 @@ fn retarget_destinations(object: &mut Object, removed: ObjectId, replacement: Ob
     }
 }
 
-fn has_form_fields(document: &Document) -> Result<bool> {
+pub(crate) fn has_form_fields(document: &Document) -> Result<bool> {
     let Ok(form) = document.catalog()?.get(b"AcroForm") else {
         return Ok(false);
     };
@@ -634,7 +731,7 @@ fn has_form_fields(document: &Document) -> Result<bool> {
     }
 }
 
-fn validate_text(text: &str, allow_empty: bool) -> Result<()> {
+pub(crate) fn validate_text(text: &str, allow_empty: bool) -> Result<()> {
     if (!allow_empty && text.trim().is_empty()) || text.chars().count() > 4000 {
         return Err(invalid(
             "Use between 1 and 4,000 characters for a note or selected passage.",
@@ -643,7 +740,7 @@ fn validate_text(text: &str, allow_empty: bool) -> Result<()> {
     Ok(())
 }
 
-fn validate_point(point: [f32; 2], bounds: [f32; 4]) -> Result<()> {
+pub(crate) fn validate_point(point: [f32; 2], bounds: [f32; 4]) -> Result<()> {
     if point.iter().any(|value| !value.is_finite())
         || point[0] < bounds[0] - 1.0
         || point[0] > bounds[2] + 1.0
@@ -657,7 +754,7 @@ fn validate_point(point: [f32; 2], bounds: [f32; 4]) -> Result<()> {
     Ok(())
 }
 
-fn numbers(values: &[f32]) -> Object {
+pub(crate) fn numbers(values: &[f32]) -> Object {
     Object::Array(values.iter().map(|value| Object::Real(*value)).collect())
 }
 
@@ -711,7 +808,7 @@ fn highlight_appearance(
     )))
 }
 
-fn annotation_entries(document: &Document, id: ObjectId) -> Result<Vec<Object>> {
+pub(crate) fn annotation_entries(document: &Document, id: ObjectId) -> Result<Vec<Object>> {
     let page = document.get_dictionary(id)?;
     let Ok(value) = page.get(b"Annots") else {
         return Ok(Vec::new());
@@ -740,6 +837,8 @@ fn annotations(document: &Document) -> Result<Vec<AnnotationInfo>> {
             let kind = match subtype {
                 b"Text" => "note",
                 b"Highlight" => "highlight",
+                b"FreeText" => "text",
+                b"Ink" => "ink",
                 _ => continue,
             };
             let rectangle = document
@@ -793,10 +892,26 @@ fn annotations(document: &Document) -> Result<Vec<AnnotationInfo>> {
                 rect,
                 color,
                 deletable: reference.is_some(),
+                editable: reference.is_some()
+                    && (kind == "note" || kind == "text" && dictionary.has(b"FolioFontSize")),
             });
         }
     }
     Ok(result)
+}
+
+fn parse_object_key(value: &str) -> Result<ObjectId> {
+    let (number, generation) = value
+        .split_once(':')
+        .ok_or_else(|| invalid("Invalid annotation identifier."))?;
+    Ok((
+        number
+            .parse()
+            .map_err(|_| invalid("Invalid annotation identifier."))?,
+        generation
+            .parse()
+            .map_err(|_| invalid("Invalid annotation identifier."))?,
+    ))
 }
 
 #[cfg(test)]

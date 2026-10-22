@@ -73,6 +73,16 @@ impl Workspace {
         self.replace(Session::demo(self.next_id + 1)?)
     }
 
+    pub fn create_document(
+        &mut self,
+        width: f32,
+        height: f32,
+        discard_changes: bool,
+    ) -> Result<DocumentInfo> {
+        self.check_discard(discard_changes)?;
+        self.replace(Session::blank(width, height, self.next_id + 1)?)
+    }
+
     fn check_discard(&self, discard_changes: bool) -> Result<()> {
         if self.is_dirty() && !discard_changes {
             return Err(Error::Invalid(
