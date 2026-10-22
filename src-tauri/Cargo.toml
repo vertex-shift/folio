@@ -1,0 +1,43 @@
+[package]
+name = "folio-desktop"
+version = "0.1.0"
+description = "An independent local-first PDF workspace"
+edition = "2024"
+default-run = "folio"
+
+[lib]
+name = "folio_core"
+
+[[bin]]
+name = "folio"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "folio-preview"
+path = "src/bin/preview.rs"
+required-features = ["preview"]
+
+[features]
+default = ["desktop"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:rfd"]
+preview = ["dep:tiny_http", "dep:percent-encoding"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[dependencies]
+lopdf = "0.45"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tauri = { version = "2", optional = true, features = [] }
+rfd = { version = "0.17", optional = true }
+tiny_http = { version = "0.12", optional = true }
+percent-encoding = { version = "2", optional = true }
+
+[build-dependencies]
+tauri-build = { version = "2", optional = true, features = [] }
+
+[profile.release]
+# macOS 27 dyld rejects the misaligned LINKEDIT pool in stripped proc-macro dylibs.
+strip = "none"

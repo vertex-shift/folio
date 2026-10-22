@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-18T10:12:00Z",
+  "title": "Design System: Folio",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Workspace Blue",
+        "tonalRamp": ["#081536", "#102b6e", "#1841a7", "#225ae6", "#547fef", "#8faaf5", "#c4d2fb", "#ecf2ff"]
+      },
+      "primary-ink": {
+        "role": "primary",
+        "displayName": "Action Ink",
+        "tonalRamp": ["#07132f", "#0e265f", "#123b98", "#174cc6", "#4d75d5", "#8da7e7", "#c3d1f3", "#edf2fc"]
+      },
+      "primary-soft": {
+        "role": "primary",
+        "displayName": "Selection Blue",
+        "tonalRamp": ["#101e3a", "#203c74", "#315bae", "#547fce", "#82a1df", "#aec3ec", "#d4e0f7", "#ecf2ff"]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Paper White",
+        "tonalRamp": ["#151b25", "#293241", "#465165", "#626d7e", "#8d97a6", "#b9c1cd", "#e4e7ec", "#ffffff"]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Slate Document Well",
+        "tonalRamp": ["#151b25", "#293241", "#465165", "#626d7e", "#8d97a6", "#b9c1cd", "#e4e7ec", "#f5f7fa"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Document Ink",
+        "tonalRamp": ["#111823", "#293241", "#465165", "#626d7e", "#8d97a6", "#b9c1cd", "#dce2ea", "#f0f2f5"]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Secondary Slate",
+        "tonalRamp": ["#151b25", "#293241", "#465165", "#626d7e", "#8d97a6", "#b9c1cd", "#dce2ea", "#f0f2f5"]
+      },
+      "divider": {
+        "role": "neutral",
+        "displayName": "Cool Divider",
+        "tonalRamp": ["#151b25", "#293241", "#465165", "#626d7e", "#8d97a6", "#b9c1cd", "#e3e7ed", "#f5f7fa"]
+      }
+    },
+    "typographyMeta": {
+      "body": { "displayName": "System UI", "purpose": "Interface content; PDF fonts are not app UI tokens." },
+      "label": { "displayName": "Action Label", "purpose": "Buttons and compact navigation." },
+      "detail": { "displayName": "Supporting Detail", "purpose": "Theme descriptions and contextual instructions." },
+      "metadata": { "displayName": "Compact Metadata", "purpose": "Page numbers, status details, and appearance persistence hints." },
+      "title": { "displayName": "Workspace Heading", "purpose": "Organize-page heading." },
+      "dialog": { "displayName": "Dialog Heading", "purpose": "Protected decisions and note entry." },
+      "wordmark": { "displayName": "Folio Wordmark", "purpose": "Original application identity." }
+    },
+    "shadows": [
+      { "name": "paper", "value": "0 2px 5px #24324816, 0 8px 26px #24324812", "purpose": "Separate real paper from the document well." },
+      { "name": "view-controls", "value": "0 4px 14px var(--shadow-soft, #25334f14)", "purpose": "Keep page and zoom actions above the document in every palette." },
+      { "name": "dialog", "value": "0 15px 65px var(--shadow-strong, #0b23454a)", "purpose": "Protected modal interaction." },
+      { "name": "thumbnail-drawer", "value": "-6px 0 18px var(--shadow-soft, #25334f14)", "purpose": "Compact browser-preview page overlay." }
+    ],
+    "motion": [
+      { "name": "ease-out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Control transitions and dialog entry." },
+      { "name": "control-state", "value": "140ms", "purpose": "Background and border state changes." },
+      { "name": "dialog-entry", "value": "180ms", "purpose": "Small dialog entrance; disabled for reduced motion." }
+    ],
+    "breakpoints": [
+      { "name": "dense-shell", "value": "1199px" },
+      { "name": "auto-collapse-tools", "value": "1099px" },
+      { "name": "tools-overlay", "value": "899px" },
+      { "name": "compact-preview", "value": "699px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The primary save/export action.",
+      "html": "<button class=\"ds-primary\">Save a copy</button>",
+      "css": ".ds-primary{font:600 12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:34px;padding:7px 13px;border:1px solid var(--blue,#225ae6);border-radius:5px;color:var(--on-primary,#fff);background:var(--blue,#225ae6);cursor:pointer;transition:background 140ms cubic-bezier(.16,1,.3,1)}.ds-primary:hover{background:var(--primary-hover,#174ac8);border-color:var(--primary-hover,#174ac8)}.ds-primary:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:3px}.ds-primary:disabled{opacity:.38;cursor:not-allowed}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Supporting document actions and cancellation.",
+      "html": "<button class=\"ds-secondary\">Open PDF</button>",
+      "css": ".ds-secondary{font:600 12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:34px;padding:7px 13px;border:1px solid var(--control-border,#8191a8);border-radius:5px;color:var(--secondary,#4a5c77);background:var(--surface,#fff);cursor:pointer;transition:background 140ms cubic-bezier(.16,1,.3,1)}.ds-secondary:hover{background:var(--hover,#f3f6fb)}.ds-secondary:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:3px}"
+    },
+    {
+      "name": "Search Field",
+      "kind": "input",
+      "refersTo": "search-input",
+      "description": "Local text search with a visible grouped focus state.",
+      "html": "<label class=\"ds-search\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><circle cx=\"10\" cy=\"10\" r=\"6\"/><path d=\"m14.5 14.5 5 5\"/></svg><input aria-label=\"Search PDF text\" placeholder=\"Word or phrase\"/></label>",
+      "css": ".ds-search{height:36px;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--control-border,#8191a8);border-radius:5px;color:var(--icon,#586579);background:var(--input-bg,#fcfdff)}.ds-search:focus-within{border-color:var(--focus,#225ae6);box-shadow:0 0 0 2px var(--blue-tint,#ecf2ff)}.ds-search input{min-width:0;width:100%;height:100%;border:0;background:transparent;color:var(--ink,#293241);caret-color:var(--blue,#225ae6);font:12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;outline:none}.ds-search input::placeholder{color:var(--muted,#626d7e)}"
+    },
+    {
+      "name": "Document Modes",
+      "kind": "nav",
+      "refersTo": "document-tabs",
+      "description": "Read, review, and organize without replacing the document workspace.",
+      "html": "<nav class=\"ds-modes\" aria-label=\"Document workspace\"><button aria-current=\"page\">Read</button><button>Comment</button><button>Organize</button></nav>",
+      "css": ".ds-modes{display:flex;height:55px;background:var(--surface,#fff)}.ds-modes button{position:relative;padding:0 18px;border:0;background:transparent;color:var(--muted,#626d7e);font:12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:pointer}.ds-modes button:hover{background:var(--hover,#f3f6fb)}.ds-modes [aria-current]{color:var(--blue-ink,#174cc6);font-weight:600}.ds-modes [aria-current]::after{content:'';position:absolute;height:2px;bottom:0;left:17px;right:17px;background:var(--blue,#225ae6)}.ds-modes button:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:-3px}"
+    },
+    {
+      "name": "Annotation Count",
+      "kind": "chip",
+      "refersTo": "count-badge",
+      "description": "Read-only metadata, not a filter or an action.",
+      "html": "<span class=\"ds-count\" aria-label=\"3 annotations\">3</span>",
+      "css": ".ds-count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:19px;padding:0 5px;border-radius:5px;background:var(--badge-bg,#eef1f6);color:var(--badge-ink,#52627b);font:10px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-variant-numeric:tabular-nums}"
+    },
+    {
+      "name": "Organize Page Card",
+      "kind": "card",
+      "refersTo": "page-card",
+      "description": "Selectable page container; the real application renders a PDF thumbnail inside it.",
+      "html": "<button class=\"ds-page-card\" aria-label=\"Select page 1\" aria-pressed=\"true\"><span class=\"ds-page-preview\">PDF page</span><span>Page 1</span></button>",
+      "css": ".ds-page-card{display:flex;flex-direction:column;align-items:center;gap:16px;width:178px;padding:16px 8px 13px;border:1px solid var(--card-selected-border,#7399e6);border-radius:6px;background:var(--card-selected,#e4edff);color:var(--secondary,#4a5c77);font:10px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:grab}.ds-page-card:hover{border-color:var(--blue,#225ae6)}.ds-page-card:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:3px}.ds-page-preview{display:flex;align-items:center;justify-content:center;width:130px;height:168px;background:#fff;color:#626d7e;box-shadow:0 1px 4px #31425f24}"
+    },
+    {
+      "name": "Appearance Picker",
+      "kind": "custom",
+      "refersTo": "appearance-picker",
+      "description": "A nonmodal theme chooser; the app adds persistence, live system changes, and native chrome synchronization.",
+      "html": "<fieldset class=\"ds-appearance\" aria-label=\"Color theme\"><legend>Appearance</legend><label><input type=\"radio\" name=\"ds-theme\" checked/>System</label><label><input type=\"radio\" name=\"ds-theme\"/>Light</label><label><input type=\"radio\" name=\"ds-theme\"/>Dark</label><label><input type=\"radio\" name=\"ds-theme\"/>Sepia</label><label><input type=\"radio\" name=\"ds-theme\"/>High Contrast</label><p>PDF colors stay unchanged.</p></fieldset>",
+      "css": ".ds-appearance{width:260px;padding:14px;border:1px solid var(--control-border,#8191a8);border-radius:9px;background:var(--surface,#fff);color:var(--ink,#293241);font:12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.ds-appearance legend{font-weight:600}.ds-appearance label{display:flex;align-items:center;gap:9px;padding:10px;border-radius:5px;cursor:pointer}.ds-appearance label:hover{background:var(--hover,#f3f6fb)}.ds-appearance label:has(input:checked){background:var(--selected,#edf3ff)}.ds-appearance label:focus-within{outline:2px solid var(--focus,#225ae6);outline-offset:-2px}.ds-appearance input{accent-color:var(--blue,#225ae6)}.ds-appearance p{color:var(--muted,#626d7e);font-size:10px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Document-first workspace",
+    "overview": "Folio uses familiar desktop PDF-editor conventions with its own identity. The paper is the work surface, not a decorative preview inside a dashboard. Tools, document navigation, and review controls stay in predictable places.\n\nThe default light palette suits reviewing local documents at a normally lit desk; Dark, Sepia, and High Contrast extend the same workspace to other conditions. Actions, selection, and keyboard focus keep their semantic roles as the palette changes. The document well separates paper from the application.",
+    "keyCharacteristics": [
+      "Familiar PDF-editor organization with independently authored branding.",
+      "Compact system typography and consistent outline icons.",
+      "Clear selected, disabled, loading, error, and unsaved states.",
+      "Real document content rather than simulated page artwork."
+    ],
+    "rules": [
+      {
+        "name": "The Document Boundary Rule",
+        "body": "App selection colors and UI tokens must not recolor the user's PDF. Document fonts, artwork, and existing annotations belong to the document.",
+        "section": "colors"
+      }
+    ],
+    "dos": [
+      "Do keep the document as the primary work surface.",
+      "Do use semantic action, selection, and focus colors consistently in every palette.",
+      "Do preserve accessible names when compact layouts hide visible labels.",
+      "Do show actual document state and actionable failures.",
+      "Do keep app chrome independent of the PDF's fonts and artwork."
+    ],
+    "donts": [
+      "Don't use Adobe branding or assets extracted from Acrobat.",
+      "Don't present unsupported Acrobat features as working controls.",
+      "Don't replace PDF rendering with a static document mockup.",
+      "Don't hide a panel in CSS while leaving its toggle unable to reveal it.",
+      "Don't imply cloud upload, autosave, notarization, or complete Acrobat parity."
+    ]
+  }
+}
