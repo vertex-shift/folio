@@ -39,9 +39,11 @@ toolchain failure.
 | Workflow | Implementation |
 | --- | --- |
 | Open PDFs | Native file picker, drag-and-drop, Finder PDF association; one document at a time |
-| Read | Real PDF rendering, selectable/copyable text, lazy thumbnails, page navigation, zoom, fit page/width, hand panning |
+| Read | Continuous vertical scrolling, real PDF rendering, selectable/copyable text, lazy thumbnails, synchronized page navigation, zoom, fit page/width, hand panning |
 | Navigate | Document bookmarks and internal links; web/email links require confirmation before opening outside Folio |
 | Create | New blank US Letter or A4 PDFs, in portrait or landscape |
+| Edit existing text | Replace or delete a specific PDF content-stream text run; keep the original font or explicitly embed Noto Sans |
+| Redact | Mark rectangles and export a fresh image-only PDF with permanently blacked-out pixels and no original PDF objects/text layer/attachments/metadata |
 | Write | Placed, editable `/FreeText` annotations with embedded Noto Sans; supported Latin, Greek, and Cyrillic text |
 | Draw | Standard `/Ink` annotations with selectable color and stroke width |
 | Search | Case-insensitive or case-sensitive text and phrases, including across line breaks; result snippets and on-page marks |
@@ -58,6 +60,106 @@ toolchain failure.
 The included three-page quick-start PDF is original example content, generated
 by `scripts/prepare-assets.mjs`. It is editable, labeled as an example, and
 contains real bookmarks and links for trying the navigation tools.
+
+## Continuous scrolling
+
+Pages are stacked vertically by default. Scroll with the wheel, trackpad,
+scrollbar, or Page Up/Down; the page counter and selected thumbnail follow the
+visible page. Page buttons, page-number entry, thumbnails, bookmarks, and search
+results scroll to their targets without replacing the document with a single
+page. Left/Right still navigate by page.
+
+Page dimensions, rotations, and physical scales determine the layout.
+Folio prepares geometry with four concurrent metadata requests and renders
+only pages around the viewport, releasing off-screen canvases rather than
+rendering the entire PDF. Zoom and panel resizing preserve the current page
+and reading position. Annotations, source-text edits, and redaction marks are
+bound to the page actually clicked, not just the page counter. Highlight a
+separate passage on each page; cross-page copy selection is not a multi-page
+highlight operation.
+
+## Editing existing PDF text
+
+Choose **Write** or press **E**, then click existing text on the page. The
+**Edit existing text** panel also lists the page's actual text-show operations.
+Choose a source run from this list when a PDF splits text differently or a
+click cannot distinguish repeated/overlapping content safely.
+
+Edit the replacement and choose **Replace text**. The original font, size,
+position, color, and surrounding drawing instructions are preserved when the
+original character encoding can represent the replacement. If a subset font
+does not map a new character, the editor reports it without changing the PDF
+or losing your draft. Select **Noto Sans (embedded)** to explicitly change this
+run's typeface and embed supported Latin, Greek, or Cyrillic glyphs.
+
+This **rewrites PDF page content**, not an annotation, white rectangle, or
+new text drawn over the original. The replacement becomes selectable and
+searchable page text after saving/reopening. Clear the field to remove the
+run. Undo/redo restores the actual document contents. Shared streams and
+nested Form XObjects are copied on write, so one occurrence can be changed
+without changing another page or invocation.
+
+This is run-level editing, not a paragraph layout engine. Longer text can
+extend beyond the original run; it does not reflow neighboring lines. Replacing
+a `TJ` array rebuilds its text and does not retain per-glyph numeric kerning.
+Review the result before saving an edited copy. Text replacement is **not
+secure redaction** or document sanitization.
+
+Supported sources include standard single-byte fonts/encoding Differences
+and horizontal Identity-H fonts with supported Unicode maps. Complex Unicode
+maps, vertical/Type 3 fonts, ActualText substitution spans, optional-content
+layers, complex-script/combining-mark shaping, invisible OCR text, and clipping
+text are reported as unsupported. Noto Sans normalizes supported precomposed
+Latin/Greek accents before embedding.
+Image-only pages and outlined lettering still require OCR. Signed PDFs remain
+read-only.
+Editing is bounded per page to 16 MiB of decoded content, 200,000 drawing
+operations, 10,000 text runs, 128 distinct fonts, and 200,000 font mappings.
+Pages outside these limits remain readable but are refused by the editor.
+
+## Permanent redaction
+
+Choose **Redact a PDF** in All tools, use the floating eraser tool, or press
+**R**. Drag rectangles over sensitive content, leaving room around the full
+letters or image. A keyboard-accessible **Add an area by coordinates** form
+uses unrotated PDF points. Areas can span multiple pages and are listed in
+the Redact panel; remove individual areas or explicitly clear all marks.
+
+**Red marks are pending review UI, not applied redactions.** Choose **Export
+redacted copy**, review the whole-document rasterization warning, choose
+150 or 300 DPI, acknowledge the tradeoff, and export. Folio renders every page,
+replaces marked pixels with opaque black, and builds a **new image-only PDF**
+in Rust. The Rust engine independently burns the regions after bounded PNG
+decoding; it does not trust a frontend covering rectangle or copy original
+streams beneath an overlay. RGB data is losslessly compressed, including an
+outward-rounded, at-least-one-pixel safety margin. Transparent pixel channels
+are composited onto white, not preserved as hidden RGB/alpha data.
+
+No original PDF objects, text layer, fonts, annotations, attachments, forms,
+bookmarks, accessibility structure, or source metadata are copied. Visible
+page/annotation appearances outside marked regions become pixels. UI-only
+note markers and comment bodies are not exported. The result loses text
+search, selection, interactivity, and vector quality on **all pages**. This
+is a conservative raster redaction path, not content-preserving vector
+redaction or OCR. Only marked areas are blacked out; check other occurrences
+on every page. Open and inspect the actual exported PDF before sharing it.
+
+The original file, working PDF, unsaved changes, and undo history remain
+unchanged. Native export refuses to overwrite the active original or saved
+copy, including symlink aliases, and suggests the neutral filename
+**Redacted.pdf**. The window still shows the **original** after export:
+pending marks remain, and normal Save/download/keyboard/native-menu paths
+continue to open redaction review rather than leaking an unredacted copy.
+Source edits, page operations, and undo/redo are locked while marks exist.
+Leaving or clearing marks requires an explicit decision; cancellation and
+failure retain them. Unapplied marks are session-only, not autosaved.
+
+Exports are revision-checked, processed one page at a time, cancellable during
+rendering, and limited to **500 areas**, **24 megapixels / 16,384 pixels per
+page dimension**, **64 MiB per PNG**, and **128 MiB output**. Oversized pages
+are refused; resolution is never lowered silently. Signed PDFs and XFA forms
+are not supported by this export path. A failed or incomplete export does
+not produce a success-shaped partial PDF.
 
 ## Writing and page workflows
 
@@ -106,10 +208,19 @@ still changes appearance and an explicit message reports that it was not saved.
 Palette values live in `src/themes.css`; `src/styles.css` consumes semantic
 roles. Preference validation and system/native mappings live in `src/lib/themes.ts`.
 
+The interface uses shared rounded-control/elevation tokens, tonal mode
+selection, and restrained contextual motion. Panels reveal when opened or
+changed; controls provide quick hover/press feedback without moving their
+hit targets. Dialogs remain opaque during entry, and PDF canvases never
+animate. The device's **Reduce Motion** preference removes spatial effects
+and smooth search scrolling while retaining gentle color feedback. Theme
+changes switch text and surfaces atomically rather than fading through
+unreadable intermediate colors.
+
 ## Important boundaries
 
-- **Not full Acrobat parity.** No replacement/reflow of existing PDF text or
-  images, OCR, Office conversion, PDF creation from arbitrary inputs,
+- **Not full Acrobat parity.** Run-level source-text replacement is supported,
+  but not paragraph reflow, existing-image editing, OCR, Office conversion, PDF creation from arbitrary inputs,
   cryptographic signing,
   certificate validation, cloud storage, collaboration, AI assistant,
   accessibility remediation, preflight, or print-production workflows.
@@ -136,8 +247,9 @@ roles. Preference validation and system/native mappings live in `src/lib/themes.
   snapshot. History is in memory only.
 - No autosave or crash recovery. Only committed annotations and page edits
   belong to the document; save a copy before quitting.
-- Page deletion is **not secure redaction**. Do not use this MVP to sanitize
-  confidential PDFs or remove all recoverable information.
+- Page deletion, text replacement, ordinary annotations, and extraction are
+  **not secure redaction**. Use the dedicated redacted-copy export for marked
+  regions, accept its image-only limitations, and verify the exported file.
 
 ## Browser preview
 
@@ -162,6 +274,13 @@ than filesystem paths, restricts browser origins, and is excluded from the
 default native build. Do not expose the Vite server or preview bridge to a
 network.
 
+For a second, independent browser preview, set `FOLIO_DEV_PORT=1421` and
+`FOLIO_PREVIEW_PORT=19149` for **both** commands above. The interface then uses
+`http://127.0.0.1:1421`; the engine still binds only loopback and validates the
+matching browser origin. Defaults remain unchanged. This lets a new engine
+run without restarting a preview that has unsaved work. These overrides apply
+to browser preview; Tauri's default development URL remains port 1420.
+
 Embedded previews can themselves run inside a Tauri-based host. Folio checks
 the application identifier before enabling native commands; a host's bridge
 is not treated as Folio's bridge. Theme changes in the preview therefore
@@ -185,6 +304,11 @@ Rust Session / lopdf: annotations, page tree, snapshots, atomic save
 `desktop.rs` and the development-only `bin/preview.rs`. `pages.rs` implements
 page creation/import/extraction/duplication; `writing.rs` generates standard
 annotation appearances and embedded font maps.
+`text_edit.rs` indexes and replaces existing text-show operations, including
+nested Form invocations, with strict font decoding and isolated resource copies.
+`redaction.rs` plans crop/rotation/UserUnit-aware pixel masks, decodes bounded
+page PNGs, burns redactions, and constructs fresh image-only PDFs. The renderer
+submits one page at a time; original PDF objects never enter the output builder.
 
 Reordering first materializes inherited resources, page boxes, and rotations
 before rebuilding the page tree. Deletion prunes unreachable objects and
@@ -237,6 +361,15 @@ Additional authoring coverage checks new-document dirty state, embedded text
 appearances, Unicode normalization and supported scripts, overflow rejection,
 rotated text matrices, independent annotation copies, imported links and
 resources, safe extraction, form/signature guards, and page-range/URL parsing.
+Existing-text coverage includes all four text-show operators, repeated text,
+shared page streams and nested Forms, original and explicit embedded fonts,
+Unicode/Differences encodings, invisible/ActualText guards, deletion,
+save/reopen, undo/redo, unambiguous click targeting, and search cache invalidation.
+Redaction coverage checks every exported RGB pixel against masks, original
+byte/history preservation, removal of source objects and PNG metadata, alpha
+channel disposal, rotations/crop offsets/UserUnit, save/reopen, incomplete and
+stale exports, cancellation/generation guards, signature/XFA guards, coordinate
+validation, source overwrite protection, and exact pixel limits.
 
 The blue app mark is authored in `public/folio.svg`; native icons are generated
 with `npm run tauri -- icon public/folio.svg`. PDF.js includes independently

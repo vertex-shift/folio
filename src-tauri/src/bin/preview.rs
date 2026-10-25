@@ -38,6 +38,29 @@ struct ExtractRequest {
     pages: Vec<usize>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TextRunsRequest {
+    document_id: u64,
+    revision: u64,
+    page: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RedactionRequest {
+    document_id: u64,
+    revision: u64,
+    dpi: u16,
+    regions: Vec<folio_core::redaction::Region>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RedactionJob {
+    job_id: u64,
+}
+
 enum Payload {
     Json(serde_json::Value),
     Pdf(Vec<u8>),
@@ -78,7 +101,11 @@ fn json_body<T: serde::de::DeserializeOwned>(request: &mut Request) -> Result<T,
         .map_err(|error| Error::Invalid(format!("The preview request is invalid: {error}")))
 }
 
-fn handle(request: &mut Request, workspace: &mut Workspace) -> Result<Payload, Error> {
+fn handle(
+    request: &mut Request,
+    workspace: &mut Workspace,
+    frontend_port: u16,
+) -> Result<Payload, Error> {
     if request.url() == "/health" && request.method() == &Method::Get {
         return Ok(Payload::Json(
             serde_json::json!({ "status": "ready", "engine": "Rust / lopdf" }),
@@ -92,8 +119,8 @@ fn handle(request: &mut Request, workspace: &mut Workspace) -> Result<Payload, E
         ));
     }
     if let Some(origin) = header(request, "Origin")
-        && origin != "http://127.0.0.1:1420"
-        && origin != "http://localhost:1420"
+        && origin != format!("http://127.0.0.1:{frontend_port}")
+        && origin != format!("http://localhost:{frontend_port}")
     {
         return Err(Error::Invalid("This preview origin is not allowed.".into()));
     }
@@ -148,6 +175,55 @@ fn handle(request: &mut Request, workspace: &mut Workspace) -> Result<Payload, E
                 workspace.check_revision(id, revision)?.bytes().to_vec(),
             ));
         }
+        (&Method::Post, "/text-runs") => {
+            let input: TextRunsRequest = json_body(request)?;
+            let runs = workspace
+                .check_revision(input.document_id, input.revision)?
+                .text_runs(input.page)?;
+            return Ok(Payload::Json(serde_json::to_value(runs).map_err(
+                |error| Error::Invalid(format!("Could not serialize source text: {error}")),
+            )?));
+        }
+        (&Method::Post, "/redaction/begin") => {
+            let input: RedactionRequest = json_body(request)?;
+            let plan = workspace.begin_redaction(
+                input.document_id,
+                input.revision,
+                input.dpi,
+                &input.regions,
+            )?;
+            return Ok(Payload::Json(serde_json::to_value(plan).map_err(
+                |error| Error::Invalid(format!("Could not serialize the redaction plan: {error}")),
+            )?));
+        }
+        (&Method::Post, "/redaction/page") => {
+            let job_id = numeric_header(request, "X-Folio-Job-Id")?;
+            let page = usize::try_from(numeric_header(request, "X-Folio-Page")?)
+                .map_err(|_| Error::Invalid("The redaction page index is invalid.".into()))?;
+            let limit = folio_core::redaction::MAX_PAGE_PNG_BYTES;
+            if request.body_length().is_some_and(|length| length > limit) {
+                return Err(Error::Invalid(
+                    "A rendered page exceeds the 64 MiB PNG limit.".into(),
+                ));
+            }
+            let mut png = Vec::new();
+            request
+                .as_reader()
+                .take(limit as u64 + 1)
+                .read_to_end(&mut png)?;
+            workspace.stage_redaction_page(job_id, page, &png)?;
+            return Ok(Payload::Json(serde_json::Value::Null));
+        }
+        (&Method::Post, "/redaction/export") => {
+            let input: RedactionJob = json_body(request)?;
+            return Ok(Payload::Pdf(workspace.redaction_bytes(input.job_id)?));
+        }
+        (&Method::Post, "/redaction/cancel") => {
+            let input: RedactionJob = json_body(request)?;
+            return Ok(Payload::Json(serde_json::json!(
+                workspace.cancel_redaction(input.job_id)
+            )));
+        }
         (&Method::Post, "/edit") => {
             let input: EditRequest = json_body(request)?;
             workspace
@@ -179,23 +255,42 @@ fn numeric_header(request: &Request, name: &'static str) -> Result<u64, Error> {
         .ok_or_else(|| Error::Invalid(format!("The {name} request header is missing or invalid.")))
 }
 
+fn local_port(name: &str, fallback: u16) -> Result<u16, Error> {
+    let value = match std::env::var(name) {
+        Ok(value) => value
+            .parse::<u16>()
+            .map_err(|_| Error::Invalid(format!("{name} is not a valid port.")))?,
+        Err(std::env::VarError::NotPresent) => return Ok(fallback),
+        Err(error) => return Err(Error::Invalid(format!("{name} could not be read: {error}"))),
+    };
+    if value < 1024 {
+        return Err(Error::Invalid(format!(
+            "{name} must be from 1024 to 65535."
+        )));
+    }
+    Ok(value)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let server = Server::http("127.0.0.1:19148")?;
+    let port = local_port("FOLIO_PREVIEW_PORT", 19148)?;
+    let frontend_port = local_port("FOLIO_DEV_PORT", 1420)?;
+    let server = Server::http(("127.0.0.1", port))?;
     let mut workspace = Workspace::default();
-    println!("Folio Rust preview engine ready at http://127.0.0.1:19148");
+    println!("Folio Rust preview engine ready at http://127.0.0.1:{port}");
     for mut request in server.incoming_requests() {
-        let (bytes, content_type, status) = match handle(&mut request, &mut workspace) {
-            Ok(Payload::Json(value)) => (serde_json::to_vec(&value)?, "application/json", 200),
-            Ok(Payload::Pdf(bytes)) => (bytes, "application/pdf", 200),
-            Err(error) => {
-                eprintln!("Preview request failed: {error}");
-                (
-                    serde_json::to_vec(&serde_json::json!({ "error": error.to_string() }))?,
-                    "application/json",
-                    400,
-                )
-            }
-        };
+        let (bytes, content_type, status) =
+            match handle(&mut request, &mut workspace, frontend_port) {
+                Ok(Payload::Json(value)) => (serde_json::to_vec(&value)?, "application/json", 200),
+                Ok(Payload::Pdf(bytes)) => (bytes, "application/pdf", 200),
+                Err(error) => {
+                    eprintln!("Preview request failed: {error}");
+                    (
+                        serde_json::to_vec(&serde_json::json!({ "error": error.to_string() }))?,
+                        "application/json",
+                        400,
+                    )
+                }
+            };
         let response = Response::from_data(bytes)
             .with_status_code(StatusCode(status))
             .with_header(

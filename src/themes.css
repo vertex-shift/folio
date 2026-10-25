@@ -5,22 +5,22 @@
   --strong: #263344;
   --secondary: #4a5c77;
   --muted: #626d7e;
-  --line: #e3e7ed;
+  --line: #e7ecf3;
   --blue: #225ae6;
   --blue-ink: #174cc6;
   --blue-tint: #ecf2ff;
-  --canvas: #e4e7ec;
+  --canvas: #e9edf3;
   --surface: #ffffff;
-  --panel: #fafbfc;
-  --titlebar: #f0f2f5;
+  --panel: #f7f9fc;
+  --titlebar: #f5f7fb;
   --hover: #f3f6fb;
   --selected: #edf3ff;
   --selected-hover: #dce8ff;
-  --border: #dce1e9;
-  --control-border: #8191a8;
-  --input-bg: #fcfdff;
-  --rail: #f5f7fa;
-  --status: #f8f9fb;
+  --border: #dce3ec;
+  --control-border: #7e8da3;
+  --input-bg: #ffffff;
+  --rail: #f7f9fc;
+  --status: #f7f9fc;
   --organize: #f1f4f9;
   --card: #e9eef6;
   --card-hover: #e3eaf5;
@@ -54,8 +54,8 @@
   --annotation-badge: #fff1c6;
   --annotation-badge-ink: #78622a;
   --overlay: #1b2d475c;
-  --shadow-soft: #25334f14;
-  --shadow-strong: #0b23454a;
+  --shadow-soft: #182b4514;
+  --shadow-strong: #182b4533;
   --loading-bg: #ffffffed;
   --error-bg: #fff7f7;
   --error-ink: #8f2f38;
@@ -78,22 +78,22 @@
   --strong: #f3f6fb;
   --secondary: #c6d0e0;
   --muted: #aebbd0;
-  --line: #3c4657;
+  --line: #354152;
   --blue: #91b9ff;
   --blue-ink: #b4cfff;
   --blue-tint: #293d5b;
-  --canvas: #11151b;
+  --canvas: #131820;
   --surface: #202630;
-  --panel: #252d39;
-  --titlebar: #191f28;
+  --panel: #242d39;
+  --titlebar: #1a2029;
   --hover: #303b4a;
   --selected: #2a3b53;
   --selected-hover: #344f72;
-  --border: #424e60;
+  --border: #414e61;
   --control-border: #7c8da5;
-  --input-bg: #171d26;
-  --rail: #1b222c;
-  --status: #191f28;
+  --input-bg: #1a212c;
+  --rail: #1c232e;
+  --status: #1a2029;
   --organize: #171d26;
   --card: #252f3e;
   --card-hover: #303e52;
@@ -127,8 +127,8 @@
   --annotation-badge: #493e24;
   --annotation-badge-ink: #f6dc98;
   --overlay: #04070bc9;
-  --shadow-soft: #00000045;
-  --shadow-strong: #00000099;
+  --shadow-soft: #0000003d;
+  --shadow-strong: #00000080;
   --loading-bg: #202630ed;
   --error-bg: #3a242c;
   --error-ink: #ffb8be;
@@ -290,15 +290,15 @@
   --floating-hover: #ffffff;
 }
 
-:root[data-theme-changing] :is(.button, .organize-card) { transition: none !important; }
+:root[data-theme-changing] *, :root[data-theme-changing] *::before, :root[data-theme-changing] *::after { transition: none !important; }
 
 .appearance-control { flex-shrink: 0; display: flex; align-items: center; }
-.appearance-popover { position: fixed; z-index: 70; top: 47px; right: 16px; width: 296px; max-width: calc(100vw - 24px); background: var(--surface); color: var(--ink); border: 1px solid var(--control-border); border-radius: 9px; box-shadow: 0 8px 28px var(--shadow-strong); -webkit-user-select: none; user-select: none; }
+.appearance-popover { position: fixed; z-index: 70; top: 47px; right: 16px; width: 296px; max-width: calc(100vw - 24px); background: var(--surface); color: var(--ink); border: 1px solid var(--control-border); border-radius: var(--radius-floating); box-shadow: 0 12px 36px var(--shadow-strong), 0 2px 8px var(--shadow-soft); -webkit-user-select: none; user-select: none; animation: appearance-enter var(--motion-context) var(--ease); transform-origin: top right; }
 .appearance-heading { padding: 17px 17px 12px; display: flex; flex-direction: column; gap: 6px; }
 .appearance-heading h2 { font-size: 13px; font-weight: 650; color: var(--strong); }
 .appearance-heading > span { color: var(--muted); font-size: 11px; }
 .appearance-options { padding: 0 7px 9px; margin: 0; border: 0; min-width: 0; }
-.appearance-choice { display: flex; align-items: center; position: relative; gap: 9px; padding: 10px; border-radius: 5px; cursor: pointer; }
+.appearance-choice { display: flex; align-items: center; position: relative; gap: 9px; padding: 10px; border-radius: var(--radius-control); cursor: pointer; transition: background-color var(--motion-feedback) var(--ease); }
 .appearance-choice:hover { background: var(--hover); }
 .appearance-choice.selected { background: var(--selected); }
 .appearance-choice:focus-within { outline: 2px solid var(--focus); outline-offset: -2px; }
@@ -314,6 +314,7 @@
 .appearance-footer { border-top: 1px solid var(--border); padding: 11px 17px 13px; font-size: 10px; line-height: 1.75; color: var(--muted); }
 .appearance-footer p + p { margin-top: 3px; }
 .appearance-footer .text-button { font-size: 10px; padding: 3px 0; }
+@keyframes appearance-enter { from { transform: translateY(-3px) scale(0.99); } to { transform: translateY(0) scale(1); } }
 
 @media (max-width: 699px) {
   .appearance-control > .icon-button { width: 28px; }

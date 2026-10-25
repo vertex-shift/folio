@@ -6,12 +6,18 @@ colors:
   primary-ink: "#174cc6"
   primary-soft: "#ecf2ff"
   surface: "#ffffff"
-  canvas: "#e4e7ec"
+  canvas: "#e9edf3"
   ink: "#293241"
   muted: "#626d7e"
-  divider: "#e3e7ed"
+  divider: "#e7ecf3"
   on-primary: "#ffffff"
-  input: "#fcfdff"
+  input: "#ffffff"
+  chrome: "#f5f7fb"
+  panel: "#f7f9fc"
+  control-border: "#7e8da3"
+  document-hover: "#5a8aef22"
+  redaction-mark: "#a32134"
+  redaction-wash: "#a3213422"
 typography:
   body:
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
@@ -45,10 +51,11 @@ typography:
     fontWeight: 750
     letterSpacing: "-0.035em"
 rounded:
-  control: "5px"
-  panel: "6px"
-  toolbar: "9px"
-  dialog: "12px"
+  compact: "6px"
+  control: "8px"
+  panel: "10px"
+  toolbar: "12px"
+  dialog: "16px"
 spacing:
   tight: "4px"
   related: "8px"
@@ -82,7 +89,7 @@ components:
   count-badge:
     backgroundColor: "#eef1f6"
     textColor: "#62718a"
-    rounded: "{rounded.control}"
+    rounded: "{rounded.compact}"
     padding: "0 5px"
     height: "19px"
   page-card:
@@ -139,8 +146,8 @@ the High Contrast theme uses a separate amber focus indicator.
 
 | Palette | Surface | Document well | Main text | Action accent |
 | --- | --- | --- | --- | --- |
-| Light | `#ffffff` | `#e4e7ec` | `#293241` | `#225ae6` |
-| Dark | `#202630` | `#11151b` | `#e8edf5` | `#91b9ff` |
+| Light | `#ffffff` | `#e9edf3` | `#293241` | `#225ae6` |
+| Dark | `#202630` | `#131820` | `#e8edf5` | `#91b9ff` |
 | Sepia | `#f7f1e7` | `#dcd3c5` | `#40352a` | `#805028` |
 | High Contrast | `#080d14` | `#000000` | `#ffffff` | `#8bdeff` |
 
@@ -168,6 +175,14 @@ Do not reuse metadata sizing for primary actions.
 
 PDF page typography is rendered from the file itself. The generated example
 PDF uses standard PDF fonts; it is not the interface's typography source.
+The existing-text edit hover uses a translucent document-blue overlay, not
+the surrounding workspace palette; it is temporary UI and is never saved
+into the PDF.
+
+Pending redaction areas use a fixed document-red dashed outline (`#a32134`)
+and translucent wash (`#a3213422`), with a white numbered label. These are
+review UI on white paper, not applied black rectangles. The exported copy
+uses opaque black pixels, independent of the workspace theme.
 
 ## Layout
 
@@ -177,6 +192,13 @@ The tool panel is 226px wide; search/comments use 274px. The thumbnail
 rail is 157px, and the utility rail is 43px.
 
 The document scroll area owns page overflow, including at high zoom.
+Pages form a continuous vertical stack with 24px gaps and their own dimensions.
+Only the viewport neighborhood mounts full renderers; off-screen page positions
+are reserved by geometry, not miniature document screenshots. Page navigation
+scrolls within the stack, and the counter/thumbnail selection follows the most
+visible page. Resizing and zoom retain the reading anchor. Page Up/Down scroll
+the viewport; Left/Right remain page navigation. The trailing workspace allows
+even a short final page to align with the top when explicitly navigated to.
 The page and zoom toolbar stays near the bottom of that area. A floating
 vertical review toolbar groups selection/panning separately from annotations.
 The mode bar now includes Read, Write, Comment, and Organize. Writing settings
@@ -186,6 +208,8 @@ At 1199px and below the shell becomes denser. Tool panels become overlays
 at 899px and below. Below 700px, the browser preview uses icon-only controls
 with accessible names and an explicitly toggled thumbnail overlay. Entering
 a compact layout closes panels rather than leaving them invisibly active.
+Below 480px the title and mode toolbars tighten further so appearance, help,
+history, and save controls remain in bounds in a narrow embedded preview.
 The native desktop window has an 820px minimum width; narrow browser
 previews do not imply a native mobile product.
 
@@ -197,17 +221,24 @@ Theme-specific shadow colors keep elevation appropriate to light and dark
 surfaces; the following values describe the Light baseline.
 
 - Paper: `0 2px 5px #24324816, 0 8px 26px #24324812`.
-- Page/zoom controls: `0 4px 14px #25334f14`.
-- Dialog: `0 15px 65px #0b23454a`.
-- Compact thumbnail drawer: `-6px 0 18px #25334f14`.
+- Page/zoom controls: `0 8px 24px var(--shadow-soft), 0 1px 3px var(--shadow-soft)`.
+- Dialog: `0 20px 64px var(--shadow-strong), 0 4px 16px var(--shadow-soft)`.
+- Compact thumbnail drawer: `-6px 0 18px var(--shadow-soft)`.
+
+Light chrome uses `#f5f7fb`, with `#f7f9fc` secondary surfaces. Light shadows
+use `#182b4514` and `#182b4533`; Dark uses `#0000003d` and `#00000080`.
+These are bounded, offset elevation cues, not glass, blur, or accent glows.
 
 Shadows distinguish interaction layers, not generic content cards.
 
 ## Shapes
 
-Standard controls use 5px corners; utility panels and page cards use 6px.
-Floating view controls use 9px and dialogs 12px. Document paper remains
-rectangular. The document tab rounds only its top corners.
+Standard controls use 8px corners; utility rows and page cards use 10px.
+Floating controls use 12px and protected dialogs 16px. Compact numeric fields
+and metadata badges use 6px. Shared CSS radius tokens own these roles.
+Document paper remains rectangular; document annotations, miniature theme
+swatches, and the authored brand mark retain their domain-specific shapes.
+The document tab rounds only its top corners.
 
 Icons use Lucide's consistent outline vocabulary, with a 1.8px stroke.
 The original Folio mark is authored in `public/folio.svg`; native raster
@@ -218,9 +249,13 @@ icons are generated from that source.
 Primary and secondary buttons share density and spacing. Primary actions
 are blue; secondary actions are white with an outlined boundary. Icon-only
 buttons carry explicit names and tooltips, including when text is hidden.
+Tool rows are 40px tall; the retained instructional tip is compact enough
+to keep keyboard help reachable without shrinking action typography.
+Comment edit/remove buttons provide 26px by 28px targets.
 
 The search field is a compact outlined group, with a visible focus-within
-state. The mode navigation uses a blue underline plus text/icon state;
+state. The mode navigation uses a softly filled active segment, blue underline,
+and text/icon state;
 color alone does not identify the current mode. Page thumbnails use both
 an outlined selection and a selected page-number treatment.
 
@@ -230,6 +265,28 @@ wraps at narrow widths; it does not add a second navigation hierarchy.
 Bookmarks are an indented list of standard buttons. Document links are
 transparent hit targets over actual PDF geometry, with visible keyboard focus.
 External links require an explicit confirmation that displays the address.
+
+Write defaults to the existing-text editor. The panel lists source runs with
+their font and size; unsupported entries explain why they cannot be changed.
+Rendered PDF text gains keyboard-focusable edit targets only while Edit text
+is active. Ambiguous clicks defer to the source list rather than guessing.
+The replacement dialog uses the existing textarea/select/button system and
+offers original-font preservation or an explicit embedded-font change.
+Deletion drafts participate in exit protection even when the replacement
+field is empty.
+
+Redact uses the existing tool panel, floating toolbar, and protected dialog
+system. Rectangle dragging is complemented by a keyboard-accessible coordinate
+form. Review content scrolls above a fixed export footer; compact overlays
+offer Mark on page to reveal the work surface, without a tip covering PDF
+content. A persistent notice identifies the original and unapplied marks. While
+marks exist, source edits/history/page operations are locked; Save and its
+native/keyboard paths open redaction review instead of exporting the original.
+The export dialog explains whole-document rasterization, requires an explicit
+acknowledgment, offers 150/300 DPI, and shows cancellable page progress.
+Export creates a separate PDF; it does not clear marks or imply that the
+original shown in the window was redacted. Leaving or clearing marks requires
+an explicit protected decision.
 
 Text-entry dialogs retain their contents and display errors inline when a
 PDF operation is rejected. Uncommitted note/text drafts participate in exit
@@ -248,10 +305,26 @@ safe, and restore focus on dismissal.
 
 Focus uses a 2px outline with a 3px offset. Its color follows the palette,
 with amber in High Contrast; controls on a PDF retain a blue focus indicator
-that is visible against white paper. Buttons use 140ms hover transitions,
-but palette changes switch text and surfaces atomically to prevent transient
-contrast failures. Dialog entry takes 180ms with the recorded ease-out curve.
-Reduced-motion preferences disable ongoing animation and smooth scrolling.
+that is visible against white paper. Palette changes switch text and surfaces
+atomically, without interpolating through low-contrast intermediate colors.
+
+## Motion
+
+**Thesis:** tools reveal context; the document remains still. The authored
+moment is a 200ms side-panel mask reveal with a 5px lateral settle, using
+`cubic-bezier(0.16, 1, 0.3, 1)`. It runs only when a panel opens or changes
+purpose, never when a page scrolls or a source-text list refreshes.
+
+Supporting feedback uses 140ms color/border transitions and 100ms press
+feedback. Only the button's icon/label moves by 1px; its hit target does not
+move or shrink. Popovers settle from 3px above; protected dialogs settle 5px
+with a 0.99 scale. Dialog surfaces stay opaque throughout; the scrim changes
+separately. Notifications use a short opacity acknowledgment.
+
+The work is bounded to chrome; no page/canvas animation, scroll reveal,
+staggered tool rows, width/height animation, persistent will-change, or motion
+dependency. Reduced Motion removes spatial/keyframe animation and smooth
+search scrolling, preserving 80ms color feedback and all visible state cues.
 
 ## Do's and Don'ts
 

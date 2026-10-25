@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-22T22:12:00Z",
+  "generatedAt": "2026-10-25T03:29:24Z",
   "title": "Design System: Folio",
   "extensions": {
     "colorMeta": {
@@ -27,7 +27,7 @@
       "canvas": {
         "role": "neutral",
         "displayName": "Slate Document Well",
-        "tonalRamp": ["#151b25", "#293241", "#465165", "#626d7e", "#8d97a6", "#b9c1cd", "#e4e7ec", "#f5f7fa"]
+        "tonalRamp": ["#151b25", "#293241", "#465165", "#626d7e", "#8d97a6", "#b9c1cd", "#e9edf3", "#f5f7fa"]
       },
       "ink": {
         "role": "neutral",
@@ -42,7 +42,7 @@
       "divider": {
         "role": "neutral",
         "displayName": "Cool Divider",
-        "tonalRamp": ["#151b25", "#293241", "#465165", "#626d7e", "#8d97a6", "#b9c1cd", "#e3e7ed", "#f5f7fa"]
+        "tonalRamp": ["#151b25", "#293241", "#465165", "#626d7e", "#8d97a6", "#b9c1cd", "#e7ecf3", "#f5f7fa"]
       }
     },
     "typographyMeta": {
@@ -56,20 +56,24 @@
     },
     "shadows": [
       { "name": "paper", "value": "0 2px 5px #24324816, 0 8px 26px #24324812", "purpose": "Separate real paper from the document well." },
-      { "name": "view-controls", "value": "0 4px 14px var(--shadow-soft, #25334f14)", "purpose": "Keep page and zoom actions above the document in every palette." },
-      { "name": "dialog", "value": "0 15px 65px var(--shadow-strong, #0b23454a)", "purpose": "Protected modal interaction." },
-      { "name": "thumbnail-drawer", "value": "-6px 0 18px var(--shadow-soft, #25334f14)", "purpose": "Compact browser-preview page overlay." }
+      { "name": "view-controls", "value": "0 8px 24px var(--shadow-soft), 0 1px 3px var(--shadow-soft)", "purpose": "Keep page and zoom actions above the document in every palette." },
+      { "name": "dialog", "value": "0 20px 64px var(--shadow-strong), 0 4px 16px var(--shadow-soft)", "purpose": "Opaque protected modal interaction." },
+      { "name": "thumbnail-drawer", "value": "-6px 0 18px var(--shadow-soft)", "purpose": "Compact browser-preview page overlay." }
     ],
     "motion": [
       { "name": "ease-out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Control transitions and dialog entry." },
       { "name": "control-state", "value": "140ms", "purpose": "Background and border state changes." },
-      { "name": "dialog-entry", "value": "180ms", "purpose": "Small dialog entrance; disabled for reduced motion." }
+      { "name": "context-reveal", "value": "200ms", "purpose": "Bounded side-panel mask/lateral settle; never a PDF page reveal." },
+      { "name": "press-feedback", "value": "100ms", "purpose": "Move icon/label paint by 1px without moving the hit target." },
+      { "name": "dialog-entry", "value": "200ms", "purpose": "Opaque dialog settle; disabled for reduced motion." },
+      { "name": "reduced-feedback", "value": "80ms", "purpose": "Retain color acknowledgment with no spatial or keyframe animation." }
     ],
     "breakpoints": [
       { "name": "dense-shell", "value": "1199px" },
       { "name": "auto-collapse-tools", "value": "1099px" },
       { "name": "tools-overlay", "value": "899px" },
-      { "name": "compact-preview", "value": "699px" }
+      { "name": "compact-preview", "value": "699px" },
+      { "name": "narrow-preview-toolbar", "value": "479px" }
     ]
   },
   "components": [
@@ -79,7 +83,7 @@
       "refersTo": "writing-setting",
       "description": "A compact semantic field for PDF text size or pen width.",
       "html": "<label class=\"ds-writing-setting\">Text size (pt)<input type=\"number\" min=\"6\" max=\"96\" value=\"14\"/></label>",
-      "css": ".ds-writing-setting{display:flex;align-items:center;justify-content:space-between;gap:9px;color:var(--secondary,#4a5c77);font:11px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.ds-writing-setting input{width:77px;min-height:33px;padding:5px 9px;border:1px solid var(--control-border,#8191a8);border-radius:5px;background:var(--input-bg,#fcfdff);color:var(--ink,#293241);font:inherit;font-variant-numeric:tabular-nums}.ds-writing-setting input:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:3px}"
+      "css": ".ds-writing-setting{display:flex;align-items:center;justify-content:space-between;gap:9px;color:var(--secondary,#4a5c77);font:11px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.ds-writing-setting input{width:77px;min-height:33px;padding:5px 9px;border:1px solid var(--control-border,#7e8da3);border-radius:8px;background:var(--input-bg,#fff);color:var(--ink,#293241);font:inherit;font-variant-numeric:tabular-nums}.ds-writing-setting input:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:3px}"
     },
     {
       "name": "Primary Button",
@@ -87,7 +91,7 @@
       "refersTo": "button-primary",
       "description": "The primary save/export action.",
       "html": "<button class=\"ds-primary\">Save a copy</button>",
-      "css": ".ds-primary{font:600 12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:34px;padding:7px 13px;border:1px solid var(--blue,#225ae6);border-radius:5px;color:var(--on-primary,#fff);background:var(--blue,#225ae6);cursor:pointer;transition:background 140ms cubic-bezier(.16,1,.3,1)}.ds-primary:hover{background:var(--primary-hover,#174ac8);border-color:var(--primary-hover,#174ac8)}.ds-primary:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:3px}.ds-primary:disabled{opacity:.38;cursor:not-allowed}"
+      "css": ".ds-primary{font:600 12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:34px;padding:7px 13px;border:1px solid var(--blue,#225ae6);border-radius:8px;color:var(--on-primary,#fff);background:var(--blue,#225ae6);cursor:pointer;transition:background-color 140ms cubic-bezier(.16,1,.3,1)}.ds-primary:hover{background:var(--primary-hover,#174ac8);border-color:var(--primary-hover,#174ac8)}.ds-primary:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:3px}.ds-primary:disabled{opacity:.38;cursor:not-allowed}"
     },
     {
       "name": "Secondary Button",
@@ -95,7 +99,7 @@
       "refersTo": "button-secondary",
       "description": "Supporting document actions and cancellation.",
       "html": "<button class=\"ds-secondary\">Open PDF</button>",
-      "css": ".ds-secondary{font:600 12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:34px;padding:7px 13px;border:1px solid var(--control-border,#8191a8);border-radius:5px;color:var(--secondary,#4a5c77);background:var(--surface,#fff);cursor:pointer;transition:background 140ms cubic-bezier(.16,1,.3,1)}.ds-secondary:hover{background:var(--hover,#f3f6fb)}.ds-secondary:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:3px}"
+      "css": ".ds-secondary{font:600 12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:34px;padding:7px 13px;border:1px solid var(--control-border,#7e8da3);border-radius:8px;color:var(--secondary,#4a5c77);background:var(--surface,#fff);cursor:pointer;transition:background-color 140ms cubic-bezier(.16,1,.3,1)}.ds-secondary:hover{background:var(--hover,#f3f6fb)}.ds-secondary:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:3px}"
     },
     {
       "name": "Search Field",
@@ -103,15 +107,15 @@
       "refersTo": "search-input",
       "description": "Local text search with a visible grouped focus state.",
       "html": "<label class=\"ds-search\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><circle cx=\"10\" cy=\"10\" r=\"6\"/><path d=\"m14.5 14.5 5 5\"/></svg><input aria-label=\"Search PDF text\" placeholder=\"Word or phrase\"/></label>",
-      "css": ".ds-search{height:36px;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--control-border,#8191a8);border-radius:5px;color:var(--icon,#586579);background:var(--input-bg,#fcfdff)}.ds-search:focus-within{border-color:var(--focus,#225ae6);box-shadow:0 0 0 2px var(--blue-tint,#ecf2ff)}.ds-search input{min-width:0;width:100%;height:100%;border:0;background:transparent;color:var(--ink,#293241);caret-color:var(--blue,#225ae6);font:12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;outline:none}.ds-search input::placeholder{color:var(--muted,#626d7e)}"
+      "css": ".ds-search{height:36px;display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--control-border,#7e8da3);border-radius:8px;color:var(--icon,#586579);background:var(--input-bg,#fff)}.ds-search:focus-within{border-color:var(--focus,#225ae6);box-shadow:0 0 0 2px var(--blue-tint,#ecf2ff)}.ds-search input{min-width:0;width:100%;height:100%;border:0;background:transparent;color:var(--ink,#293241);caret-color:var(--blue,#225ae6);font:12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;outline:none}.ds-search input::placeholder{color:var(--muted,#626d7e)}"
     },
     {
       "name": "Document Modes",
       "kind": "nav",
       "refersTo": "document-tabs",
-      "description": "Read, review, and organize without replacing the document workspace.",
-      "html": "<nav class=\"ds-modes\" aria-label=\"Document workspace\"><button aria-current=\"page\">Read</button><button>Comment</button><button>Organize</button></nav>",
-      "css": ".ds-modes{display:flex;height:55px;background:var(--surface,#fff)}.ds-modes button{position:relative;padding:0 18px;border:0;background:transparent;color:var(--muted,#626d7e);font:12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:pointer}.ds-modes button:hover{background:var(--hover,#f3f6fb)}.ds-modes [aria-current]{color:var(--blue-ink,#174cc6);font-weight:600}.ds-modes [aria-current]::after{content:'';position:absolute;height:2px;bottom:0;left:17px;right:17px;background:var(--blue,#225ae6)}.ds-modes button:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:-3px}"
+      "description": "Read, write, review, and organize in a tonal mode group without replacing the document workspace.",
+      "html": "<nav class=\"ds-modes\" aria-label=\"Document workspace\"><button aria-current=\"page\">Read</button><button>Write</button><button>Comment</button><button>Organize</button></nav>",
+      "css": ".ds-modes{display:flex;gap:4px;height:55px;padding:7px 4px;background:var(--surface,#fff)}.ds-modes button{position:relative;padding:0 14px;border:0;border-radius:8px;background:transparent;color:var(--muted,#626d7e);font:12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:pointer}.ds-modes button:hover{background:var(--hover,#f3f6fb)}.ds-modes [aria-current]{color:var(--blue-ink,#174cc6);background:var(--blue-tint,#ecf2ff);font-weight:600}.ds-modes [aria-current]::after{content:'';position:absolute;height:2px;bottom:3px;left:14px;right:14px;background:var(--blue,#225ae6)}.ds-modes button:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:3px}"
     },
     {
       "name": "Annotation Count",
@@ -119,7 +123,7 @@
       "refersTo": "count-badge",
       "description": "Read-only metadata, not a filter or an action.",
       "html": "<span class=\"ds-count\" aria-label=\"3 annotations\">3</span>",
-      "css": ".ds-count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:19px;padding:0 5px;border-radius:5px;background:var(--badge-bg,#eef1f6);color:var(--badge-ink,#52627b);font:10px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-variant-numeric:tabular-nums}"
+      "css": ".ds-count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:19px;padding:0 5px;border-radius:6px;background:var(--badge-bg,#eef1f6);color:var(--badge-ink,#52627b);font:10px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-variant-numeric:tabular-nums}"
     },
     {
       "name": "Organize Page Card",
@@ -127,7 +131,7 @@
       "refersTo": "page-card",
       "description": "Selectable page container; the real application renders a PDF thumbnail inside it.",
       "html": "<button class=\"ds-page-card\" aria-label=\"Select page 1\" aria-pressed=\"true\"><span class=\"ds-page-preview\">PDF page</span><span>Page 1</span></button>",
-      "css": ".ds-page-card{display:flex;flex-direction:column;align-items:center;gap:16px;width:178px;padding:16px 8px 13px;border:1px solid var(--card-selected-border,#7399e6);border-radius:6px;background:var(--card-selected,#e4edff);color:var(--secondary,#4a5c77);font:10px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:grab}.ds-page-card:hover{border-color:var(--blue,#225ae6)}.ds-page-card:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:3px}.ds-page-preview{display:flex;align-items:center;justify-content:center;width:130px;height:168px;background:#fff;color:#626d7e;box-shadow:0 1px 4px #31425f24}"
+      "css": ".ds-page-card{display:flex;flex-direction:column;align-items:center;gap:16px;width:178px;padding:16px 8px 13px;border:1px solid var(--card-selected-border,#7399e6);border-radius:10px;background:var(--card-selected,#e4edff);color:var(--secondary,#4a5c77);font:10px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:grab}.ds-page-card:hover{border-color:var(--blue,#225ae6)}.ds-page-card:focus-visible{outline:2px solid var(--focus,#225ae6);outline-offset:3px}.ds-page-preview{display:flex;align-items:center;justify-content:center;width:130px;height:168px;background:#fff;color:#626d7e;box-shadow:0 1px 4px #31425f24}"
     },
     {
       "name": "Appearance Picker",
@@ -135,7 +139,7 @@
       "refersTo": "appearance-picker",
       "description": "A nonmodal theme chooser; the app adds persistence, live system changes, and native chrome synchronization.",
       "html": "<fieldset class=\"ds-appearance\" aria-label=\"Color theme\"><legend>Appearance</legend><label><input type=\"radio\" name=\"ds-theme\" checked/>System</label><label><input type=\"radio\" name=\"ds-theme\"/>Light</label><label><input type=\"radio\" name=\"ds-theme\"/>Dark</label><label><input type=\"radio\" name=\"ds-theme\"/>Sepia</label><label><input type=\"radio\" name=\"ds-theme\"/>High Contrast</label><p>PDF colors stay unchanged.</p></fieldset>",
-      "css": ".ds-appearance{width:260px;padding:14px;border:1px solid var(--control-border,#8191a8);border-radius:9px;background:var(--surface,#fff);color:var(--ink,#293241);font:12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.ds-appearance legend{font-weight:600}.ds-appearance label{display:flex;align-items:center;gap:9px;padding:10px;border-radius:5px;cursor:pointer}.ds-appearance label:hover{background:var(--hover,#f3f6fb)}.ds-appearance label:has(input:checked){background:var(--selected,#edf3ff)}.ds-appearance label:focus-within{outline:2px solid var(--focus,#225ae6);outline-offset:-2px}.ds-appearance input{accent-color:var(--blue,#225ae6)}.ds-appearance p{color:var(--muted,#626d7e);font-size:10px}"
+      "css": ".ds-appearance{width:260px;padding:14px;border:1px solid var(--control-border,#7e8da3);border-radius:12px;background:var(--surface,#fff);color:var(--ink,#293241);font:12px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.ds-appearance legend{font-weight:600}.ds-appearance label{display:flex;align-items:center;gap:9px;padding:10px;border-radius:8px;cursor:pointer}.ds-appearance label:hover{background:var(--hover,#f3f6fb)}.ds-appearance label:has(input:checked){background:var(--selected,#edf3ff)}.ds-appearance label:focus-within{outline:2px solid var(--focus,#225ae6);outline-offset:-2px}.ds-appearance input{accent-color:var(--blue,#225ae6)}.ds-appearance p{color:var(--muted,#626d7e);font-size:10px}"
     }
   ],
   "narrative": {
@@ -150,8 +154,13 @@
     "rules": [
       {
         "name": "The Document Boundary Rule",
-        "body": "App selection colors and UI tokens must not recolor the user's PDF. Document fonts, artwork, and existing annotations belong to the document.",
+        "body": "App selection colors and UI tokens must not recolor the user's PDF. Document fonts, artwork, and existing annotations belong to the document. Continuous reading uses 24px gaps, viewport-bounded renderers, synchronized page navigation, and stable zoom/resize anchors.",
         "section": "colors"
+      },
+      {
+        "name": "Pending redaction boundary",
+        "body": "Pending areas use fixed document-red #a32134 outlines, #a3213422 washes, and white numbered labels. These are review UI; only exported fresh image-only PDFs contain permanent black pixels. Preserve the original, protect pending marks, and disclose whole-document rasterization. Scroll review content above a fixed export footer; compact panels provide Mark on page and no tip obscures the PDF.",
+        "section": "components"
       }
     ],
     "dos": [

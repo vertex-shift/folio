@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { errorMessage } from "./geometry";
 import { excerpt, findMatches, mapText } from "./search";
+import { textRevisionKey } from "./existingText";
 import type { DocumentInfo, SearchResult } from "./types";
 
 interface State {
@@ -24,12 +25,13 @@ export function useSearch(
 ) {
   const [state, setState] = useState<State>(empty);
   const cache = useRef(new Map<string, string>());
-  const cacheDocument = useRef<number | null>(null);
+  const cacheDocument = useRef<string | null>(null);
 
   useEffect(() => {
-    if (cacheDocument.current !== info?.id) {
+    const revision = info ? textRevisionKey(info) : null;
+    if (cacheDocument.current !== revision) {
       cache.current.clear();
-      cacheDocument.current = info?.id ?? null;
+      cacheDocument.current = revision;
     }
     if (!pdf || !info || !query.trim() || !enabled) {
       setState(empty);

@@ -167,14 +167,12 @@ async fn extract_document_pages(
     let path = pdf_output_path(file.path().to_path_buf())?;
     with_state(app, move |state| {
         let session = state.workspace.check_revision(document_id, revision)?;
-        for original in [&session.source_path, &session.saved_path].into_iter().flatten() {
-            if path == *original || (path.exists() && original.exists() && path.canonicalize()? == original.canonicalize()?) {
-                return Err(Error::Invalid("Choose a different filename; extracting pages must not overwrite the active PDF.".into()));
-            }
-        }
+        session.ensure_separate_output(&path)?;
         atomic_write(&path, &bytes)?;
         Ok(path.to_string_lossy().into_owned())
-    }).await.map(Some)
+    })
+    .await
+    .map(Some)
 }
 
 fn pdf_output_path(mut path: PathBuf) -> std::result::Result<PathBuf, String> {
@@ -219,6 +217,106 @@ async fn edit_document(
             .workspace
             .current_mut(document_id, revision)?
             .apply(edit)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn page_text_runs(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+    page: usize,
+) -> std::result::Result<Vec<crate::text_edit::TextRun>, String> {
+    with_state(app, move |state| {
+        state
+            .workspace
+            .check_revision(document_id, revision)?
+            .text_runs(page)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn begin_redaction(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+    dpi: u16,
+    regions: Vec<crate::redaction::Region>,
+) -> std::result::Result<crate::redaction::Plan, String> {
+    with_state(app, move |state| {
+        state
+            .workspace
+            .begin_redaction(document_id, revision, dpi, &regions)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn stage_redaction_page(
+    app: AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> std::result::Result<(), String> {
+    let number = |name: &str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or_else(|| format!("The {name} redaction header is missing or invalid."))
+    };
+    let job_id = number("x-folio-job-id")?;
+    let page = usize::try_from(number("x-folio-page")?)
+        .map_err(|_| "The redaction page index is invalid.")?;
+    let tauri::ipc::InvokeBody::Raw(png) = request.body() else {
+        return Err("A redaction page must be sent as binary PNG data.".into());
+    };
+    if png.len() > crate::redaction::MAX_PAGE_PNG_BYTES {
+        return Err("A rendered page exceeds the 64 MiB PNG limit.".into());
+    }
+    let png = png.clone();
+    with_state(app, move |state| {
+        state.workspace.stage_redaction_page(job_id, page, &png)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn export_redacted_copy(
+    app: AppHandle,
+    job_id: u64,
+) -> std::result::Result<Option<String>, String> {
+    let bytes = with_state(app.clone(), move |state| {
+        state.workspace.redaction_bytes(job_id)
+    })
+    .await?;
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .set_title("Export a permanently redacted PDF copy")
+        .add_filter("PDF document", &["pdf"])
+        .set_file_name("Redacted.pdf")
+        .save_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    let path = pdf_output_path(file.path().to_path_buf())?;
+    with_state(app, move |state| {
+        state
+            .workspace
+            .check_redaction(job_id)?
+            .ensure_separate_output(&path)?;
+        atomic_write(&path, &bytes)?;
+        Ok(path.to_string_lossy().into_owned())
+    })
+    .await
+    .map(Some)
+}
+
+#[tauri::command]
+async fn cancel_redaction(app: AppHandle, job_id: u64) -> std::result::Result<bool, String> {
+    with_state(app, move |state| {
+        Ok(state.workspace.cancel_redaction(job_id))
     })
     .await
 }
@@ -443,6 +541,11 @@ pub fn run() {
             open_example,
             document_bytes,
             edit_document,
+            page_text_runs,
+            begin_redaction,
+            stage_redaction_page,
+            export_redacted_copy,
+            cancel_redaction,
             undo_document,
             redo_document,
             save_document,

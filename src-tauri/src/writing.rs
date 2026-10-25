@@ -162,6 +162,64 @@ fn text_appearance(
             "The text does not fit this box. Use fewer lines, a smaller size, or place it higher on the page.",
         ));
     }
+    let (font, encoded) = embed_text_font(document, text)?;
+    let mut operations = vec![
+        Operation::new("q", vec![]),
+        Operation::new("BT", vec![]),
+        Operation::new("Tf", vec![Object::Name(b"FolioFont".to_vec()), size.into()]),
+        Operation::new("rg", color.iter().map(|value| (*value).into()).collect()),
+        Operation::new("TL", vec![leading.into()]),
+        Operation::new("Td", vec![4.0.into(), (local_height - 4.0 - ascent).into()]),
+    ];
+    for (index, line) in lines.iter().enumerate() {
+        if index > 0 {
+            operations.push(Operation::new("T*", vec![]));
+        }
+        let bytes: Vec<_> = line
+            .chars()
+            .flat_map(|character| encoded[&character].to_be_bytes())
+            .collect();
+        operations.push(Operation::new(
+            "Tj",
+            vec![Object::String(bytes, StringFormat::Hexadecimal)],
+        ));
+    }
+    operations.extend([Operation::new("ET", vec![]), Operation::new("Q", vec![])]);
+    Ok(document.add_object(Stream::new(
+        dictionary! {
+            "Type" => "XObject", "Subtype" => "Form",
+            "BBox" => numbers(&[0.0, 0.0, local_width, local_height]), "Matrix" => numbers(&matrix),
+            "Resources" => dictionary! { "Font" => dictionary! { "FolioFont" => font } },
+        },
+        Content { operations }.encode()?,
+    )))
+}
+
+pub(crate) fn embed_text_font(
+    document: &mut Document,
+    text: &str,
+) -> Result<(ObjectId, BTreeMap<char, u16>)> {
+    let face = ttf_parser::Face::parse(FONT, 0)
+        .map_err(|error| invalid(format!("The bundled text font is invalid: {error}")))?;
+    let unit = 1000.0 / f32::from(face.units_per_em());
+    let mut glyphs = BTreeMap::new();
+    for character in text.chars().filter(|character| *character != '\n') {
+        let code = character as u32;
+        if character.is_control()
+            || !matches!(code, 0x20..=0x24f | 0x370..=0x52f | 0x2000..=0x206f | 0x20a0..=0x20cf)
+        {
+            return Err(invalid(format!(
+                "The embedded Noto Sans font supports Latin, Greek, and Cyrillic text (unsupported U+{code:04X})."
+            )));
+        }
+        let glyph = face
+            .glyph_index(character)
+            .ok_or_else(|| invalid(format!("The bundled font does not contain U+{code:04X}.")))?;
+        glyphs.entry(character).or_insert((
+            glyph.0,
+            f32::from(face.glyph_hor_advance(glyph).unwrap_or(face.units_per_em())) * unit,
+        ));
+    }
     let mut font_file = Stream::new(
         dictionary! { "Length1" => FONT.len() as i64 },
         FONT.to_vec(),
@@ -210,36 +268,7 @@ fn text_appearance(
         "Encoding" => "Identity-H", "DescendantFonts" => vec![Object::Reference(descendant)],
         "ToUnicode" => to_unicode,
     });
-    let mut operations = vec![
-        Operation::new("q", vec![]),
-        Operation::new("BT", vec![]),
-        Operation::new("Tf", vec![Object::Name(b"FolioFont".to_vec()), size.into()]),
-        Operation::new("rg", color.iter().map(|value| (*value).into()).collect()),
-        Operation::new("TL", vec![leading.into()]),
-        Operation::new("Td", vec![4.0.into(), (local_height - 4.0 - ascent).into()]),
-    ];
-    for (index, line) in lines.iter().enumerate() {
-        if index > 0 {
-            operations.push(Operation::new("T*", vec![]));
-        }
-        let bytes: Vec<_> = line
-            .chars()
-            .flat_map(|character| encoded[&character].to_be_bytes())
-            .collect();
-        operations.push(Operation::new(
-            "Tj",
-            vec![Object::String(bytes, StringFormat::Hexadecimal)],
-        ));
-    }
-    operations.extend([Operation::new("ET", vec![]), Operation::new("Q", vec![])]);
-    Ok(document.add_object(Stream::new(
-        dictionary! {
-            "Type" => "XObject", "Subtype" => "Form",
-            "BBox" => numbers(&[0.0, 0.0, local_width, local_height]), "Matrix" => numbers(&matrix),
-            "Resources" => dictionary! { "Font" => dictionary! { "FolioFont" => font } },
-        },
-        Content { operations }.encode()?,
-    )))
+    Ok((font, encoded))
 }
 
 pub(crate) fn ink_annotation(

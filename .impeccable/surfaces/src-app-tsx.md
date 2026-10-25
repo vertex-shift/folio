@@ -54,6 +54,22 @@ persist locally and synchronize native light/dark application chrome.
 Semantic color roles change without changing composition, PDF pixels,
 annotation colors, document bytes, or document dirty state.
 
+## Modern polish and subtle motion
+
+Refine, do not replace, the incumbent document-first world. Unify controls
+at 8px corners, rows/cards at 10px, floating tools at 12px, and protected
+dialogs at 16px. Use cleaner Light/graphite Dark chrome, restrained offset
+elevation, compact system typography, and a tonal active mode segment.
+Preserve all five themes, factual copy, tool locations, and PDF pixels.
+
+Motion thesis: contextual tools reveal their relationship to the document,
+while the document itself stays still. The focal moment is a 200ms panel
+mask/lateral settle; supporting colors respond in 140ms and press feedback
+in 100ms. Animate icon/label paint, not control hit boxes or PDF geometry.
+No layout-driving animation, decorative loops, page reveals, or dependencies.
+Reduce Motion removes spatial movement and smooth scrolling but retains
+80ms color feedback. Theme switching remains atomic for contrast.
+
 ## Read/write authoring extension
 
 The user asked to continue toward Acrobat read/write parity. This milestone
@@ -63,3 +79,37 @@ identity. Write and Organize expose only working operations. Clearly distinguish
 editable text annotations from rewriting existing content, and preserve drafts
 when validation fails. Actual PDF save/reopen is the acceptance condition;
 unsupported forms, signatures, scripts, and complex structures remain explicit.
+
+## Existing-text editing
+
+The user explicitly requested edits to text already in a PDF. Write now
+opens Edit existing text: page text is clickable and keyboard-focusable,
+and a source-run list handles split or ambiguous content. The dialog changes
+the selected content-stream operation, never an annotation overlay. Keep
+original font/size/position/color when the font can encode the replacement;
+make replacement-font changes explicit. Require save/reopen, search, undo,
+and shared-resource isolation as evidence. Surface unsupported formats and
+non-reflowing layout limits without losing the user's draft.
+
+## Continuous reading
+
+Stack real pages vertically without changing the document-first world.
+Keep 24px page gaps and a stable reading anchor through zoom and panel
+resizing. Render only the viewport neighborhood. Scroll updates the page
+counter and thumbnail; page entry, bookmarks, and search scroll to targets.
+Every editing/annotation/redaction event must carry its originating page,
+including when a different page occupies most of the viewport.
+
+## Permanent redaction
+
+Add rectangle redaction without confusing a pending overlay with secure
+removal. Pending marks remain visibly red and numbered, with the original
+clearly identified. A coordinate form provides keyboard access. Export
+rebuilds every page as a lossless image and burns reviewed areas black; the
+copy retains no original text layer, attachments, metadata, or hidden PDF
+objects. Whole-document rasterization and loss of search/selection/vector
+quality must be explicit and acknowledged. Keep the source, unsaved work, and
+history unchanged. Lock source mutations while marks exist, route all Save
+paths through review, protect marks on exit, and retain them after failure,
+cancellation, and export. Verify exported pixels and absence of original
+objects, not merely the appearance of the on-page overlay.

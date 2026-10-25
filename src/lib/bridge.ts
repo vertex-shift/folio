@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getIdentifier } from "@tauri-apps/api/app";
-import type { DocumentInfo, Edit } from "./types";
+import type { DocumentInfo, Edit, ExistingTextRun, RedactionPlan, RedactionRegion } from "./types";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { safeExternalUrl } from "./navigation";
 import { resolveRuntime } from "./runtime";
@@ -136,6 +136,30 @@ export const bridge = {
     return native
       ? invoke("edit_document", { ...revision(info), edit })
       : previewJson("/edit", post({ ...revision(info), edit }));
+  },
+  textRuns(info: DocumentInfo, page: number): Promise<ExistingTextRun[]> {
+    return native ? invoke("page_text_runs", { ...revision(info), page })
+      : previewJson("/text-runs", post({ ...revision(info), page }));
+  },
+  beginRedaction(info: DocumentInfo, dpi: 150 | 300, regions: RedactionRegion[]): Promise<RedactionPlan> {
+    const input = { ...revision(info), dpi, regions };
+    return native ? invoke("begin_redaction", input) : previewJson("/redaction/begin", post(input));
+  },
+  async stageRedactionPage(jobId: number, page: number, png: Uint8Array): Promise<void> {
+    const headers = { "X-Folio-Job-Id": String(jobId), "X-Folio-Page": String(page) };
+    if (native) return invoke("stage_redaction_page", png, { headers });
+    await previewJson("/redaction/page", {
+      method: "POST", headers: { ...headers, "Content-Type": "image/png" }, body: new Uint8Array(png),
+    });
+  },
+  async exportRedactedCopy(jobId: number): Promise<string | null> {
+    if (native) return invoke("export_redacted_copy", { jobId });
+    const response = await previewResponse("/redaction/export", post({ jobId }));
+    downloadPdf(new Uint8Array(await response.arrayBuffer()), "Redacted.pdf");
+    return "Redacted.pdf";
+  },
+  cancelRedaction(jobId: number): Promise<boolean> {
+    return native ? invoke("cancel_redaction", { jobId }) : previewJson("/redaction/cancel", post({ jobId }));
   },
   undo(info: DocumentInfo): Promise<DocumentInfo> {
     return native ? invoke("undo_document", revision(info)) : previewJson("/undo", post(revision(info)));
