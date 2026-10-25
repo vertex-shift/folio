@@ -34,6 +34,32 @@ dynamic loader rejects stripped procedural-macro libraries with a
 `mis-aligned LINKEDIT string pool` error; keeping them intact avoids that
 toolchain failure.
 
+## Automated desktop builds
+
+The [Desktop builds workflow](.github/workflows/build.yml) runs on pull requests
+and pushes to `main`, and can be started manually from GitHub's **Actions** tab.
+Each platform runs the frontend and Rust document-engine tests, then builds
+the production frontend and native application with the committed lockfiles.
+
+| Artifact | Platform | Application bundles |
+| --- | --- | --- |
+| `folio-windows-x64` | Windows x64 | NSIS setup executable (`.exe`) |
+| `folio-macos-arm64` | macOS Apple Silicon | Disk image containing `Folio.app` (`.dmg`) |
+| `folio-linux-x64` | Linux x64, built on Ubuntu 22.04 | Debian package (`.deb`) and AppImage |
+
+Download the artifacts from a successful workflow run; they are retained for
+14 days. After extracting a Linux AppImage, mark it executable with
+`chmod +x Folio_*.AppImage` before launching it. Linux also requires the
+distribution's WebKitGTK 4.1 runtime and, for AppImages, FUSE support or
+AppImage's extraction mode.
+
+These are development builds, not signed production releases. Windows bundles
+are unsigned, macOS bundles are ad-hoc signed and not notarized, and Linux
+packages are unsigned. No signing secrets or GitHub Release publishing are
+configured. Intel macOS and ARM Windows/Linux builds are not included.
+The existing `npm run bundle` command remains a macOS `.app`-only local build;
+CI explicitly selects each platform's installer formats.
+
 ## What works
 
 | Workflow | Implementation |
@@ -372,10 +398,21 @@ stale exports, cancellation/generation guards, signature/XFA guards, coordinate
 validation, source overwrite protection, and exact pixel limits.
 
 The blue app mark is authored in `public/folio.svg`; native icons are generated
-with `npm run tauri -- icon public/folio.svg`. PDF.js includes independently
-licensed open-source font/CMap/profile data. Third-party dependencies retain
-their own licenses; review licensing, signing, and document compatibility
-before distributing a production release.
+with `npm run tauri -- icon public/folio.svg`.
+
+## License
+
+Except where otherwise noted, Folio's original source code and project assets
+are licensed under the [Apache License, Version 2.0](LICENSE).
+The full license is included in application bundles as `LICENSE`.
+
+Third-party dependencies and bundled assets retain their own licenses; Folio's
+license does not replace those terms. PDF.js includes independently licensed
+open-source font/CMap/profile data. Dependency notices are collected in
+[`src-tauri/resources/THIRD_PARTY_NOTICES.txt`](src-tauri/resources/THIRD_PARTY_NOTICES.txt)
+and included in application bundles as `THIRD_PARTY_NOTICES.txt`.
+Review licensing, signing, and document compatibility before distributing a
+production release.
 
 The unmodified Noto Sans font is from the
 [Noto fonts project](https://github.com/notofonts/noto-fonts/tree/main/hinted/ttf/NotoSans).

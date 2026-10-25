@@ -2,6 +2,7 @@
 name = "folio-desktop"
 version = "0.1.0"
 description = "An independent local-first PDF workspace"
+license = "Apache-2.0"
 edition = "2024"
 default-run = "folio"
 
