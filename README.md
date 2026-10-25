@@ -34,12 +34,13 @@ dynamic loader rejects stripped procedural-macro libraries with a
 `mis-aligned LINKEDIT string pool` error; keeping them intact avoids that
 toolchain failure.
 
-## Automated desktop builds
+## Automated desktop builds and releases
 
-The [Desktop builds workflow](.github/workflows/build.yml) runs on pull requests
-and pushes to `main`, and can be started manually from GitHub's **Actions** tab.
-Each platform runs the frontend and Rust document-engine tests, then builds
-the production frontend and native application with the committed lockfiles.
+The [Desktop builds and releases workflow](.github/workflows/build.yml) runs
+on pull requests, pushes to `main`, and version tags, and can be started manually
+from GitHub's **Actions** tab. Each platform runs the frontend and Rust
+document-engine tests, then builds the production frontend and native
+application with the committed lockfiles.
 
 | Artifact | Platform | Application bundles |
 | --- | --- | --- |
@@ -47,18 +48,41 @@ the production frontend and native application with the committed lockfiles.
 | `folio-macos-arm64` | macOS Apple Silicon | Disk image containing `Folio.app` (`.dmg`) |
 | `folio-linux-x64` | Linux x64, built on Ubuntu 22.04 | Debian package (`.deb`) and AppImage |
 
-Download the artifacts from a successful workflow run; they are retained for
-14 days. After extracting a Linux AppImage, mark it executable with
-`chmod +x Folio_*.AppImage` before launching it. Linux also requires the
+For tagged releases, download the platform-labeled installers from
+[GitHub Releases](https://github.com/vertex-shift/folio/releases).
+Each release includes `SHA256SUMS` for verifying the downloaded files.
+Build-only artifacts are also available from successful workflow runs and are
+retained for 14 days. After downloading a Linux AppImage, mark it executable
+with `chmod +x Folio_*.AppImage` before launching it. Linux also requires the
 distribution's WebKitGTK 4.1 runtime and, for AppImages, FUSE support or
 AppImage's extraction mode.
 
-These are development builds, not signed production releases. Windows bundles
+These are not production-signed releases. Windows bundles
 are unsigned, macOS bundles are ad-hoc signed and not notarized, and Linux
-packages are unsigned. No signing secrets or GitHub Release publishing are
-configured. Intel macOS and ARM Windows/Linux builds are not included.
+packages are unsigned. No signing secrets are configured.
+Intel macOS and ARM Windows/Linux builds are not included.
 The existing `npm run bundle` command remains a macOS `.app`-only local build;
 CI explicitly selects each platform's installer formats.
+
+### Publishing a version
+
+Keep the version in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`,
+`src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json` synchronized, and commit
+those changes to `main`. Push a matching version tag, for example:
+
+```sh
+git tag -a v0.1.0 -m "Folio 0.1.0"
+git push origin v0.1.0
+```
+
+The tag must match the application version exactly. All three platform builds
+must succeed before publishing. The workflow creates a draft, uploads all four
+installers and their checksums, then publishes the complete release; tags with
+a prerelease suffix, such as `v0.2.0-beta.1`, produce GitHub prereleases.
+Pull requests, branch pushes, and manual runs do not publish releases.
+Published releases are not overwritten on reruns. If publishing fails after
+creating a draft, inspect and remove that unpublished draft without deleting
+the tag before rerunning the workflow.
 
 ## What works
 

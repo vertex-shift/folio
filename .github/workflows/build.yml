@@ -1,8 +1,9 @@
-name: Desktop builds
+name: Desktop builds and releases
 
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -11,7 +12,7 @@ permissions:
 
 concurrency:
   group: desktop-builds-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -70,6 +71,39 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Validate release tag
+        if: github.ref_type == 'tag'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node --input-type=module <<'JS'
+          import assert from "node:assert/strict";
+          import { execFileSync } from "node:child_process";
+          import { readFileSync } from "node:fs";
+
+          const read = (path) => JSON.parse(readFileSync(path, "utf8"));
+          const pkg = read("package.json");
+          const lock = read("package-lock.json");
+          const config = read("src-tauri/tauri.conf.json");
+          const metadata = JSON.parse(execFileSync("cargo", [
+            "metadata", "--manifest-path", "src-tauri/Cargo.toml",
+            "--format-version", "1", "--no-deps", "--locked",
+          ], { encoding: "utf8" }));
+          const cargo = metadata.packages.find((entry) => entry.name === pkg.name);
+          assert.ok(cargo, "The application Cargo package must match package.json.");
+          for (const [name, version] of [
+            ["package-lock.json", lock.version],
+            ["package-lock.json root package", lock.packages[""].version],
+            ["src-tauri/tauri.conf.json", config.version],
+            ["src-tauri/Cargo.toml", cargo.version],
+          ]) {
+            assert.equal(version, pkg.version, `Update ${name} before tagging a release.`);
+          }
+          assert.equal(process.env.RELEASE_TAG, `v${pkg.version}`,
+            "The release tag must be v followed by the application version.");
+          console.log(`Validated release ${process.env.RELEASE_TAG}.`);
+          JS
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -107,3 +141,91 @@ jobs:
           path: ${{ matrix.paths }}
           if-no-files-found: error
           retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out release metadata
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download platform installers
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: folio-*
+          path: artifacts
+          merge-multiple: false
+          digest-mismatch: error
+
+      - name: Prepare release assets and checksums
+        run: |
+          python3 <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+
+          version = json.loads(Path("package.json").read_text())["version"]
+          if os.environ["RELEASE_TAG"] != f"v{version}":
+              raise SystemExit("The release tag does not match the application version.")
+          bundles = [
+              ("folio-windows-x64", ".exe", f"Folio_{version}_windows_x64_setup.exe"),
+              ("folio-macos-arm64", ".dmg", f"Folio_{version}_macos_arm64.dmg"),
+              ("folio-linux-x64", ".deb", f"Folio_{version}_linux_x64.deb"),
+              ("folio-linux-x64", ".AppImage", f"Folio_{version}_linux_x64.AppImage"),
+          ]
+          selected = {}
+          for artifact, extension, name in bundles:
+              matches = [path for path in (Path("artifacts") / artifact).rglob(f"*{extension}")
+                         if path.is_file()]
+              if len(matches) != 1 or matches[0].stat().st_size == 0:
+                  raise SystemExit(f"Expected exactly one nonempty {extension} installer in {artifact}.")
+              selected[matches[0]] = name
+          actual = {path for path in Path("artifacts").rglob("*") if path.is_file()}
+          if actual != set(selected):
+              raise SystemExit("Downloaded artifacts contain unexpected files; refusing to publish.")
+          output = Path("release")
+          output.mkdir()
+          checksums = []
+          for source, name in sorted(selected.items(), key=lambda entry: entry[1]):
+              destination = output / name
+              shutil.copyfile(source, destination)
+              with destination.open("rb") as handle:
+                  digest = hashlib.file_digest(handle, "sha256").hexdigest()
+              checksums.append(f"{digest}  {name}\n")
+          (output / "SHA256SUMS").write_text("".join(checksums))
+          print("Prepared all four platform installers and SHA256SUMS.")
+          PY
+
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          flags=(--verify-tag --draft --generate-notes)
+          if [[ "${RELEASE_TAG%%+*}" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+          notes="Installers for Windows x64, macOS Apple Silicon, and Linux x64.
+
+          Verify downloads against the attached SHA256SUMS file.
+
+          Windows and Linux packages are unsigned. macOS is ad-hoc signed and not notarized."
+          gh release create "$RELEASE_TAG" release/* \
+            --title "Folio ${RELEASE_TAG#v}" --notes "$notes" "${flags[@]}"
+          gh release edit "$RELEASE_TAG" --draft=false

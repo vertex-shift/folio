@@ -132,11 +132,16 @@ branch. Explain what changed and why, link any related issue, and list the
 checks you ran. Include screenshots for visual changes using only shareable
 example documents. Note platform limitations or behavior changes explicitly.
 
-The [Desktop builds workflow](.github/workflows/build.yml) runs frontend and
-Rust document-engine tests and creates native bundles for Windows x64, macOS
-Apple Silicon, and Linux x64. Fork pull requests may need a maintainer's
-approval before workflows run. A successful build is not a substitute for
-exercising the affected native workflow.
+The [Desktop builds and releases workflow](.github/workflows/build.yml) runs
+frontend and Rust document-engine tests and creates native bundles for Windows
+x64, macOS Apple Silicon, and Linux x64. Fork pull requests may need a
+maintainer's approval before workflows run. A successful build is not a
+substitute for exercising the affected native workflow.
+
+Only a pushed version tag publishes installers to GitHub Releases, after every
+platform build succeeds. Pull requests and manual builds cannot publish
+releases. See [Publishing a version](README.md#publishing-a-version) for version
+synchronization, checksums, and release behavior.
 
 Keep review follow-ups focused. Do not include credentials or signing material
 to make a build pass; development builds do not require production signing
