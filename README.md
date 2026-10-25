@@ -400,6 +400,11 @@ validation, source overwrite protection, and exact pixel limits.
 The blue app mark is authored in `public/folio.svg`; native icons are generated
 with `npm run tauri -- icon public/folio.svg`.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, validation,
+safe PDF fixtures, and the pull request process.
+
 ## License
 
 Except where otherwise noted, Folio's original source code and project assets
