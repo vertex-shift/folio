@@ -6,7 +6,7 @@ import {
   MessageSquarePlus, Minus, MousePointer2, PanelLeft, PanelLeftClose,
   PanelRightClose, Plus, Redo2, RotateCcw, RotateCw, ScanLine, Search,
   ShieldCheck, Trash2, Undo2, X,
-  Bookmark, FilePlus2, FileInput, FileOutput, Pencil, Type, SquarePen, ExternalLink,
+  Bookmark, FilePlus2, FileInput, FileOutput, Pencil, Type, SquarePen, ExternalLink, Eraser,
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -15,14 +15,20 @@ import Dialog from "./components/Dialog";
 import IconButton from "./components/IconButton";
 import AppearancePicker from "./components/AppearancePicker";
 import PdfPage, { Thumbnail } from "./components/PdfPage";
+import ContinuousPages from "./components/ContinuousPages";
 import BookmarksPanel from "./components/BookmarksPanel";
+import ExistingTextPanel from "./components/ExistingTextPanel";
+import RedactionPanel from "./components/RedactionPanel";
 import { bridge, native, runtimeIssue } from "./lib/bridge";
 import { errorMessage, formatBytes, pageFromInput } from "./lib/geometry";
 import { loadPdf } from "./lib/pdf";
 import { useSearch } from "./lib/useSearch";
+import { useExistingText } from "./lib/useExistingText";
+import { matchExistingText } from "./lib/existingText";
 import { PAGE_SIZES, parsePageRange, parseWritingNumber, rgbFromHex } from "./lib/pages";
 import { destinationPage, safeExternalUrl } from "./lib/navigation";
-import type { DocumentInfo, Edit, Mode, Panel, Point, Quad, Tool, Zoom } from "./lib/types";
+import { MAX_REDACTION_MARKS, renderRedactionPages } from "./lib/redaction";
+import type { DocumentInfo, Edit, ExistingTextRun, Mode, Panel, PdfRect, Point, Quad, RedactionMark, RedactionPlan, ReplacementFont, Tool, Zoom } from "./lib/types";
 
 type Action = { type: "open" | "example" | "close" }
   | { type: "file"; file: File } | { type: "path"; path: string }
@@ -35,7 +41,15 @@ type Modal = { type: "shortcuts" | "about" }
   | { type: "edit-annotation"; id: string; text: string }
   | { type: "create" | "blank"; size: keyof typeof PAGE_SIZES; landscape: boolean }
   | { type: "extract"; range: string }
+  | { type: "redaction-export"; dpi: 150 | 300; acknowledged: boolean }
+  | { type: "redaction-clear" }
+  | { type: "redaction-leave"; action: Action }
   | { type: "external"; url: string };
+
+type SourceTextModal = {
+  type: "edit-existing"; documentId: number; revision: number; page: number; path: number[];
+  expected: string; text: string; originalFont: string; font: ReplacementFont;
+};
 
 const quickTools = [
   { tool: "select", icon: MousePointer2, label: "Select text (V)" },
@@ -44,10 +58,12 @@ const quickTools = [
   { tool: "note", icon: MessageSquarePlus, label: "Add a note (N)" },
   { tool: "text", icon: Type, label: "Add text (T)" },
   { tool: "ink", icon: Pencil, label: "Draw with pen (D)" },
+  { tool: "edit-text", icon: SquarePen, label: "Edit existing text (E)" },
+  { tool: "redact", icon: Eraser, label: "Redact areas (R)" },
 ] as const;
 const panelLabels: Record<Panel, string> = {
   tools: "Document tools", search: "Find in document", comments: "Comments",
-  bookmarks: "Bookmarks", write: "Writing tools",
+  bookmarks: "Bookmarks", write: "Writing tools", edit: "Edit existing text", redact: "Redact a PDF",
 };
 
 function typingTarget(target: EventTarget | null): boolean {
@@ -73,8 +89,22 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [modal, setModal] = useState<Modal | null>(null);
-  const pendingDraft = Boolean(modal && "text" in modal && modal.text.trim());
+  const [modal, setModal] = useState<Modal | SourceTextModal | null>(null);
+  const [redactions, setRedactions] = useState<RedactionMark[]>([]);
+  const redactionsRef = useRef(redactions);
+  redactionsRef.current = redactions;
+  const redactionCounter = useRef(0);
+  const [redactedCopyPrepared, setRedactedCopyPrepared] = useState(false);
+  const exportController = useRef<AbortController | null>(null);
+  const [redactionProgress, setRedactionProgress] = useState<{
+    page: number; count: number; stage: "rendering" | "saving"; canceling: boolean;
+  } | null>(null);
+  const pendingWriting = modal?.type === "edit-existing"
+    ? modal.text !== modal.expected || modal.font !== "original"
+    : Boolean(modal && "text" in modal && modal.text.trim());
+  const writingDraftRef = useRef(pendingWriting);
+  writingDraftRef.current = pendingWriting;
+  const pendingDraft = pendingWriting || redactions.length > 0;
   const pendingDraftRef = useRef(pendingDraft);
   pendingDraftRef.current = pendingDraft;
   const [dragActive, setDragActive] = useState(false);
@@ -102,10 +132,13 @@ export default function App() {
   infoRef.current = info;
   pageRef.current = page;
   const search = useSearch(pdf, info, query, matchCase, panelOpen && panel === "search");
+  const existingText = useExistingText(info, page, tool === "edit-text" || panelOpen && panel === "edit");
   const readOnly = Boolean(info?.readOnlyReason);
   const disabled = Boolean(busy) || !info;
-  const editDisabled = disabled || readOnly;
-  const saveLabel = native ? "Save a copy" : "Download PDF";
+  const editDisabled = disabled || readOnly || redactions.length > 0;
+  const redactDisabled = disabled || readOnly;
+  const redactionIntent = tool === "redact" || redactions.length > 0;
+  const saveLabel = redactionIntent ? "Export redacted copy" : native ? "Save a copy" : "Download PDF";
 
   const notifyError = useCallback((message: string) => setError(message), []);
   const onScale = useCallback((scale: number) => setActualScale(scale), []);
@@ -117,6 +150,9 @@ export default function App() {
 
   async function adopt(next: DocumentInfo) {
     const previous = infoRef.current;
+    if (redactionsRef.current.length && (previous?.id !== next.id || previous.revision !== next.revision)) {
+      throw new Error("Clear the pending redaction marks before changing the original PDF.");
+    }
     const previousKey = previous?.pages[pageRef.current]?.key;
     const sameDocument = previous?.id === next.id;
     const matchingPage = sameDocument ? next.pages.findIndex((item) => item.key === previousKey) : 0;
@@ -124,6 +160,9 @@ export default function App() {
     setPage(matchingPage >= 0 ? matchingPage : Math.min(pageRef.current, next.pageCount - 1));
     setSelectedAnnotation(null);
     if (!sameDocument) {
+      updateRedactions([]);
+      redactionCounter.current = 0;
+      setModal(null);
       setPage(0);
       setMode("read");
       setTool("select");
@@ -188,8 +227,13 @@ export default function App() {
       setToast("Wait for the current document action to finish.");
       return;
     }
-    if (pendingDraftRef.current) {
+    if (writingDraftRef.current) {
       setError("Finish or cancel the current text or note before leaving this document.");
+      return;
+    }
+    if (redactionsRef.current.length) {
+      setError(null);
+      setModal({ type: "redaction-leave", action });
       return;
     }
     if (infoRef.current?.dirty) {
@@ -222,6 +266,11 @@ export default function App() {
   }
 
   function chooseTool(next: Tool) {
+    if (busyRef.current) { setToast("Wait for the current document action to finish."); return; }
+    if (redactionsRef.current.length && !["select", "hand", "redact"].includes(next)) {
+      setError("Clear the pending redaction marks before changing the original PDF.");
+      return;
+    }
     if (!["select", "hand"].includes(next) && readOnly) {
       setError(info?.readOnlyReason ?? "This PDF is read-only.");
       return;
@@ -230,16 +279,23 @@ export default function App() {
     if (mode === "organize") setMode("read");
     if (next === "highlight" || next === "note") setMode("comment");
     if (next === "text" || next === "ink") { setMode("write"); setPanel("write"); setPanelOpen(true); }
+    if (next === "edit-text") { setMode("write"); setPanel("edit"); setPanelOpen(true); }
+    if (next === "redact") { setMode("write"); setPanel("redact"); setPanelOpen(true); }
   }
 
   function changeMode(next: Mode) {
+    if (redactionsRef.current.length) {
+      if (next === "organize") { setError("Clear the redaction marks before reorganizing pages."); return; }
+      if (next === "write") { chooseTool("redact"); return; }
+    }
     setMode(next);
     setTool("select");
     if (next === "comment") { setPanel("comments"); setPanelOpen(true); }
-    if (next === "write") { setPanel("write"); setPanelOpen(true); }
+    if (next === "write") { setTool("edit-text"); setPanel("edit"); setPanelOpen(true); }
   }
 
   function edit(change: Edit, label: string, onSuccess?: () => void) {
+    if (redactionsRef.current.length) { setError("Clear pending redaction marks before editing the original PDF."); return; }
     void run(label, async () => {
       const current = infoRef.current;
       if (!current) throw new Error("Open a PDF before editing.");
@@ -254,11 +310,48 @@ export default function App() {
         setToast("Page removed. Undo is available.");
       } else if (change.type === "text" || change.type === "ink" || change.type === "set_annotation_text") {
         setToast("Writing saved in the working PDF. Save a copy to keep it.");
+      } else if (change.type === "replace_text") {
+        setToast("Existing PDF text replaced. Save a copy to keep your changes.");
       }
     });
   }
 
+  function selectSourceText(run: ExistingTextRun, targetPage = pageRef.current) {
+    if (redactionsRef.current.length) { setError("Clear pending redaction marks before editing the original PDF."); return; }
+    const current = infoRef.current;
+    if (!current || busyRef.current) return;
+    if (current.readOnlyReason) { setError(current.readOnlyReason); return; }
+    if (!run.editable || run.text === null) {
+      setError(run.reason ?? "This source text cannot be edited safely.");
+      return;
+    }
+    setError(null);
+    setModal({ type: "edit-existing", documentId: current.id, revision: current.revision,
+      page: targetPage, path: run.path, expected: run.text, text: run.text, originalFont: run.font, font: "original" });
+  }
+
+  function hitSourceText(text: string, origin: Point, targetPage: number) {
+    const current = infoRef.current;
+    if (!current || busyRef.current) return;
+    void bridge.textRuns(current, targetPage).then((runs) => {
+      if (infoRef.current?.id !== current.id || infoRef.current.revision !== current.revision) {
+        throw new Error("The document changed. Select the text again.");
+      }
+      if (busyRef.current || actionRef.current.hasModal) {
+        setToast("Finish the current action, then select the text again.");
+        return;
+      }
+      const match = matchExistingText(runs, text, origin);
+      if (match) selectSourceText(match, targetPage);
+      else {
+        setPanel("edit"); setPanelOpen(true);
+        setToast("This text is split or repeated in the PDF. Choose the exact source run from the list.");
+      }
+    }).catch((error: unknown) => setError(errorMessage(error)));
+  }
+
   function importPages(file?: File) {
+    if (redactionsRef.current.length) { setError("Clear redaction marks before inserting pages."); return; }
     if (!native && !file) { importRef.current?.click(); return; }
     void run("Inserting PDF pages...", async () => {
       const current = infoRef.current;
@@ -284,15 +377,15 @@ export default function App() {
     });
   }
 
-  function draw(points: Point[]) {
+  function draw(points: Point[], targetPage = pageRef.current) {
     try {
-      edit({ type: "ink", page, points, color: rgbFromHex(writingColor),
+      edit({ type: "ink", page: targetPage, points, color: rgbFromHex(writingColor),
         width: parseWritingNumber(penWidth, 0.5, 12, "Pen width") }, "Saving drawing...");
     } catch (error) { setError(errorMessage(error)); }
   }
 
-  function highlight(quads: Quad[], text: string) {
-    edit({ type: "highlight", page, quads, color: [1, 0.86, 0.17], text }, "Adding highlight...");
+  function highlight(quads: Quad[], text: string, targetPage = pageRef.current) {
+    edit({ type: "highlight", page: targetPage, quads, color: [1, 0.86, 0.17], text }, "Adding highlight...");
   }
 
   function history(redo: boolean) {
@@ -300,6 +393,7 @@ export default function App() {
       document.execCommand(redo ? "redo" : "undo");
       return;
     }
+    if (redactionsRef.current.length) { setError("Clear redaction marks before undoing or redoing changes to the original."); return; }
     const current = infoRef.current;
     if (!current || !(redo ? current.canRedo : current.canUndo)) return;
     void run(redo ? "Redoing change..." : "Undoing change...", async () => {
@@ -308,6 +402,7 @@ export default function App() {
   }
 
   function save(copy = true) {
+    if (redactionsRef.current.length || tool === "redact") { reviewRedactions(); return; }
     void run(native ? "Saving PDF..." : "Preparing download...", async () => {
       const current = infoRef.current;
       if (!current) throw new Error("Open a PDF before saving.");
@@ -315,6 +410,81 @@ export default function App() {
       if (!saved) return;
       updateInfo(saved);
       setToast(native ? "PDF saved." : "PDF downloaded. Browser preview does not overwrite local files.");
+    });
+  }
+
+  function updateRedactions(next: RedactionMark[]) {
+    redactionsRef.current = next;
+    setRedactions(next);
+    setRedactedCopyPrepared(false);
+  }
+
+  function markRedaction(rect: PdfRect, targetPage = pageRef.current) {
+    const current = infoRef.current;
+    if (!current || busyRef.current) return;
+    if (current.readOnlyReason) { setError(current.readOnlyReason); return; }
+    const marks = redactionsRef.current;
+    if (marks.length >= MAX_REDACTION_MARKS) { setError("The limit is 500 redaction areas per export."); return; }
+    if (marks.some((mark) => mark.documentId !== current.id || mark.revision !== current.revision)) {
+      setError("The original changed. Clear the old marks and review this document again.");
+      return;
+    }
+    updateRedactions([...marks, { id: ++redactionCounter.current, documentId: current.id,
+      revision: current.revision, page: targetPage, rect }]);
+    setError(null);
+  }
+
+  function reviewRedactions() {
+    if (busyRef.current) { setToast("Wait for the current document action to finish."); return; }
+    if (!redactionsRef.current.length) { setToast("Mark at least one area before exporting a redacted copy."); return; }
+    setError(null);
+    setModal({ type: "redaction-export", dpi: 150, acknowledged: false });
+  }
+
+  function exportRedactions(dpi: 150 | 300) {
+    void run("Preparing redacted copy...", async () => {
+      const current = infoRef.current;
+      const marks = redactionsRef.current;
+      if (!current || !pdf) throw new Error("Wait for the PDF to finish loading.");
+      if (!marks.length || marks.some((mark) => mark.documentId !== current.id || mark.revision !== current.revision)) {
+        throw new Error("These redaction marks are stale. Clear them and review the current PDF again.");
+      }
+      const controller = new AbortController();
+      exportController.current = controller;
+      setRedactionProgress({ page: 0, count: current.pageCount, stage: "rendering", canceling: false });
+      let plan: RedactionPlan | undefined;
+      let failure: unknown;
+      let cleanupFailure: unknown;
+      let output: string | null = null;
+      try {
+        plan = await bridge.beginRedaction(current, dpi, marks.map(({ page, rect }) => ({ page, rect })));
+        await renderRedactionPages(pdf, plan, bridge.stageRedactionPage, (page, count) => {
+          setRedactionProgress({ page, count, stage: "rendering", canceling: false });
+        }, controller.signal);
+        controller.signal.throwIfAborted();
+        exportController.current = null;
+        setRedactionProgress({ page: current.pageCount, count: current.pageCount, stage: "saving", canceling: false });
+        output = await bridge.exportRedactedCopy(plan.jobId);
+      } catch (error) { failure = error; }
+      if (plan) {
+        try { await bridge.cancelRedaction(plan.jobId); }
+        catch (error) { cleanupFailure = error; }
+      }
+      exportController.current = null;
+      setRedactionProgress(null);
+      if (cleanupFailure) {
+        throw new Error(`${failure ? `${errorMessage(failure)} ` : output ? "The copy was exported, but " : ""}Redaction cleanup failed: ${errorMessage(cleanupFailure)}`);
+      }
+      if (failure) {
+        if (!controller.signal.aborted) throw failure;
+        setToast("Redaction export canceled. Your original and pending marks are unchanged.");
+        return;
+      }
+      if (!output) { setToast("Export canceled. Your redaction marks remain pending."); return; }
+      setRedactedCopyPrepared(true);
+      setModal(null);
+      setToast(native ? "Redacted copy saved. This window still shows the original."
+        : "Redacted copy download started. This window still shows the original.");
     });
   }
 
@@ -418,6 +588,11 @@ export default function App() {
       const actions = actionRef.current;
       const key = event.key.toLowerCase();
       const mod = event.metaKey || event.ctrlKey;
+      if (mod && key === "p" && redactionsRef.current.length) {
+        event.preventDefault();
+        setError("Export the redacted copy instead of printing the original with pending marks.");
+        return;
+      }
       if (actions.hasModal) return;
       if (mod && ["o", "n", "s", "f", "z", "y", "+", "=", "-"].includes(key)) {
         if (typingTarget(event.target) && (key === "z" || key === "y")) return;
@@ -429,14 +604,22 @@ export default function App() {
         else if (key === "z" || key === "y") actions.history(event.shiftKey || key === "y");
         else actions.zoom(key === "-" ? 1 / 1.2 : 1.2);
       } else if (!mod && !typingTarget(event.target)) {
-        if (["ArrowRight", "PageDown"].includes(event.key)) { event.preventDefault(); actions.page(1); }
-        if (["ArrowLeft", "PageUp"].includes(event.key)) { event.preventDefault(); actions.page(-1); }
+        if (["PageDown", "PageUp"].includes(event.key)) {
+          event.preventDefault();
+          const viewport = viewerRef.current;
+          if (viewport) viewport.scrollBy({ top: viewport.clientHeight * 0.9 * (event.key === "PageDown" ? 1 : -1) });
+          else actions.page(event.key === "PageDown" ? 1 : -1);
+        }
+        if (event.key === "ArrowRight") { event.preventDefault(); actions.page(1); }
+        if (event.key === "ArrowLeft") { event.preventDefault(); actions.page(-1); }
         if (key === "v") actions.tool("select");
         if (key === "h") actions.tool("hand");
         if (key === "m") actions.tool("highlight");
         if (key === "n") actions.tool("note");
         if (key === "t") actions.tool("text");
         if (key === "d") actions.tool("ink");
+        if (key === "e") actions.tool("edit-text");
+        if (key === "r") actions.tool("redact");
         if (key === "escape") actions.escape();
       }
     };
@@ -548,25 +731,27 @@ export default function App() {
           <button key={item.mode} className={mode === item.mode ? "selected" : ""}
             aria-label={item.label} title={item.label}
             aria-current={mode === item.mode ? "page" : undefined}
-            disabled={disabled} onClick={() => changeMode(item.mode)}>
+            disabled={disabled || item.mode === "organize" && redactions.length > 0} onClick={() => changeMode(item.mode)}>
             <item.icon size={16} /><span>{item.label}</span>
           </button>)}
       </nav>
       <div className="command-actions">
         <IconButton label="Find in document (Command+F)" disabled={disabled} onClick={() => showPanel("search")}><Search size={18} /></IconButton>
         <span className="toolbar-divider" />
-        <IconButton label="Undo (Command+Z)" disabled={disabled || !info?.canUndo} onClick={() => history(false)}><Undo2 size={18} /></IconButton>
-        <IconButton label="Redo (Command+Shift+Z)" disabled={disabled || !info?.canRedo} onClick={() => history(true)}><Redo2 size={18} /></IconButton>
-        <button className="button primary save-button" aria-label={saveLabel} title={saveLabel} disabled={disabled} onClick={() => save(true)}>
-          <Copy size={15} /><span>{saveLabel}</span>
+        <IconButton label="Undo (Command+Z)" disabled={disabled || redactions.length > 0 || !info?.canUndo} onClick={() => history(false)}><Undo2 size={18} /></IconButton>
+        <IconButton label="Redo (Command+Shift+Z)" disabled={disabled || redactions.length > 0 || !info?.canRedo} onClick={() => history(true)}><Redo2 size={18} /></IconButton>
+        <button className="button primary save-button" aria-label={saveLabel} title={saveLabel} disabled={disabled || redactionIntent && !redactions.length} onClick={() => save(true)}>
+          {redactionIntent ? <FileOutput size={15} /> : <Copy size={15} />}<span>{saveLabel}</span>
         </button>
       </div>
     </div>
 
     {info?.readOnlyReason && <div className="readonly-banner" role="status"><LockKeyhole size={15} />{info.readOnlyReason}</div>}
+    {redactions.length > 0 && <div className="readonly-banner redaction-source-banner" role="status"><Eraser size={15} />
+      Original PDF: {redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}. Only exported copies are redacted.</div>}
 
     <div className="workspace">
-      {panelOpen && <aside className={`tools-panel panel-${panel}`} aria-label={panel === "tools" ? "PDF tools" : panelLabels[panel]}>
+      {panelOpen && <aside key={panel} className={`tools-panel panel-${panel}`} aria-label={panel === "tools" ? "PDF tools" : panelLabels[panel]}>
         <div className="panel-heading">
           <h2>{panelLabels[panel]}</h2>
           {panel === "comments" && <span className="count-badge">{info?.annotations.length ?? 0}</span>}
@@ -577,6 +762,12 @@ export default function App() {
             <button className={mode === "read" && tool === "select" ? "chosen" : ""} disabled={disabled} onClick={() => { changeMode("read"); setTool("select"); }}>
               <span className="tool-icon blue"><BookOpen size={19} /></span><span>Read a PDF</span><ChevronRight size={14} className="list-arrow" />
             </button>
+            <button className={tool === "edit-text" ? "chosen" : ""} disabled={editDisabled} onClick={() => chooseTool("edit-text")}>
+              <span className="tool-icon blue"><SquarePen size={19} /></span><span>Edit existing text</span><ChevronRight size={14} className="list-arrow" />
+            </button>
+            <button className={tool === "redact" ? "chosen" : ""} disabled={redactDisabled} onClick={() => chooseTool("redact")}>
+              <span className="tool-icon neutral"><Eraser size={19} /></span><span>Redact a PDF</span><ChevronRight size={14} className="list-arrow" />
+            </button>
             <button className={tool === "highlight" ? "chosen" : ""} disabled={editDisabled} onClick={() => chooseTool("highlight")}>
               <span className="tool-icon amber"><Highlighter size={19} /></span><span>Highlight text</span><ChevronRight size={14} className="list-arrow" />
             </button>
@@ -585,7 +776,7 @@ export default function App() {
             </button>
             <button disabled={editDisabled} onClick={() => chooseTool("text")}><span className="tool-icon blue"><Type size={19} /></span><span>Add text</span><ChevronRight size={14} className="list-arrow" /></button>
             <button disabled={editDisabled} onClick={() => chooseTool("ink")}><span className="tool-icon violet"><Pencil size={19} /></span><span>Draw with pen</span><ChevronRight size={14} className="list-arrow" /></button>
-            <button className={mode === "organize" ? "chosen" : ""} disabled={disabled} onClick={() => changeMode("organize")}>
+            <button className={mode === "organize" ? "chosen" : ""} disabled={disabled || redactions.length > 0} onClick={() => changeMode("organize")}>
               <span className="tool-icon teal"><LayoutGrid size={19} /></span><span>Organize pages</span><ChevronRight size={14} className="list-arrow" />
             </button>
             <div className="tool-list-divider" />
@@ -604,8 +795,17 @@ export default function App() {
           <button className="shortcuts-link" onClick={() => setModal({ type: "shortcuts" })}><Keyboard size={16} />Keyboard shortcuts</button>
         </>}
         {panel === "bookmarks" && <BookmarksPanel pdf={pdf} disabled={disabled} onNavigate={navigateLink} />}
+        {panel === "edit" && <ExistingTextPanel key={`${info?.id}:${info?.revision}:${page}`}
+          runs={existingText.runs} loading={existingText.loading} error={existingText.error} retry={existingText.retry}
+          page={page} disabled={editDisabled} onSelect={selectSourceText} />}
+        {panel === "redact" && <RedactionPanel pdf={pdf} page={page} marks={redactions} disabled={redactDisabled}
+          exported={redactedCopyPrepared} onMark={markRedaction} onPage={setPage}
+          onRemove={(id) => updateRedactions(redactionsRef.current.filter((mark) => mark.id !== id))}
+          onClear={() => { setError(null); setModal({ type: "redaction-clear" }); }} onExport={reviewRedactions}
+          onDraw={() => setPanelOpen(false)} />}
         {panel === "write" && <div className="panel-scroll writing-settings">
-          <p>Add text or freehand marks without changing the original page content.</p>
+          <p>Add text annotations or freehand marks. To replace original page text, choose Edit existing text.</p>
+          <button className="button secondary existing-text-launch" disabled={editDisabled} onClick={() => chooseTool("edit-text")}><SquarePen size={15} />Edit existing text</button>
           <div className="writing-tool-buttons">
             <button className={`button ${tool === "text" ? "primary" : "secondary"}`} disabled={editDisabled} onClick={() => chooseTool("text")}><Type size={16} />Add text</button>
             <button className={`button ${tool === "ink" ? "primary" : "secondary"}`} disabled={editDisabled} onClick={() => chooseTool("ink")}><Pencil size={16} />Pen</button>
@@ -713,7 +913,7 @@ export default function App() {
           </div>
           {readOnly && <p className="organize-readonly">This signed PDF can be viewed but not reorganized.</p>}
         </> : <>
-          <div className={`page-scroll ${tool === "hand" ? "pannable" : ""}`} ref={viewerRef}
+          <div className={`page-scroll ${tool === "hand" ? "pannable" : ""}`} ref={viewerRef} tabIndex={0} aria-label="Continuous PDF page scroll area"
             onPointerDown={(event) => {
               if (tool !== "hand" || event.button !== 0) return;
               const element = event.currentTarget;
@@ -730,29 +930,35 @@ export default function App() {
             onPointerUp={() => { panRef.current = null; }}
             onPointerCancel={() => { panRef.current = null; }}
           >
-            <div className="page-stage">
-              {pdf && info ? <PdfPage pdf={pdf} page={page} zoom={zoom} width={viewportSize.width} height={viewportSize.height}
-                tool={tool} disabled={editDisabled} annotations={info.annotations.filter((annotation) => annotation.page === page)}
+            {info ? <ContinuousPages pdf={pdf} documentId={info.id} page={page} zoom={zoom}
+              width={viewportSize.width} height={viewportSize.height} container={viewerRef}
+              onPage={setPage} onScale={onScale} onError={notifyError}
+              renderPage={(index, frame) => pdf && <PdfPage pdf={pdf} page={index} initialSize={frame} zoom={zoom} width={viewportSize.width} height={viewportSize.height}
+                tool={tool} disabled={tool === "redact" ? redactDisabled : editDisabled} annotations={info.annotations.filter((annotation) => annotation.page === index)}
+                redactions={redactions.filter((mark) => mark.page === index)} onRedaction={(rect) => markRedaction(rect, index)}
                 selectedAnnotation={selectedAnnotation}
                 query={panel === "search" && panelOpen ? query : ""} matchCase={matchCase}
-                activeMatch={currentMatch?.page === page ? currentMatch.index : -1}
-                onScale={onScale} onHighlight={highlight} onNote={(point) => setModal({ type: "note", page, point, text: "" })}
-                onText={(rect) => setModal({ type: "text", page, rect, text: "" })} onInk={draw} onLink={navigateLink}
+                activeMatch={currentMatch?.page === index ? currentMatch.index : -1}
+                onScale={() => {}} onHighlight={(quads, text) => highlight(quads, text, index)}
+                onNote={(point) => setModal({ type: "note", page: index, point, text: "" })}
+                onText={(rect) => setModal({ type: "text", page: index, rect, text: "" })}
+                onInk={(points) => draw(points, index)} onLink={navigateLink}
+                onEditExisting={(text, origin) => hitSourceText(text, origin, index)}
                 penColor={writingColor} penWidth={Number.isFinite(Number(penWidth)) ? Math.max(0.5, Math.min(12, Number(penWidth))) : 2}
                 onAnnotation={selectAnnotation} onError={notifyError}
-              /> : <div className="workspace-empty">
+              />} /> : <div className="page-stage"><div className="workspace-empty">
                 {busy ? <><LoaderCircle size={30} className="spin" /><h2>{busy}</h2><p>Your document stays on this device.</p></>
                   : <><img src="/folio.svg" width="58" height="58" alt="" /><h1>A little less paperwork.</h1><p>Open a PDF to read, review, and make it your own.</p>
                     <button className="button primary" onClick={open}><FolderOpen size={16} />Open PDF</button>
                     <button className="text-button" onClick={() => requestAction({ type: "example" })}>Open the example document</button></>}
-              </div>}
-            </div>
+              </div></div>}
           </div>
           {info && <div className="quick-tools" role="toolbar" aria-label="Review tools">
             {quickTools.map((item, index) => <span key={item.tool}>
               {index === 2 && <span className="quick-tool-divider" />}
               <IconButton label={item.label} active={tool === item.tool}
-                disabled={disabled || readOnly && !["select", "hand"].includes(item.tool)}
+                disabled={disabled || readOnly && !["select", "hand"].includes(item.tool)
+                  || redactions.length > 0 && !["select", "hand", "redact"].includes(item.tool)}
                 onClick={() => chooseTool(item.tool)}><item.icon size={19} />
                 {item.tool === "highlight" && <span className="highlighter-swatch" />}
               </IconButton>
@@ -790,6 +996,7 @@ export default function App() {
           {tool === "highlight" && !disabled && <div className="tool-instruction" role="status"><Highlighter size={14} />Drag across text to highlight.</div>}
           {tool === "text" && !disabled && <div className="tool-instruction" role="status"><Type size={14} />Click to place a text box.</div>}
           {tool === "ink" && !disabled && <div className="tool-instruction" role="status"><Pencil size={14} />Drag to draw. Undo removes a stroke.</div>}
+          {tool === "edit-text" && !disabled && <div className="tool-instruction" role="status"><SquarePen size={14} />Click existing text to replace it.</div>}
         </>}
         {busy && info && <div className="document-busy" role="status"><LoaderCircle size={14} className="spin" />{busy}</div>}
       </main>
@@ -804,7 +1011,7 @@ export default function App() {
               <Thumbnail pdf={pdf} page={index} /><span className="thumbnail-number">{index + 1}</span>
             </button>)}
         </div>
-        <button className="rail-organize" disabled={disabled} onClick={() => changeMode("organize")}><LayoutGrid size={14} />Organize pages</button>
+        <button className="rail-organize" disabled={disabled || redactions.length > 0} onClick={() => changeMode("organize")}><LayoutGrid size={14} />Organize pages</button>
       </aside>}
       <nav className="utility-rail" aria-label="Document panels">
         <IconButton label="Toggle page thumbnails" active={railOpen && mode !== "organize"} disabled={disabled} onClick={() => { setRailOpen((open) => !open); if (mode === "organize") setMode("read"); }}><FileText size={18} /></IconButton>
@@ -817,7 +1024,7 @@ export default function App() {
     </div>
 
     <footer className="statusbar">
-      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : pendingDraft ? <><span className="status-dot dirty" />Uncommitted writing</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
+      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : redactions.length ? <><span className="status-dot dirty" />{redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}</> : pendingWriting ? <><span className="status-dot dirty" />Uncommitted writing</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
       <div className="document-status">{info && <><span>{info.pageCount} {info.pageCount === 1 ? "page" : "pages"}</span><span className="status-separator" /><span>{formatBytes(info.byteLength)}</span></>}</div>
       <div className="privacy-status"><ShieldCheck size={12} /><span>{runtimeIssue ? "Desktop runtime unavailable" : native ? "Local files. No uploads." : "Preview uses the real Rust engine"}</span></div>
     </footer>
@@ -825,6 +1032,89 @@ export default function App() {
     {dragActive && <div className="drop-overlay"><div><FolderOpen size={38} /><h2>Drop your PDF here.</h2><p>Open one document at a time.</p></div></div>}
     {error && !modal && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
     {toast && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
+
+    {modal?.type === "redaction-export" && <Dialog title="Export a permanently redacted copy?" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
+      actions={redactionProgress ? <button className="button secondary"
+        disabled={redactionProgress.stage === "saving" || redactionProgress.canceling}
+        onClick={() => {
+          if (!exportController.current) return;
+          exportController.current.abort();
+          setRedactionProgress((progress) => progress && { ...progress, canceling: true });
+        }}>{redactionProgress.canceling ? "Canceling..." : redactionProgress.stage === "saving" ? "Finishing export..." : "Cancel export"}</button>
+        : <><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Keep reviewing</button>
+          <button className="button primary" disabled={Boolean(busy) || !modal.acknowledged}
+            onClick={() => exportRedactions(modal.dpi)}><FileOutput size={15} />Export redacted copy</button></>}>
+      <p><strong>{redactions.length} marked {redactions.length === 1 ? "area" : "areas"}</strong> will become opaque black pixels.
+        All <strong>{info?.pageCount} pages</strong> become images, without the original text layer, comments, forms, bookmarks, attachments, or metadata.</p>
+      <p>The copy loses search, selection, accessibility structure, and vector quality.
+        Check every occurrence and inspect the exported PDF before sharing.</p>
+      <label className="setting-field">Image resolution<select data-autofocus value={modal.dpi} disabled={Boolean(busy)}
+        onChange={(event) => {
+          const value = Number(event.target.value);
+          if (value === 150 || value === 300) setModal({ ...modal, dpi: value });
+        }}><option value={150}>150 DPI · smaller</option><option value={300}>300 DPI · sharper</option></select></label>
+      <label className="checkbox-setting"><input type="checkbox" checked={modal.acknowledged} disabled={Boolean(busy)}
+        onChange={(event) => setModal({ ...modal, acknowledged: event.target.checked })} />
+        I understand the copy is image-only and will inspect it before sharing.</label>
+      <p className="muted">Your original and unsaved work stay unchanged. This window still shows the original, not the exported copy.</p>
+      {redactionProgress && <div className="redaction-progress" role="status" aria-live="polite">
+        <div className="redaction-progress-label"><LoaderCircle size={15} className="spin" />
+          {redactionProgress.canceling ? "Canceling; your marks will be kept..."
+            : redactionProgress.stage === "saving" ? native ? "Choose a filename in the Save dialog..." : "Preparing the download..."
+              : `Rendering page ${Math.max(1, redactionProgress.page)} of ${redactionProgress.count}...`}</div>
+        <progress max={redactionProgress.count} value={redactionProgress.page} aria-label="Redaction export progress" />
+      </div>}
+    </Dialog>}
+
+    {modal?.type === "redaction-clear" && <Dialog title="Clear pending redaction marks?" onClose={() => setModal(null)}
+      actions={<><button className="button secondary" onClick={() => setModal(null)}>Keep marks</button>
+        <button className="button danger" onClick={() => {
+          updateRedactions([]); redactionCounter.current = 0; setModal(null);
+        }}>Clear marks</button></>}>
+      <p>This removes the pending marks, not the original content. Ordinary save/download will export the <strong>unredacted original</strong> again.</p>
+      <p>A previously exported redacted PDF is a separate file and is not changed.</p>
+    </Dialog>}
+
+    {modal?.type === "redaction-leave" && <Dialog title="Leave your pending redactions?" onClose={() => setModal(null)}
+      actions={<><button className="button secondary" onClick={() => setModal(null)}>Keep reviewing</button>
+        <button className="button danger" onClick={() => {
+          const action = modal.action;
+          updateRedactions([]); redactionCounter.current = 0; setModal(null); requestAction(action);
+        }}>Discard marks & continue</button></>}>
+      <p>You have {redactions.length} pending redaction {redactions.length === 1 ? "area" : "areas"}. These marks are not saved inside your original PDF.</p>
+      <p>Keep reviewing to export a redacted copy first, or explicitly discard the marks.
+        Unsaved changes to the original document will be checked separately.</p>
+    </Dialog>}
+
+    {modal?.type === "edit-existing" && <Dialog title={`Edit existing text · Page ${modal.page + 1}`} error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
+      actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Cancel</button>
+        <button className="button primary" disabled={Boolean(busy) || modal.text === modal.expected && modal.font === "original"} onClick={() => {
+          const current = infoRef.current;
+          if (!current || current.id !== modal.documentId || current.revision !== modal.revision) {
+            setError("The document changed. Close this editor and select the text again.");
+            return;
+          }
+          edit({ type: "replace_text", page: modal.page, path: modal.path, expected: modal.expected,
+            replacement: modal.text, font: modal.font }, "Replacing PDF text...", () => setModal(null));
+        }}><SquarePen size={15} />Replace text</button></>}>
+      <label htmlFor="existing-text-value" className="note-label">Replacement text</label>
+      <textarea id="existing-text-value" rows={4} maxLength={4000} value={modal.text} disabled={Boolean(busy)}
+        onChange={(event) => setModal({ ...modal, text: event.target.value })} />
+      <label className="setting-field">Font<select value={modal.font} disabled={Boolean(busy)}
+        onChange={(event) => {
+          const font = event.target.value;
+          if (font === "original" || font === "noto") setModal({ ...modal, font });
+        }}>
+        <option value="original">{modal.originalFont.replace(/^[A-Z]{6}\+/, "")} (original)</option>
+        <option value="noto">Noto Sans (embedded)</option>
+      </select></label>
+      <p className="muted">This replaces the selected drawing operation in the PDF, not an annotation.
+        Font size, position, and color are retained. Longer text does not reflow neighboring lines.</p>
+      <p className="muted">{modal.font === "noto"
+        ? "Noto Sans embeds new Latin, Greek, or Cyrillic glyphs and changes this run's typeface."
+        : "The original font preserves its typeface but may not include every replacement character."}</p>
+      <p className="muted">Clear the field to remove this run. This is not secure redaction.</p>
+    </Dialog>}
 
     {(modal?.type === "create" || modal?.type === "blank") && <Dialog title={modal.type === "create" ? "Create a PDF" : "Insert a blank page"} error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
       actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Cancel</button>
@@ -933,7 +1223,7 @@ export default function App() {
         {[["New PDF", "Command + N"], ["Open PDF", "Command + O"], ["Save", "Command + S"], ["Save a copy", "Command + Shift + S"],
           ["Find in document", "Command + F"], ["Undo / redo", "Command + Z / Shift + Z"],
           ["Previous / next page", "Left / Right"], ["Zoom in / out", "Command + Plus / Minus"],
-          ["Select / pan", "V / H"], ["Highlight / add note", "M / N"], ["Add text / pen", "T / D"]].map(([label, key]) =>
+          ["Select / pan", "V / H"], ["Highlight / add note", "M / N"], ["Add text / pen", "T / D"], ["Edit existing text", "E"], ["Mark redaction areas", "R"]].map(([label, key]) =>
           <div key={label}><dt>{label}</dt><dd><kbd>{key}</kbd></dd></div>)}
       </dl><p className="muted">On Windows and Linux, use Control in place of Command.</p>
     </Dialog>}
@@ -941,7 +1231,7 @@ export default function App() {
     {modal?.type === "about" && <Dialog title="Meet Folio." onClose={() => setModal(null)}>
       <div className="about-brand"><img src="/folio.svg" width="52" height="52" alt="" /><div><h3>A little less paperwork.</h3><p>Version 0.1.0 - macOS-first MVP</p></div></div>
       <p>An independently built PDF workspace. Tauri connects this interface to a Rust document engine; PDF.js renders the pages.</p>
-      <p>Create, read, search, add editable text or drawings, review, combine, and extract PDF pages. Existing-text reflow, interactive forms, OCR, Office conversion, encryption, and cryptographic signing are not included.</p>
+      <p>Create, read, search, replace supported existing text runs, add text or drawings, redact to sanitized image-only copies, review, combine, and extract PDF pages. Paragraph reflow, interactive forms, OCR, Office conversion, encryption, and cryptographic signing are not included.</p>
       <p className="muted">Not affiliated with Adobe. No code, fonts, icons, or artwork have been extracted from Acrobat. Open-source dependencies carry their own licenses. Files stay on this device. This is an MVP, not a full Acrobat replacement.</p>
       {!native && <div className="preview-explanation"><FileText size={17} /><p><strong>You are in browser preview.</strong>The same Rust engine processes your edits through a loopback-only development bridge. Use the desktop app for native open/save dialogs.</p></div>}
     </Dialog>}

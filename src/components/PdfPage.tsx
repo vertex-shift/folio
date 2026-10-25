@@ -5,7 +5,9 @@ import type { PageViewport, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import { errorMessage, selectionQuads } from "../lib/geometry";
 import { findMatches, mapText } from "../lib/search";
 import { isRecord } from "../lib/navigation";
-import type { AnnotationInfo, Point, Quad, Tool, Zoom } from "../lib/types";
+import { validateRedactionRect } from "../lib/redaction";
+import { pageScale } from "../lib/continuous";
+import type { AnnotationInfo, PdfRect, Point, Quad, RedactionMark, Tool, Zoom } from "../lib/types";
 
 interface Props {
   pdf: PDFDocumentProxy;
@@ -13,6 +15,7 @@ interface Props {
   zoom: Zoom;
   width: number;
   height: number;
+  initialSize?: { width: number; height: number };
   tool: Tool;
   disabled: boolean;
   annotations: AnnotationInfo[];
@@ -24,7 +27,10 @@ interface Props {
   onHighlight(quads: Quad[], text: string): void;
   onNote(point: Point): void;
   onText(rect: [number, number, number, number]): void;
+  onEditExisting(text: string, origin: Point): void;
   onInk(points: Point[]): void;
+  redactions: RedactionMark[];
+  onRedaction(rect: PdfRect): void;
   onLink(destination: unknown, url: string | null): void;
   penColor: string;
   penWidth: number;
@@ -36,6 +42,7 @@ interface Layout {
   viewport: PageViewport;
   layer: TextLayer;
   text: ReturnType<typeof mapText>;
+  items: { text: string; origin: Point }[];
 }
 
 interface SearchRect {
@@ -78,7 +85,7 @@ export default function PdfPage(props: Props) {
   const paperRef = useRef<HTMLDivElement>(null);
   const callbacks = useRef(props);
   callbacks.current = props;
-  const [size, setSize] = useState({ width: 540, height: 699 });
+  const [size, setSize] = useState(props.initialSize ?? { width: 540, height: 699 });
   const [layout, setLayout] = useState<Layout | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
@@ -87,6 +94,8 @@ export default function PdfPage(props: Props) {
   const [links, setLinks] = useState<{ rect: number[]; destination: unknown; url: string | null }[]>([]);
   const [stroke, setStroke] = useState<Point[]>([]);
   const strokeRef = useRef<Point[]>([]);
+  const redactionStart = useRef<Point | null>(null);
+  const [redactionPreview, setRedactionPreview] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const customScale = props.zoom.mode === "custom" ? props.zoom.scale : 1;
 
   useEffect(() => {
@@ -100,16 +109,14 @@ export default function PdfPage(props: Props) {
     setLinks([]);
     strokeRef.current = [];
     setStroke([]);
+    redactionStart.current = null;
+    setRedactionPreview(null);
 
     async function draw() {
       const page = await props.pdf.getPage(props.page + 1);
       if (cancelled || !hostRef.current) return;
       const base = page.getViewport({ scale: 1 });
-      const availableWidth = Math.max(120, props.width - (props.width < 560 ? 48 : 128));
-      const availableHeight = Math.max(160, props.height - 108);
-      const scale = props.zoom.mode === "page"
-        ? Math.min(availableWidth / base.width, availableHeight / base.height)
-        : props.zoom.mode === "width" ? availableWidth / base.width : customScale;
+      const scale = pageScale(base, props.width, props.height, props.zoom);
       const viewport = page.getViewport({ scale });
       const pixelScale = Math.min(
         window.devicePixelRatio || 1, 2,
@@ -157,7 +164,9 @@ export default function PdfPage(props: Props) {
         }
         return { rect: item.rect, destination: item.dest, url: typeof item.url === "string" ? item.url : null };
       }));
-      setLayout({ viewport, layer, text: mapText(items) });
+      setLayout({ viewport, layer, text: mapText(items), items: items.map((item) => ({
+        text: item.str, origin: [Number(item.transform[4]), Number(item.transform[5])],
+      })) });
       setLoading(false);
     }
 
@@ -174,6 +183,26 @@ export default function PdfPage(props: Props) {
       layer?.cancel();
     };
   }, [props.pdf, props.page, props.zoom.mode, customScale, props.width, props.height]);
+
+  useEffect(() => {
+    if (!layout) return;
+    const enabled = props.tool === "edit-text" && !props.disabled;
+    layout.layer.textDivs.forEach((div, index) => {
+      const text = layout.items[index]?.text.trim();
+      if (enabled && text) {
+        div.setAttribute("role", "button");
+        div.setAttribute("tabindex", "0");
+        div.setAttribute("aria-label", `Edit existing text: ${text.slice(0, 100)}`);
+      } else {
+        div.setAttribute("role", "presentation");
+        div.removeAttribute("tabindex"); div.removeAttribute("aria-label");
+      }
+    });
+    return () => layout.layer.textDivs.forEach((div) => {
+      div.setAttribute("role", "presentation");
+      div.removeAttribute("tabindex"); div.removeAttribute("aria-label");
+    });
+  }, [layout, props.tool, props.disabled]);
 
   useLayoutEffect(() => {
     if (!layout || !paperRef.current || !props.query.trim()) {
@@ -209,13 +238,16 @@ export default function PdfPage(props: Props) {
   useEffect(() => {
     if (props.activeMatch < 0) return;
     paperRef.current?.querySelector(`[data-search-index="${props.activeMatch}"]`)
-      ?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+      ?.scrollIntoView({ block: "center", inline: "nearest",
+        behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }, [searchRects, props.activeMatch]);
 
   useEffect(() => {
     setSelection(null);
     strokeRef.current = [];
     setStroke([]);
+    redactionStart.current = null;
+    setRedactionPreview(null);
   }, [props.tool]);
 
   function captureSelection(autoHighlight: boolean) {
@@ -226,7 +258,13 @@ export default function PdfPage(props: Props) {
       return;
     }
     const range = current.getRangeAt(0);
-    if (!hostRef.current?.contains(range.startContainer) || !hostRef.current.contains(range.endContainer)) return;
+    if (!hostRef.current?.contains(range.startContainer) || !hostRef.current.contains(range.endContainer)) {
+      setSelection(null);
+      if (autoHighlight && props.tool === "highlight" && hostRef.current && range.intersectsNode(hostRef.current)) {
+        props.onError("Highlight one page at a time. Select a separate passage on each page.");
+      }
+      return;
+    }
     const text = current.toString().trim();
     if (!text) return;
     const page = paperRef.current.getBoundingClientRect();
@@ -258,6 +296,21 @@ export default function PdfPage(props: Props) {
       Math.max(0, Math.min(size.height, event.clientY - rect.top))];
   }
 
+  function editExisting(target: EventTarget | null) {
+    if (!layout || props.disabled || !(target instanceof Element)) return;
+    const span = target.closest(".textLayer span");
+    if (!(span instanceof HTMLElement)) return;
+    const index = layout.layer.textDivs.indexOf(span);
+    const item = layout.items[index];
+    if (!item || !item.text.trim()) return;
+    if (!item.origin.every(Number.isFinite)) {
+      props.onError("This text has no reliable position. Choose its source run from the text list.");
+      return;
+    }
+    window.getSelection()?.removeAllRanges();
+    props.onEditExisting(item.text, item.origin);
+  }
+
   return (
     <div
       ref={paperRef}
@@ -267,15 +320,32 @@ export default function PdfPage(props: Props) {
       aria-label={`PDF page ${props.page + 1}`}
       aria-busy={loading}
       data-page={props.page + 1}
+      onKeyDown={(event) => {
+        if (props.tool === "edit-text" && ["Enter", " "].includes(event.key)) {
+          event.preventDefault(); event.stopPropagation(); editExisting(event.target);
+        }
+      }}
       onPointerDown={(event) => {
-        if (props.tool !== "ink" || props.disabled || !layout || event.button !== 0
+        if (!["ink", "redact"].includes(props.tool) || props.disabled || !layout || event.button !== 0
           || event.target instanceof Element && event.target.closest("button")) return;
         event.preventDefault();
-        strokeRef.current = [localPoint(event)];
-        setStroke(strokeRef.current);
+        if (props.tool === "redact") {
+          redactionStart.current = localPoint(event);
+          window.getSelection()?.removeAllRanges();
+        } else {
+          strokeRef.current = [localPoint(event)];
+          setStroke(strokeRef.current);
+        }
         event.currentTarget.setPointerCapture(event.pointerId);
       }}
       onPointerMove={(event) => {
+        if (redactionStart.current && props.tool === "redact") {
+          const start = redactionStart.current;
+          const point = localPoint(event);
+          setRedactionPreview({ left: Math.min(start[0], point[0]), top: Math.min(start[1], point[1]),
+            width: Math.abs(start[0] - point[0]), height: Math.abs(start[1] - point[1]) });
+          return;
+        }
         if (!strokeRef.current.length || props.tool !== "ink") return;
         const point = localPoint(event);
         const last = strokeRef.current.at(-1);
@@ -288,8 +358,29 @@ export default function PdfPage(props: Props) {
         strokeRef.current = [...strokeRef.current, point];
         setStroke(strokeRef.current);
       }}
-      onPointerCancel={() => { strokeRef.current = []; setStroke([]); }}
+      onPointerCancel={() => {
+        strokeRef.current = []; setStroke([]);
+        redactionStart.current = null; setRedactionPreview(null);
+      }}
       onPointerUp={(event) => {
+        if (redactionStart.current && layout) {
+          const start = redactionStart.current;
+          const end = localPoint(event);
+          redactionStart.current = null; setRedactionPreview(null);
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+          try {
+            if (Math.abs(start[0] - end[0]) < 3 || Math.abs(start[1] - end[1]) < 3) {
+              throw new Error("Drag a larger redaction box so you can review what it covers.");
+            }
+            const a = layout.viewport.convertToPdfPoint(start[0], start[1]);
+            const b = layout.viewport.convertToPdfPoint(end[0], end[1]);
+            props.onRedaction(validateRedactionRect(
+              [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])],
+              layout.viewport.viewBox,
+            ));
+          } catch (error) { props.onError(errorMessage(error)); }
+          return;
+        }
         if (strokeRef.current.length && layout) {
           const points = strokeRef.current;
           strokeRef.current = []; setStroke([]);
@@ -308,6 +399,7 @@ export default function PdfPage(props: Props) {
         try { captureSelection(false); } catch (error) { props.onError(errorMessage(error)); }
       }}
       onClick={(event) => {
+        if (props.tool === "edit-text") { editExisting(event.target); return; }
         if (!["note", "text"].includes(props.tool) || props.disabled || !layout || event.target instanceof Element && event.target.closest("button")) return;
         const [x, y] = localPoint(event);
         if (props.tool === "note") {
@@ -340,6 +432,15 @@ export default function PdfPage(props: Props) {
         <polyline points={stroke.map(([x, y]) => `${x},${y}`).join(" ")} fill="none" stroke={props.penColor}
           strokeWidth={props.penWidth * (layout?.viewport.scale ?? 1) * (layout?.viewport.userUnit ?? 1)} strokeLinecap="round" strokeLinejoin="round" />
       </svg>}
+      {layout && props.redactions.map((mark) => {
+        const a = layout.viewport.convertToViewportPoint(mark.rect[0], mark.rect[1]);
+        const b = layout.viewport.convertToViewportPoint(mark.rect[2], mark.rect[3]);
+        return <div key={mark.id} className="redaction-mark" role="img" aria-label={`Pending redaction area ${mark.id}`}
+          style={{ left: Math.min(a[0], b[0]), top: Math.min(a[1], b[1]), width: Math.abs(a[0] - b[0]), height: Math.abs(a[1] - b[1]) }}>
+          <span aria-hidden="true">{mark.id}</span>
+        </div>;
+      })}
+      {redactionPreview && <div className="redaction-mark preview" style={redactionPreview} aria-hidden="true" />}
       {searchRects.map((rectangle, index) => (
         <span key={index} data-search-index={rectangle.index}
           className={`search-mark ${rectangle.index === props.activeMatch ? "current" : ""}`}

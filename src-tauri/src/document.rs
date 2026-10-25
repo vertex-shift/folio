@@ -117,6 +117,13 @@ pub enum Edit {
     Duplicate {
         page: usize,
     },
+    ReplaceText {
+        page: usize,
+        path: Vec<usize>,
+        expected: String,
+        replacement: String,
+        font: crate::text_edit::ReplacementFont,
+    },
 }
 
 struct Snapshot {
@@ -276,6 +283,35 @@ impl Session {
     pub fn extract_pages(&self, pages: &[usize]) -> Result<Vec<u8>> {
         self.ensure_writable()?;
         crate::pages::extract_pages(&self.document, pages)
+    }
+
+    pub fn text_runs(&self, page: usize) -> Result<Vec<crate::text_edit::TextRun>> {
+        crate::text_edit::page_runs(&self.document, page)
+    }
+
+    pub(crate) fn redaction_plan(
+        &self,
+        job_id: u64,
+        dpi: u16,
+        regions: &[crate::redaction::Region],
+    ) -> Result<crate::redaction::Plan> {
+        self.ensure_writable()?;
+        crate::redaction::plan(&self.document, self.id, self.revision, job_id, dpi, regions)
+    }
+
+    pub fn ensure_separate_output(&self, path: &Path) -> Result<()> {
+        for original in [&self.source_path, &self.saved_path].into_iter().flatten() {
+            if path == original
+                || (path.exists()
+                    && original.exists()
+                    && path.canonicalize()? == original.canonicalize()?)
+            {
+                return Err(invalid(
+                    "Choose a different filename; this export must not overwrite the active PDF.",
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn ensure_writable(&self) -> Result<()> {
@@ -466,6 +502,15 @@ pub(crate) fn page_bounds(document: &Document, id: ObjectId) -> Result<[f32; 4]>
 
 fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> {
     match edit {
+        Edit::ReplaceText {
+            page,
+            path,
+            expected,
+            replacement,
+            font,
+        } => {
+            crate::text_edit::replace(document, page, &path, &expected, &replacement, font)?;
+        }
         Edit::BlankPage { at, width, height } => {
             let mut order: Vec<_> = document.get_pages().into_values().collect();
             if at > order.len() {

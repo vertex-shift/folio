@@ -1,6 +1,35 @@
 export type Quad = [number, number, number, number, number, number, number, number];
 export type Point = [number, number];
 export type Color = [number, number, number];
+export type PdfRect = [number, number, number, number];
+
+export interface RedactionRegion {
+  page: number;
+  rect: PdfRect;
+}
+
+export interface RedactionMark extends RedactionRegion {
+  id: number;
+  documentId: number;
+  revision: number;
+}
+
+export interface RedactionPlan {
+  jobId: number;
+  documentId: number;
+  revision: number;
+  dpi: 150 | 300;
+  pages: {
+    sourceBounds: PdfRect;
+    rotation: number;
+    userUnit: number;
+    widthPoints: number;
+    heightPoints: number;
+    pixelWidth: number;
+    pixelHeight: number;
+    masks: { x: number; y: number; width: number; height: number }[];
+  }[];
+}
 
 export interface AnnotationInfo {
   id: string;
@@ -28,6 +57,18 @@ export interface DocumentInfo {
   annotations: AnnotationInfo[];
 }
 
+export interface ExistingTextRun {
+  path: number[];
+  text: string | null;
+  font: string;
+  fontSize: number | null;
+  origin: [number, number] | null;
+  editable: boolean;
+  reason: string | null;
+}
+
+export type ReplacementFont = "original" | "noto";
+
 export type Edit =
   | { type: "rotate"; page: number; degrees: 90 | -90 | 180 }
   | { type: "move"; from: number; to: number }
@@ -39,11 +80,12 @@ export type Edit =
   | { type: "text"; page: number; rect: [number, number, number, number]; text: string; size: number; color: Color }
   | { type: "ink"; page: number; points: Point[]; color: Color; width: number }
   | { type: "blank_page"; at: number; width: number; height: number }
-  | { type: "duplicate"; page: number };
+  | { type: "duplicate"; page: number }
+  | { type: "replace_text"; page: number; path: number[]; expected: string; replacement: string; font: ReplacementFont };
 
-export type Tool = "select" | "hand" | "highlight" | "note" | "text" | "ink";
+export type Tool = "select" | "hand" | "highlight" | "note" | "text" | "ink" | "edit-text" | "redact";
 export type Mode = "read" | "write" | "comment" | "organize";
-export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write";
+export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write" | "edit" | "redact";
 export type Zoom = { mode: "page" | "width" } | { mode: "custom"; scale: number };
 
 export interface SearchResult {

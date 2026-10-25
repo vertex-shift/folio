@@ -1207,6 +1207,7 @@ version = "0.1.0"
 dependencies = [
  "lopdf",
  "percent-encoding",
+ "png 0.18.1",
  "rfd",
  "serde",
  "serde_json",

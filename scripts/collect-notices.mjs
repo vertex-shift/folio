@@ -30,7 +30,7 @@ export function collectNotices(root) {
     "metadata", "--manifest-path", join(root, "src-tauri/Cargo.toml"),
     "--format-version", "1", "--locked", "--all-features",
   ], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }));
-  const names = new Set(["lopdf", "tauri", "tauri-plugin-opener", "rfd", "tempfile", "serde", "serde_json", "thiserror", "ttf-parser", "unicode-normalization"]);
+  const names = new Set(["lopdf", "tauri", "tauri-plugin-opener", "rfd", "tempfile", "serde", "serde_json", "thiserror", "ttf-parser", "unicode-normalization", "png"]);
   for (const dependency of metadata.packages.filter((entry) => names.has(entry.name))) {
     const folder = dirname(dependency.manifest_path);
     const candidates = ["LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "LICENSE.md", "LICENSE.txt", "LICENSE.spdx", "COPYING"];

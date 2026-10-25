@@ -6,7 +6,7 @@
   "scripts": {
     "prepare": "node scripts/prepare-assets.mjs",
     "predev": "npm run prepare",
-    "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
+    "dev": "vite --host 127.0.0.1 --strictPort",
     "prebuild": "npm run prepare",
     "build": "tsc --noEmit && vite build",
     "test": "node --test tests/*.test.ts",
