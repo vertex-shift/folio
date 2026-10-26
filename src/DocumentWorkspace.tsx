@@ -10,6 +10,7 @@ import {
   Bookmark, FilePlus2, FileInput, FileOutput, Pencil, Type, SquarePen, ExternalLink, Eraser,
 } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import { version as appVersion } from "../package.json";
 import Dialog from "./components/Dialog";
 import PasswordDialog from "./components/PasswordDialog";
 import SelectionIndicator from "./components/SelectionIndicator";
@@ -1258,7 +1259,7 @@ export default function DocumentWorkspace(props: Props) {
     </Dialog>}
 
     {modal?.type === "about" && <Dialog title="Meet Folio." onClose={() => setModal(null)}>
-      <div className="about-brand"><img src="/folio.svg" width="52" height="52" alt="" /><div><h3>A little less paperwork.</h3><p>Version 0.1.0 - macOS-first MVP</p></div></div>
+      <div className="about-brand"><img src="/folio.svg" width="52" height="52" alt="" /><div><h3>A little less paperwork.</h3><p>Version {appVersion} - macOS-first MVP</p></div></div>
       <p>An independently built PDF workspace. Tauri connects this interface to a Rust document engine; PDF.js renders the pages.</p>
       <p>Create, read, search, replace supported existing text runs, add text or drawings, redact to sanitized image-only copies, review, combine, and extract PDF pages. Open password-protected PDFs and retain their protection when saving. Paragraph reflow, interactive forms, OCR, Office conversion, setting or changing passwords, and cryptographic signing are not included.</p>
       <p className="muted">Not affiliated with Adobe. No code, fonts, icons, or artwork have been extracted from Acrobat. Open-source dependencies carry their own licenses. Files stay on this device. This is an MVP, not a full Acrobat replacement.</p>

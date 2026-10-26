@@ -71,8 +71,8 @@ Keep the version in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`,
 those changes to `main`. Push a matching version tag, for example:
 
 ```sh
-git tag -a v0.1.0 -m "Folio 0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.1 -m "Folio 0.1.1"
+git push origin v0.1.1
 ```
 
 The tag must match the application version exactly. All three platform builds
