@@ -1,6 +1,7 @@
 use folio_core::{
     archive::{Request, SourceRef},
     document::{DocumentInfo, Session},
+    output::{OutputKind, OutputRequest},
     workspace::Workspace,
 };
 
@@ -40,11 +41,24 @@ fn archive_request(info: &DocumentInfo) -> Request {
     }
 }
 
+fn docx_request(info: &DocumentInfo) -> OutputRequest {
+    OutputRequest {
+        document_id: info.id,
+        revision: info.revision,
+        kind: OutputKind::Docx,
+        pages: vec![0],
+        dpi: None,
+        quality: None,
+        allow_unencrypted: false,
+    }
+}
+
 #[test]
-fn replacement_staging_invalidates_both_technical_jobs_even_after_cancel_restores_readiness() {
+fn replacement_staging_invalidates_technical_and_docx_jobs_even_after_cancel_restores_readiness() {
     let mut workspace = Workspace::default();
     let info = source(&mut workspace);
     let before = workspace.document(info.id).unwrap().bytes().to_vec();
+    let docx = workspace.begin_output(docx_request(&info)).unwrap();
     let inspection = workspace
         .inspect_technical(SourceRef {
             document_id: info.id,
@@ -57,6 +71,7 @@ fn replacement_staging_invalidates_both_technical_jobs_even_after_cancel_restore
         .unwrap();
     assert!(workspace.check_inspection(inspection.inspection_id).is_err());
     assert!(workspace.check_archive(archive.archive_id).is_err());
+    assert!(workspace.check_output(docx.job_id).is_err());
     assert!(workspace.has_unsaved_changes());
     assert!(workspace.ensure_export_ready(info.id, info.revision).is_err());
     assert!(
@@ -67,6 +82,7 @@ fn replacement_staging_invalidates_both_technical_jobs_even_after_cancel_restore
     assert!(workspace.ensure_export_ready(info.id, info.revision).is_ok());
     assert!(workspace.check_inspection(inspection.inspection_id).is_err());
     assert!(workspace.check_archive(archive.archive_id).is_err());
+    assert!(workspace.check_output(docx.job_id).is_err());
     assert_eq!(workspace.document(info.id).unwrap().bytes(), before);
     assert!(!workspace.has_unsaved_changes());
 }
@@ -75,6 +91,7 @@ fn replacement_staging_invalidates_both_technical_jobs_even_after_cancel_restore
 fn rejected_replacement_bytes_do_not_create_a_draft_or_cancel_valid_technical_jobs() {
     let mut workspace = Workspace::default();
     let info = source(&mut workspace);
+    let docx = workspace.begin_output(docx_request(&info)).unwrap();
     let inspection = workspace
         .inspect_technical(SourceRef {
             document_id: info.id,
@@ -89,8 +106,10 @@ fn rejected_replacement_bytes_do_not_create_a_draft_or_cancel_valid_technical_jo
     );
     assert!(workspace.check_inspection(inspection.inspection_id).is_ok());
     assert!(workspace.check_archive(archive.archive_id).is_ok());
+    assert!(workspace.check_output(docx.job_id).is_ok());
     assert!(workspace.ensure_export_ready(info.id, info.revision).is_ok());
     assert!(workspace.cancel_archive(archive.archive_id));
+    assert!(workspace.cancel_output(docx.job_id));
     assert!(!workspace.has_unsaved_changes());
 }
 
