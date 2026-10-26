@@ -65,6 +65,7 @@ pub struct DocumentInfo {
     pub read_only_reason: Option<String>,
     pub password_protected: bool,
     pub copy_allowed: bool,
+    pub permissions: crate::protection::AccessPermissions,
     pub pages: Vec<PageInfo>,
     pub annotations: Vec<AnnotationInfo>,
 }
@@ -72,6 +73,30 @@ pub struct DocumentInfo {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Edit {
+    Metadata {
+        fields: crate::metadata::Fields,
+    },
+    BookmarkCreate {
+        parent: Option<String>,
+        at: usize,
+        title: String,
+        page: usize,
+    },
+    BookmarkRename {
+        id: String,
+        title: String,
+    },
+    BookmarkMove {
+        id: String,
+        parent: Option<String>,
+        at: usize,
+    },
+    BookmarkDelete {
+        id: String,
+    },
+    AttachmentRemove {
+        id: String,
+    },
     Rotate {
         page: usize,
         degrees: i32,
@@ -174,6 +199,8 @@ pub struct Session {
     password: Option<String>,
     copy_allowed: bool,
     form_fill_allowed: bool,
+    permissions: crate::protection::AccessPermissions,
+    signed: bool,
 }
 
 impl Session {
@@ -220,7 +247,7 @@ impl Session {
             read_only_reason: if signed {
                 Some("Digitally signed PDF: read-only. Rewriting this file would invalidate its signatures.".to_owned())
             } else if !loaded.editable {
-                Some(if loaded.fillable {
+                Some(if loaded.permissions.fill_forms_allowed {
                     "This PDF restricts general editing and page export. Permitted form fields remain fillable in Forms; use the owner password for other edits."
                 } else {
                     "This PDF's permissions are restricted. Reopen it with the owner password to edit or export pages."
@@ -230,7 +257,9 @@ impl Session {
             },
             password,
             copy_allowed: loaded.copy_allowed,
-            form_fill_allowed: !signed && loaded.fillable,
+            form_fill_allowed: !signed && loaded.permissions.fill_forms_allowed,
+            permissions: loaded.permissions,
+            signed,
         };
         session.info()?;
         Ok(session)
@@ -350,12 +379,24 @@ impl Session {
             read_only_reason: self.read_only_reason.clone(),
             password_protected: self.password.is_some(),
             copy_allowed: self.copy_allowed,
+            permissions: self.permissions.clone(),
             pages,
             annotations: annotations(&self.document)?,
         })
     }
 
     pub fn apply(&mut self, edit: Edit) -> Result<DocumentInfo> {
+        if matches!(
+            &edit,
+            Edit::Metadata { .. }
+                | Edit::BookmarkCreate { .. }
+                | Edit::BookmarkRename { .. }
+                | Edit::BookmarkMove { .. }
+                | Edit::BookmarkDelete { .. }
+                | Edit::AttachmentRemove { .. }
+        ) {
+            self.ensure_management_writable()?;
+        }
         let revision = self.next_revision;
         self.mutate(|next| apply_edit(next, edit, revision))
     }
@@ -415,6 +456,54 @@ impl Session {
         self.commit_change(|next| crate::forms::fill(next, changes))
     }
 
+    pub fn metadata(&self) -> Result<crate::metadata::MetadataInfo> {
+        crate::metadata::inspect(&self.document)
+    }
+
+    pub fn permissions(&self) -> &crate::protection::AccessPermissions {
+        &self.permissions
+    }
+
+    pub fn bookmarks(&self) -> Result<Vec<crate::outlines::BookmarkInfo>> {
+        crate::outlines::inspect(&self.document)
+    }
+
+    pub fn attachments(&self) -> Result<Vec<crate::attachments::AttachmentInfo>> {
+        crate::attachments::inspect(&self.document)
+    }
+
+    pub fn add_attachment(&mut self, name: &str, bytes: Vec<u8>) -> Result<DocumentInfo> {
+        self.ensure_management_writable()?;
+        self.mutate(|next| crate::attachments::add(next, name, bytes))
+    }
+
+    pub fn attachment_bytes(&self, id: &str) -> Result<(String, Vec<u8>)> {
+        if !self.copy_allowed {
+            return Err(invalid(
+                "This PDF does not allow extracting attachments. Reopen it with the owner password.",
+            ));
+        }
+        crate::attachments::export(&self.document, id)
+    }
+
+    pub fn protection_copy(
+        &self,
+        protection: &crate::protection::CopyProtection,
+        authorization_password: Option<&str>,
+    ) -> Result<Vec<u8>> {
+        if self.signed {
+            return Err(invalid(
+                "Signed or certified PDFs cannot be reprotected or unprotected; changing protection would invalidate signatures.",
+            ));
+        }
+        crate::protection::author_copy(
+            &self.document,
+            self.permissions.owner_authenticated,
+            authorization_password,
+            protection,
+        )
+    }
+
     pub(crate) fn redaction_plan(
         &self,
         job_id: u64,
@@ -443,6 +532,16 @@ impl Session {
     pub(crate) fn ensure_writable(&self) -> Result<()> {
         if let Some(reason) = &self.read_only_reason {
             return Err(invalid(reason));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ensure_management_writable(&self) -> Result<()> {
+        self.ensure_writable()?;
+        if self.bytes.len() > HISTORY_BYTES {
+            return Err(invalid(
+                "Document-management edits require an undoable snapshot within the 64 MiB history budget. This PDF is too large; its contents are unchanged.",
+            ));
         }
         Ok(())
     }
@@ -629,6 +728,21 @@ fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> 
         Edit::RemoveAuthoring { pages, kind } => {
             crate::authoring::remove_stamps(document, &pages, kind)?
         }
+        Edit::Metadata { fields } => crate::metadata::update(document, fields)?,
+        Edit::BookmarkCreate {
+            parent,
+            at,
+            title,
+            page,
+        } => {
+            crate::outlines::create(document, parent, at, &title, page)?;
+        }
+        Edit::BookmarkRename { id, title } => crate::outlines::rename(document, &id, &title)?,
+        Edit::BookmarkMove { id, parent, at } => {
+            crate::outlines::move_bookmark(document, &id, parent, at)?
+        }
+        Edit::BookmarkDelete { id } => crate::outlines::remove(document, &id)?,
+        Edit::AttachmentRemove { id } => crate::attachments::remove(document, &id)?,
         Edit::ReplaceText {
             page,
             path,
@@ -1314,6 +1428,28 @@ mod tests {
             .unwrap();
         assert!(!session.info().unwrap().can_redo);
         assert!(session.redo().is_err());
+    }
+
+    #[test]
+    fn management_edits_never_silently_drop_their_only_undo_snapshot() {
+        let mut session = Session::demo(1).unwrap();
+        session.bytes.resize(HISTORY_BYTES + 1, b' ');
+        assert!(
+            session
+                .apply(Edit::Metadata {
+                    fields: crate::metadata::Fields::default()
+                })
+                .is_err()
+        );
+        assert!(
+            session
+                .add_attachment("synthetic.txt", b"synthetic".to_vec())
+                .is_err()
+        );
+        assert_eq!(session.revision, 0);
+        assert!(session.undo.is_empty());
+        session.bytes.truncate(HISTORY_BYTES);
+        assert!(session.ensure_management_writable().is_ok());
     }
 
     #[test]

@@ -92,6 +92,18 @@ The desktop app processes document contents locally.
   passwords in memory only and never export the decrypted rendering copy.
   Encrypted redaction retains required encryption parameters and, for legacy
   algorithms, the file identifier; disclose this exception to metadata removal.
+- Document management: editable descriptive metadata with consistent classic
+  Info/supported existing XMP; real outline create/rename/reorder/nesting/delete;
+  bounded document-level embedded-file attachment inspection/add/removal/export.
+  Keep edits in Session history, retain per-tab drafts, preserve unrelated
+  structures, and never describe metadata changes/removal as secure erasure.
+  Attachments are untrusted data, never automatically opened or executed.
+- Protection authoring: explicit separate protected/reprotected/unprotected PDF
+  copies, using supported AES-256 revision-6 PDF 2.0 encryption and fresh OS
+  randomness. Actual owner authorization is required to replace/remove existing
+  protection, not inferred from permissive opening-password access. Keep source
+  bytes/history/protection unchanged, block pending drafts/marks, guard all open
+  file paths, and label permission flags as cooperative rather than absolute DRM.
 - User-requested modern polish and subtle animation: refine the existing
   document-first shell with coherent control shapes, cleaner surfaces,
   restrained elevation, and purposeful contextual feedback. Honor Reduce
@@ -113,7 +125,7 @@ The desktop app processes document contents locally.
   certification/co-signing, algorithms, and timestamp/countersignature formats.
   Do not claim trusted chains, revocation, trusted timestamps, qualified
   signatures, or PAdES-LTV; make no external certificate/document requests.
-- Password creation/removal/changes, certificate-based protection, paragraph reflow, arbitrary font/encoding support, existing-image editing,
+- Certificate-based protection, paragraph reflow, arbitrary font/encoding support, existing-image editing,
   form authoring, unsupported interactive forms, OCR, Office conversion, advanced
   signing/trust validation, cloud
   collaboration, and full Acrobat parity remain incomplete capabilities.

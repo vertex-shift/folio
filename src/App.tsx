@@ -335,9 +335,9 @@ export default function App() {
           setQuit(false);
           if (document) void run(async () => { await bridge.activate(document.id); setActiveId(document.id); });
         }}>Review changes</button></>}>
-      <p>These tabs have unsaved edits, unapplied drafts, or pending marks. Review and save the documents you want to keep before quitting.</p>
+      <p>These tabs have unsaved edits, drafts, or pending marks. Apply or discard drafts and save the documents you want to keep before quitting.</p>
       <ul className="unsaved-tab-list">{unsaved.map((document) => <li key={document.id}>
-        <strong>{document.name}</strong><span>{pending.has(document.id) ? "Unapplied drafts or pending marks" : "Unsaved PDF edits"}</span>
+        <strong>{document.name}</strong><span>{pending.has(document.id) ? "Pending document drafts or marks" : "Unsaved PDF edits"}</span>
       </li>)}</ul>
       <p className="muted">Discarding closes all tabs and loses their unsaved work. Files already saved on disk are not deleted.</p>
     </Dialog>}

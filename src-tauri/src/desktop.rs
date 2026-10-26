@@ -10,6 +10,9 @@ use crate::{
     workspace::{OpenOutcome, Workspace, WorkspaceInfo},
 };
 
+#[path = "document_utilities_desktop.rs"]
+mod utilities;
+
 #[derive(Default)]
 struct DesktopState {
     workspace: Workspace,
@@ -773,6 +776,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            utilities::document_metadata,
+            utilities::document_bookmarks,
+            utilities::document_attachments,
+            utilities::add_document_attachment,
+            utilities::export_document_attachment,
+            utilities::export_protection_copy,
             create_document,
             import_document_pages,
             extract_document_pages,

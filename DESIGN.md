@@ -334,7 +334,10 @@ an outlined selection and a selected page-number treatment.
 The writing panel reuses secondary buttons and outlined setting fields for
 text size, pen width, and on-document color. The page-authoring action row
 wraps at narrow widths; it does not add a second navigation hierarchy.
-Bookmarks are an indented list of standard buttons. Document links are
+Bookmarks are an indented list of standard buttons, with a compact selected-item
+toolbar for renaming, sibling movement, nesting/outdenting, and group deletion.
+Add-bookmark dialogs select a real page and parent; keep original targets when
+renaming/organizing. Document links are
 transparent hit targets over actual PDF geometry, with visible keyboard focus.
 External links require an explicit confirmation that displays the address.
 
@@ -375,6 +378,27 @@ Keep Apply form changes and confirmed Discard actions in a fixed footer.
 Errors preserve drafts; save/history/source mutations and exit protection
 must not quietly ignore them. Explain the embedded-font and unsupported
 script/calculation/XFA boundaries without adding placeholder controls.
+
+Properties and attachments extend the existing 274px contextual panel, not
+the shell's navigation hierarchy. Descriptive metadata uses labeled fields
+with explicit Apply/Discard actions. Retain drafts at DocumentWorkspace level,
+including cleared fields, across panel/tab changes; save/close/export must not
+silently omit them. Explain XMP consistency failures inline instead of silently
+keeping old metadata elsewhere. Inspectable metadata is not a sanitization claim.
+
+Attachments show actual names and bounded decoded sizes, with user-driven Add,
+Save, and Remove controls. Confirmation explains that payloads are untrusted,
+never auto-opened/executed, and removal from the list is not secure erasure.
+Use the same focused native save dialogs or explicit browser downloads, with
+sanitized suggested basenames and no browser-preview filesystem-path API.
+
+Export protection copy uses the protected dialog system: explicit separate
+output, current owner authorization where needed, masked/confirmed new
+passwords, and honest printing/copy/edit/annotation/form/assembly permissions.
+Use AES-256 revision 6, clearly explain optional opening passwords and owner
+override, and distinguish cooperative restrictions from absolute DRM. Wrong
+passwords/cancellation preserve source/tab state. Pending drafts/redaction
+marks block export; ordinary saves continue preserving protection.
 
 Appearance is a nonmodal title-bar popover, not an interrupting settings
 dialog. Its standard radio group supports keyboard navigation, visible

@@ -127,9 +127,27 @@ struct SignRequest {
     password: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AttachmentRequest {
+    document_id: u64,
+    revision: u64,
+    attachment_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProtectionRequest {
+    document_id: u64,
+    revision: u64,
+    authorization_password: Option<String>,
+    protection: folio_core::protection::CopyProtection,
+}
+
 enum Payload {
     Json(serde_json::Value),
     Pdf(Vec<u8>),
+    Attachment(Vec<u8>),
 }
 
 fn header(request: &Request, name: &'static str) -> Option<String> {
@@ -255,6 +273,66 @@ fn handle(
                     .ensure_export_ready(input.document_id, input.revision)?
                     .extract_pages(&input.pages)?,
             ));
+        }
+        (&Method::Post, "/metadata") => {
+            let input: Revision = json_body(request)?;
+            return json(
+                workspace
+                    .check_revision(input.document_id, input.revision)?
+                    .metadata()?,
+            );
+        }
+        (&Method::Post, "/bookmarks") => {
+            let input: Revision = json_body(request)?;
+            return json(
+                workspace
+                    .check_revision(input.document_id, input.revision)?
+                    .bookmarks()?,
+            );
+        }
+        (&Method::Post, "/attachments") => {
+            let input: Revision = json_body(request)?;
+            return json(
+                workspace
+                    .check_revision(input.document_id, input.revision)?
+                    .attachments()?,
+            );
+        }
+        (&Method::Post, "/attachments/add") => {
+            let id = numeric_header(request, "X-Document-Id")?;
+            let revision = numeric_header(request, "X-Revision")?;
+            workspace.ensure_export_ready(id, revision)?;
+            let limit = folio_core::attachments::MAX_ATTACHMENT_BYTES;
+            if request.body_length().is_some_and(|length| length > limit) {
+                return Err(Error::Invalid("The attachment exceeds 16 MiB.".into()));
+            }
+            let name = file_name(request)?;
+            let mut bytes = Vec::new();
+            request
+                .as_reader()
+                .take(limit as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() > limit {
+                return Err(Error::Invalid("The attachment exceeds 16 MiB.".into()));
+            }
+            workspace
+                .current_mut(id, revision)?
+                .add_attachment(&name, bytes)?
+        }
+        (&Method::Post, "/attachments/export") => {
+            let input: AttachmentRequest = json_body(request)?;
+            let (_, bytes) = workspace
+                .ensure_export_ready(input.document_id, input.revision)?
+                .attachment_bytes(&input.attachment_id)?;
+            return Ok(Payload::Attachment(bytes));
+        }
+        (&Method::Post, "/protection/export") => {
+            let input: ProtectionRequest = serde_json::from_slice(&body(request)?)
+                .map_err(|_| Error::Invalid("The protection-copy request is invalid.".into()))?;
+            let bytes = workspace
+                .ensure_export_ready(input.document_id, input.revision)?
+                .protection_copy(&input.protection, input.authorization_password.as_deref())?;
+            return Ok(Payload::Pdf(bytes));
         }
         (&Method::Post, "/open") => {
             let name = file_name(request)?;
@@ -488,6 +566,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             match handle(&mut request, &mut workspace, frontend_port) {
                 Ok(Payload::Json(value)) => (serde_json::to_vec(&value)?, "application/json", 200),
                 Ok(Payload::Pdf(bytes)) => (bytes, "application/pdf", 200),
+                Ok(Payload::Attachment(bytes)) => (bytes, "application/octet-stream", 200),
                 Err(error) => {
                     eprintln!("Preview request failed: {error}");
                     (

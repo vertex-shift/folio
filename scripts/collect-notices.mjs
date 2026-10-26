@@ -10,7 +10,7 @@ export function collectNotices(root) {
   ];
   const append = (title, path) => {
     if (!existsSync(path)) throw new Error(`Required dependency notice is missing: ${path}`);
-    sections.push(`\n${"=".repeat(72)}\n${title}\n${"=".repeat(72)}\n${readFileSync(path, "utf8")}`);
+    sections.push(`\n${"=".repeat(72)}\n${title}\n${"=".repeat(72)}\n${readFileSync(path, "utf8").replace(/\r\n/g, "\n")}`);
   };
   for (const [name, license] of [
     ["react", "LICENSE"], ["react-dom", "LICENSE"], ["scheduler", "LICENSE"],
@@ -34,10 +34,11 @@ export function collectNotices(root) {
     "openssl", "openssl-sys", "openssl-src", "openssl-macros", "foreign-types", "foreign-types-shared",
     "cms", "der", "der_derive", "const-oid", "spki", "x509-cert", "flagset", "zeroize", "zeroize_derive",
     "base64ct", "pem-rfc7468", "tls_codec", "tls_codec_derive",
-    "image", "zune-jpeg", "zune-core", "byteorder-lite", "bytemuck", "moxcms", "pxfm"]);
+    "image", "zune-jpeg", "zune-core", "byteorder-lite", "bytemuck", "moxcms", "pxfm",
+    "getrandom", "quick-xml"]);
   for (const dependency of metadata.packages.filter((entry) => names.has(entry.name))) {
     const folder = dirname(dependency.manifest_path);
-    const candidates = ["LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "LICENSE.md", "LICENSE.txt", "LICENSE.spdx", "COPYING"];
+    const candidates = ["LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "LICENSE-MIT.md", "LICENSE.md", "LICENSE.txt", "LICENSE.spdx", "COPYING"];
     const licenses = candidates.filter((name) => existsSync(join(folder, name)));
     if (!licenses.length && dependency.name === "cms" && dependency.version === "0.2.3"
         && dependency.license === "Apache-2.0 OR MIT") {

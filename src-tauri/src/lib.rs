@@ -1,10 +1,14 @@
+pub mod attachments;
 pub mod authoring;
 mod authoring_image;
 pub mod document;
 pub mod forms;
+pub mod metadata;
+pub mod outlines;
 pub mod page_geometry;
 mod pages;
-mod protection;
+mod pdf_objects;
+pub mod protection;
 pub mod redaction;
 pub mod signatures;
 pub mod text_edit;

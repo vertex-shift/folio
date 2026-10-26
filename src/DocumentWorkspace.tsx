@@ -8,6 +8,7 @@ import {
   PanelRightClose, Plus, Redo2, RotateCcw, RotateCw, ScanLine, Search,
   ShieldCheck, Trash2, Undo2, X, FileKey2,
   Bookmark, FilePlus2, FileInput, FileOutput, Pencil, Type, SquarePen, ExternalLink, Eraser, ImagePlus, Hash, Stamp, Crop,
+  Info, Paperclip,
 } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { version as appVersion } from "../package.json";
@@ -26,7 +27,13 @@ import { signatureBridge } from "./features/signatures/bridge";
 import type { SigningIdentity } from "./features/signatures/types";
 import AuthoringPanel from "./components/AuthoringPanel";
 import FormsPanel from "./components/FormsPanel";
+import DocumentPropertiesPanel from "./components/DocumentPropertiesPanel";
+import AttachmentsPanel from "./components/AttachmentsPanel";
+import ProtectionCopyDialog from "./components/ProtectionCopyDialog";
 import { bridge, native, runtimeIssue } from "./lib/bridge";
+import { documentUtilities } from "./lib/documentUtilitiesBridge";
+import { MAX_MANAGEMENT_SOURCE_BYTES, metadataChanged } from "./lib/documentUtilitiesModel";
+import type { AttachmentInfo, BookmarkInfo, CopyProtection, MetadataDraft } from "./lib/documentUtilitiesModel";
 import { errorMessage, formatBytes, pageFromInput } from "./lib/geometry";
 import { loadPdf } from "./lib/pdf";
 import { useSearch } from "./lib/useSearch";
@@ -40,6 +47,7 @@ import { destinationPage, safeExternalUrl } from "./lib/navigation";
 import { MAX_REDACTION_MARKS, renderRedactionPages } from "./lib/redaction";
 import type { DocumentInfo, Edit, ExistingTextRun, Mode, OpenOutcome, Panel, PasswordChallenge, PdfRect, Point, Quad, RedactionMark, RedactionPlan, ReplacementFont, Tool, Zoom } from "./lib/types";
 import "./authoring.css";
+import "./document-utilities.css";
 
 type Action = { type: "open" | "example" | "close" }
   | { type: "create"; width: number; height: number };
@@ -57,6 +65,11 @@ type Modal = { type: "shortcuts" | "about" }
   | { type: "redaction-leave"; action: Action }
   | { type: "sign-copy"; documentId: number; revision: number }
   | { type: "form-discard"; action?: Action }
+  | { type: "bookmark-create"; documentId: number; revision: number; text: string; page: string; parent: string | null; at: number; entries: BookmarkInfo[] }
+  | { type: "bookmark-rename"; documentId: number; revision: number; id: string; text: string }
+  | { type: "bookmark-delete"; entry: BookmarkInfo }
+  | { type: "attachment-remove" | "attachment-export"; attachment: AttachmentInfo }
+  | { type: "protection-copy" }
   | { type: "external"; url: string };
 
 type SourceTextModal = {
@@ -80,6 +93,7 @@ const panelLabels: Record<Panel, string> = {
   signatures: "Digital signatures",
   authoring: "Page authoring",
   forms: "Fill form fields",
+  properties: "Document properties", attachments: "File attachments",
 };
 
 function typingTarget(target: EventTarget | null): boolean {
@@ -131,6 +145,8 @@ export default function DocumentWorkspace(props: Props) {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal | SourceTextModal | null>(null);
+  const [metadataDraft, setMetadataDraft] = useState<MetadataDraft | null>(null);
+  const pendingMetadata = metadataChanged(metadataDraft);
   const [redactions, setRedactions] = useState<RedactionMark[]>([]);
   const redactionsRef = useRef(redactions);
   redactionsRef.current = redactions;
@@ -143,8 +159,8 @@ export default function DocumentWorkspace(props: Props) {
   const pendingWriting = modal?.type === "edit-existing"
     ? modal.text !== modal.expected || modal.font !== "original"
     : Boolean(modal && "text" in modal && modal.text.trim());
-  const writingDraftRef = useRef(pendingWriting);
-  writingDraftRef.current = pendingWriting;
+  const writingDraftRef = useRef(pendingWriting || pendingMetadata);
+  writingDraftRef.current = pendingWriting || pendingMetadata;
   const [draggedPage, setDraggedPage] = useState<number | null>(null);
   const [overPage, setOverPage] = useState<number | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 800, height: 740 });
@@ -160,6 +176,8 @@ export default function DocumentWorkspace(props: Props) {
   const searchRef = useRef<HTMLInputElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
+  const attachmentRef = useRef<HTMLInputElement>(null);
+  const attachmentPickerRevision = useRef<{ documentId: number; revision: number } | null>(null);
   const infoRef = useRef(info);
   const pageRef = useRef(page);
   const busyRef = useRef(false);
@@ -190,10 +208,15 @@ export default function DocumentWorkspace(props: Props) {
       if (current) await bridge.draft(current.id, writingDraftRef.current || redactionsRef.current.length > 0 || forms.pending());
     },
   });
-  const pendingDraft = pendingWriting || redactions.length > 0 || authoring.pending || forms.count > 0;
-  const authoringDisabled = disabled || readOnly || redactions.length > 0 || forms.count > 0;
+  const pendingDraft = pendingWriting || pendingMetadata || redactions.length > 0 || authoring.pending || forms.count > 0;
+  const pendingDraftRef = useRef(pendingDraft);
+  pendingDraftRef.current = pendingDraft;
+  const authoringDisabled = disabled || readOnly || redactions.length > 0 || forms.count > 0 || pendingMetadata;
   const editDisabled = authoringDisabled || authoring.pending;
-  const redactDisabled = disabled || readOnly || authoring.pending || forms.count > 0;
+  const redactDisabled = disabled || readOnly || authoring.pending || forms.count > 0 || pendingMetadata;
+  const managementTooLarge = Boolean(info && info.byteLength > MAX_MANAGEMENT_SOURCE_BYTES);
+  const managementEditDisabled = editDisabled || managementTooLarge;
+  const utilityPanel = panelOpen && ["properties", "attachments", "bookmarks"].includes(panel);
   const redactionIntent = tool === "redact" || redactions.length > 0;
   const saveLabel = redactionIntent ? "Export redacted copy" : native ? "Save a copy" : "Download PDF";
 
@@ -236,6 +259,7 @@ export default function DocumentWorkspace(props: Props) {
       updateRedactions([]);
       redactionCounter.current = 0;
       setModal(null);
+      setMetadataDraft(null);
       setPage(0);
       setMode("read");
       setTool("select");
@@ -330,7 +354,7 @@ export default function DocumentWorkspace(props: Props) {
       return;
     }
     if (writingDraftRef.current) {
-      setError("Finish or cancel the current text or note before leaving this document.");
+      setError("Finish or discard the current document draft before leaving this tab.");
       return;
     }
     if (authoring.hasDraft() && action.type === "close") {
@@ -393,6 +417,10 @@ export default function DocumentWorkspace(props: Props) {
       setError("Apply or discard your form changes before editing other PDF content.");
       return;
     }
+    if (pendingMetadata && !["select", "hand"].includes(next)) {
+      setError("Apply or discard the metadata draft before editing this PDF.");
+      return;
+    }
     if (redactionsRef.current.length && !["select", "hand", "redact"].includes(next)) {
       setError("Clear the pending redaction marks before changing the original PDF.");
       return;
@@ -434,6 +462,7 @@ export default function DocumentWorkspace(props: Props) {
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before changing this PDF."); return; }
     if (forms.pending()) { showPanel("forms"); setError("Apply or discard the pending form changes before editing this PDF."); return; }
     if (redactionsRef.current.length) { setError("Clear pending redaction marks before editing the original PDF."); return; }
+    if (pendingMetadata) { setError("Apply or discard the metadata draft before making other edits."); return; }
     void run(label, async () => {
       const current = infoRef.current;
       if (!current) throw new Error("Open a PDF before editing.");
@@ -494,6 +523,7 @@ export default function DocumentWorkspace(props: Props) {
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before inserting pages."); return; }
     if (forms.pending()) { showPanel("forms"); setError("Apply or discard form changes before inserting pages."); return; }
     if (redactionsRef.current.length) { setError("Clear redaction marks before inserting pages."); return; }
+    if (writingDraftRef.current) { setError("Finish or discard the current document draft before inserting pages."); return; }
     if (!native && !file) { importRef.current?.click(); return; }
     void run("Inserting PDF pages...", async () => {
       const current = infoRef.current;
@@ -537,6 +567,7 @@ export default function DocumentWorkspace(props: Props) {
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before undoing or redoing PDF changes."); return; }
     if (forms.pending()) { showPanel("forms"); setError("Apply or discard the form changes before undoing or redoing document edits."); return; }
     if (redactionsRef.current.length) { setError("Clear redaction marks before undoing or redoing changes to the original."); return; }
+    if (writingDraftRef.current) { setError("Apply or discard the current draft before undoing document changes."); return; }
     const current = infoRef.current;
     if (!current || !(redo ? current.canRedo : current.canUndo)) return;
     void run(redo ? "Redoing change..." : "Undoing change...", async () => {
@@ -596,6 +627,89 @@ export default function DocumentWorkspace(props: Props) {
       setModal(null);
       setToast("Signed copy exported. This window still shows the unsigned original; open the exported PDF to inspect it.");
     });
+  }
+
+  function applyMetadata() {
+    const draft = metadataDraft;
+    if (!draft || !metadataChanged(draft)) return;
+    void run("Applying descriptive metadata...", async () => {
+      if (forms.pending() || authoring.hasDraft() || pendingWriting) {
+        throw new Error("Apply or discard the other pending document edits before applying metadata.");
+      }
+      const current = infoRef.current;
+      if (!current || current.id !== draft.documentId || current.revision !== draft.revision) {
+        throw new Error("The PDF changed while this metadata draft was open. Your draft is retained; discard it and review the current properties.");
+      }
+      if (redactionsRef.current.length) throw new Error("Clear pending redaction marks before editing metadata.");
+      await adopt(await bridge.edit(current, { type: "metadata", fields: draft.fields }));
+      setMetadataDraft(null);
+      setToast("Metadata applied. Undo is available; save a PDF copy to keep it.");
+    });
+  }
+
+  async function utilityExportSource() {
+    const current = infoRef.current;
+    if (!current) throw new Error("Open a PDF first.");
+    if (pendingDraftRef.current) {
+      throw new Error("Finish or discard pending writing, form, metadata, and redaction drafts before exporting. No copy was created.");
+    }
+    await bridge.draft(current.id, pendingDraftRef.current);
+    if (infoRef.current?.id !== current.id || infoRef.current.revision !== current.revision) {
+      throw new Error("The document changed. Review it and export again.");
+    }
+    return current;
+  }
+
+  function addAttachment(file?: File) {
+    const current = infoRef.current;
+    if (!current || busyRef.current) return;
+    if (pendingDraftRef.current) { setError("Finish or discard pending drafts and redaction marks before adding attachments."); return; }
+    if (!native && !file) {
+      attachmentPickerRevision.current = { documentId: current.id, revision: current.revision };
+      attachmentRef.current?.click();
+      return;
+    }
+    const selectedAt = attachmentPickerRevision.current;
+    attachmentPickerRevision.current = null;
+    if (file && (!selectedAt || selectedAt.documentId !== current.id || selectedAt.revision !== current.revision)) {
+      setError("The PDF changed while the attachment picker was open. Choose the file again.");
+      return;
+    }
+    void run("Embedding attachment...", async () => {
+      const source = await utilityExportSource();
+      const next = file ? await documentUtilities.addAttachmentFile(source, file)
+        : await documentUtilities.addAttachment(source);
+      if (!next) return;
+      await adopt(next);
+      setToast("File embedded in the working PDF. Save a copy to keep it.");
+    });
+  }
+
+  function exportAttachment(attachment: AttachmentInfo) {
+    void run("Saving attachment...", async () => {
+      if (await documentUtilities.exportAttachment(await utilityExportSource(), attachment)) {
+        setModal(null);
+        setToast("Attachment saved without opening or executing it.");
+      }
+    });
+  }
+
+  function exportProtectionCopy(protection: CopyProtection, authorizationPassword: string | null) {
+    void run("Exporting protection copy...", async () => {
+      if (await documentUtilities.exportProtectionCopy(await utilityExportSource(), protection, authorizationPassword)) {
+        setModal(null);
+        setToast("Separate PDF copy exported. This tab, its protection, and its unsaved work are unchanged.");
+      }
+    });
+  }
+
+  function addBookmark(entries: BookmarkInfo[], parent: string | null) {
+    const current = infoRef.current;
+    if (!current || managementEditDisabled) return;
+    setError(null);
+    setModal({ type: "bookmark-create", documentId: current.id, revision: current.revision,
+      text: "", page: String(pageRef.current + 1), parent, entries,
+      at: entries.filter((entry) => entry.parent === parent).length });
   }
 
   function updateRedactions(next: RedactionMark[]) {
@@ -902,6 +1016,8 @@ export default function DocumentWorkspace(props: Props) {
       onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) importPages(file); event.currentTarget.value = ""; }} />
     <input ref={imageRef} className="file-input" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" aria-label="Choose image to insert"
       onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) authoring.stage(file); event.currentTarget.value = ""; }} />
+    <input ref={attachmentRef} className="file-input" type="file" aria-label="Choose file to embed as an attachment"
+      onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) addAttachment(file); event.currentTarget.value = ""; }} />
 
     <div className="commandbar">
       <button className={`all-tools ${panelOpen && panel === "tools" ? "selected" : ""}`} onClick={() => {
@@ -924,8 +1040,8 @@ export default function DocumentWorkspace(props: Props) {
       <div className="command-actions">
         <IconButton label="Find in document (Command+F)" disabled={disabled} onClick={() => showPanel("search")}><Search size={18} /></IconButton>
         <span className="toolbar-divider" />
-        <IconButton label="Undo (Command+Z)" disabled={disabled || authoring.pending || redactions.length > 0 || forms.count > 0 || !info?.canUndo} onClick={() => history(false)}><Undo2 size={18} /></IconButton>
-        <IconButton label="Redo (Command+Shift+Z)" disabled={disabled || authoring.pending || redactions.length > 0 || forms.count > 0 || !info?.canRedo} onClick={() => history(true)}><Redo2 size={18} /></IconButton>
+        <IconButton label="Undo (Command+Z)" disabled={disabled || authoring.pending || pendingMetadata || redactions.length > 0 || forms.count > 0 || !info?.canUndo} onClick={() => history(false)}><Undo2 size={18} /></IconButton>
+        <IconButton label="Redo (Command+Shift+Z)" disabled={disabled || authoring.pending || pendingMetadata || redactions.length > 0 || forms.count > 0 || !info?.canRedo} onClick={() => history(true)}><Redo2 size={18} /></IconButton>
         <button className="button primary save-button" aria-label={saveLabel} title={saveLabel} disabled={disabled || redactionIntent && !redactions.length} onClick={() => save(true)}>
           {redactionIntent ? <FileOutput size={15} /> : <Copy size={15} />}<span>{saveLabel}</span>
         </button>
@@ -947,6 +1063,12 @@ export default function DocumentWorkspace(props: Props) {
           {panel === "comments" && <span className="count-badge">{info?.annotations.length ?? 0}</span>}
           <IconButton label="Close side panel" onClick={() => setPanelOpen(false)}><PanelLeftClose size={16} /></IconButton>
         </div>
+        {utilityPanel && error && !modal && <div className="utility-inline-error" role="alert">
+          <span>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={15} /></IconButton>
+        </div>}
+        {utilityPanel && managementTooLarge && <p className="utility-capacity-notice" role="status">
+          Document-management editing requires a current PDF within the 64 MiB undo-snapshot budget. Inspection and separate-copy exports remain available.
+        </p>}
         {panel === "tools" && <>
           <div className="tools-list">
             <button className={mode === "read" && tool === "select" ? "chosen" : ""} disabled={disabled} onClick={() => { changeMode("read"); setTool("select"); }}>
@@ -978,6 +1100,11 @@ export default function DocumentWorkspace(props: Props) {
             <button className={mode === "organize" ? "chosen" : ""} disabled={disabled || redactions.length > 0 || forms.count > 0 || authoring.pending} onClick={() => changeMode("organize")}>
               <span className="tool-icon teal"><LayoutGrid size={19} /></span><span>Organize pages</span><ChevronRight size={14} className="list-arrow" />
             </button>
+            <button disabled={disabled} onClick={() => showPanel("properties")}><span className="tool-icon neutral"><Info size={18} /></span><span>Document properties</span><ChevronRight size={14} className="list-arrow" /></button>
+            <button disabled={disabled} onClick={() => showPanel("bookmarks")}><span className="tool-icon neutral"><Bookmark size={18} /></span><span>Edit bookmarks</span><ChevronRight size={14} className="list-arrow" /></button>
+            <button disabled={disabled} onClick={() => showPanel("attachments")}><span className="tool-icon neutral"><Paperclip size={18} /></span><span>File attachments</span><ChevronRight size={14} className="list-arrow" /></button>
+            <button disabled={disabled || pendingDraft || Boolean(info?.readOnlyReason?.match(/signed|certif/i))}
+              onClick={() => { setError(null); setModal({ type: "protection-copy" }); }}><span className="tool-icon neutral"><LockKeyhole size={18} /></span><span>Export protection copy</span><ChevronRight size={14} className="list-arrow" /></button>
             <div className="tool-list-divider" />
             <button disabled={disabled} onClick={() => showPanel("search")}>
               <span className="tool-icon neutral"><Search size={18} /></span><span>Find in document</span>
@@ -993,7 +1120,6 @@ export default function DocumentWorkspace(props: Props) {
           </div>
           <button className="shortcuts-link" onClick={() => setModal({ type: "shortcuts" })}><Keyboard size={16} />Keyboard shortcuts</button>
         </>}
-        {panel === "bookmarks" && <BookmarksPanel pdf={pdf} disabled={disabled} onNavigate={navigateLink} />}
         {panel === "signatures" && info && <SignaturesPanel info={info} active={props.active}
           disabled={disabled} pendingDraft={pendingDraft} onSign={reviewSigning} />}
         {panel === "authoring" && info && authoring.draft && info.pages[authoring.draft.page] && <AuthoringPanel
@@ -1008,8 +1134,23 @@ export default function DocumentWorkspace(props: Props) {
           draft={forms.draft} count={forms.count} loading={forms.loading} error={forms.error}
           actionError={error} notice={toast}
           fieldErrors={forms.fieldErrors} stale={forms.stale} retry={forms.retry}
-          disabled={disabled || redactions.length > 0 || authoring.pending || pendingWriting} onChange={forms.change} onApply={applyForms}
+          disabled={disabled || redactions.length > 0 || authoring.pending || pendingWriting || pendingMetadata} onChange={forms.change} onApply={applyForms}
           onDiscard={() => { setError(null); setModal({ type: "form-discard" }); }} onLocate={locateFormWidget} />}
+        {panel === "bookmarks" && <BookmarksPanel info={info} page={page} disabled={disabled} editDisabled={managementEditDisabled}
+          onNavigate={navigateLink} onAdd={addBookmark}
+          onRename={(entry) => {
+            if (!info) return;
+            setError(null); setModal({ type: "bookmark-rename", documentId: info.id, revision: info.revision, id: entry.id, text: entry.title });
+          }}
+          onRemove={(entry) => { setError(null); setModal({ type: "bookmark-delete", entry }); }}
+          onMove={(entry, parent, at) => edit({ type: "bookmark_move", id: entry.id, parent, at }, "Organizing bookmarks...", () => setToast("Bookmark moved. Its destination and children are unchanged."))} />}
+        {panel === "properties" && <DocumentPropertiesPanel info={info} draft={metadataDraft}
+          disabled={disabled || readOnly || managementTooLarge || redactions.length > 0 || forms.count > 0 || authoring.pending} onDraft={(draft) => setMetadataDraft(metadataChanged(draft) ? draft : null)}
+          onApply={applyMetadata} onDiscard={() => setMetadataDraft(null)} />}
+        {panel === "attachments" && <AttachmentsPanel info={info} editDisabled={managementEditDisabled} exportDisabled={disabled || pendingDraft}
+          onAdd={() => addAttachment()}
+          onExport={(attachment) => { setError(null); setModal({ type: "attachment-export", attachment }); }}
+          onRemove={(attachment) => { setError(null); setModal({ type: "attachment-remove", attachment }); }} />}
         {panel === "edit" && <ExistingTextPanel key={`${info?.id}:${info?.revision}:${page}`}
           runs={existingText.runs} loading={existingText.loading} error={existingText.error} retry={existingText.retry}
           page={page} disabled={editDisabled} onSelect={selectSourceText} />}
@@ -1244,6 +1385,8 @@ export default function DocumentWorkspace(props: Props) {
         <IconButton label="Show bookmarks" active={panelOpen && panel === "bookmarks"} disabled={disabled} onClick={() => showPanel("bookmarks")}><Bookmark size={18} /></IconButton>
         <IconButton label="Show digital signatures" active={panelOpen && panel === "signatures"} disabled={disabled} onClick={() => showPanel("signatures")}><FileKey2 size={18} /></IconButton>
         <IconButton label="Show form fields" active={panelOpen && panel === "forms"} disabled={disabled} onClick={() => showPanel("forms")}><ClipboardList size={18} /></IconButton>
+        <IconButton label="Show file attachments" active={panelOpen && panel === "attachments"} disabled={disabled} onClick={() => showPanel("attachments")}><Paperclip size={18} /></IconButton>
+        <IconButton label="Show document properties" active={panelOpen && panel === "properties"} disabled={disabled} onClick={() => showPanel("properties")}><Info size={18} /></IconButton>
         <IconButton label="Search document" active={panelOpen && panel === "search"} disabled={disabled} onClick={() => showPanel("search")}><Search size={18} /></IconButton>
         <span className="utility-spacer" />
         <IconButton label="Rotate current page clockwise" disabled={editDisabled} onClick={() => edit({ type: "rotate", page, degrees: 90 }, "Rotating page...")}><RotateCw size={18} /></IconButton>
@@ -1251,13 +1394,73 @@ export default function DocumentWorkspace(props: Props) {
     </div>
 
     <footer className="statusbar">
-      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : redactions.length ? <><span className="status-dot dirty" />{redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}</> : forms.count ? <><span className="status-dot dirty" />{forms.count} unapplied form {forms.count === 1 ? "field" : "fields"}</> : authoring.pending ? <><span className="status-dot dirty" />Unapplied page authoring</> : pendingWriting ? <><span className="status-dot dirty" />Uncommitted writing</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
+      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : redactions.length ? <><span className="status-dot dirty" />{redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}</> : forms.count ? <><span className="status-dot dirty" />{forms.count} unapplied form {forms.count === 1 ? "field" : "fields"}</> : authoring.pending ? <><span className="status-dot dirty" />Unapplied page authoring</> : pendingMetadata ? <><span className="status-dot dirty" />Unapplied metadata draft</> : pendingWriting ? <><span className="status-dot dirty" />Uncommitted writing</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
       <div className="document-status">{info && <><span>{info.pageCount} {info.pageCount === 1 ? "page" : "pages"}</span><span className="status-separator" /><span>{formatBytes(info.byteLength)}</span></>}</div>
       <div className="privacy-status"><ShieldCheck size={12} /><span>{runtimeIssue ? "Desktop runtime unavailable" : native ? "Local files. No uploads." : "Preview uses the real Rust engine"}</span></div>
     </footer>
 
-    {error && !modal && !(panelOpen && (panel === "forms" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
+    {error && !modal && !utilityPanel && !(panelOpen && (panel === "forms" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
     {toast && !(panelOpen && (panel === "forms" || panel === "authoring" && authoring.draft)) && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
+
+    {modal?.type === "protection-copy" && info && <ProtectionCopyDialog info={info} busy={Boolean(busy)} error={error}
+      onClose={() => setModal(null)} onSubmit={exportProtectionCopy} />}
+
+    {modal?.type === "bookmark-create" && <Dialog title="Add a bookmark" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
+      actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Cancel</button>
+        <button className="button primary" disabled={Boolean(busy) || !modal.text.trim()} onClick={() => {
+          const current = infoRef.current;
+          if (!current || current.id !== modal.documentId || current.revision !== modal.revision) {
+            setError("The PDF changed. Your draft is retained; close this dialog and add the bookmark again."); return;
+          }
+          const target = pageFromInput(modal.page, current.pageCount);
+          if (target === null) { setError("Enter a page number within this PDF."); return; }
+          edit({ type: "bookmark_create", title: modal.text, page: target, parent: modal.parent, at: modal.at },
+            "Adding bookmark...", () => { setModal(null); setToast("Bookmark added. Save a PDF copy to keep it."); });
+        }}><Bookmark size={15} />Add bookmark</button></>}>
+      <label className="utility-field">Bookmark title<input data-autofocus type="text" maxLength={4096} value={modal.text} disabled={Boolean(busy)} onChange={(event) => setModal({ ...modal, text: event.target.value })} /></label>
+      <div className="bookmark-create-fields">
+        <label className="utility-field">Parent<select value={modal.parent ?? ""} disabled={Boolean(busy)} onChange={(event) => {
+          const parent = event.target.value || null;
+          setModal({ ...modal, parent, at: modal.entries.filter((entry) => entry.parent === parent).length });
+        }}><option value="">Document root</option>{modal.entries.map((entry) => <option key={entry.id} value={entry.id}>{"— ".repeat(Math.min(entry.depth, 4))}{entry.title}</option>)}</select></label>
+        <label className="utility-field">Page<input type="text" inputMode="numeric" value={modal.page} disabled={Boolean(busy)} onChange={(event) => setModal({ ...modal, page: event.target.value })} /></label>
+      </div>
+      <p>The bookmark is appended to this group and points to a real PDF page. Use the bookmark controls to move or nest it afterward.</p>
+    </Dialog>}
+
+    {modal?.type === "bookmark-rename" && <Dialog title="Rename bookmark" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
+      actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Cancel</button>
+        <button className="button primary" disabled={Boolean(busy) || !modal.text.trim()} onClick={() => {
+          const current = infoRef.current;
+          if (!current || current.id !== modal.documentId || current.revision !== modal.revision) {
+            setError("The PDF changed. Close this dialog and select the bookmark again."); return;
+          }
+          edit({ type: "bookmark_rename", id: modal.id, title: modal.text }, "Renaming bookmark...", () => setModal(null));
+        }}>Rename</button></>}>
+      <label className="utility-field">Bookmark title<input data-autofocus type="text" maxLength={4096} value={modal.text} disabled={Boolean(busy)} onChange={(event) => setModal({ ...modal, text: event.target.value })} /></label>
+      <p>The existing destination, action, hierarchy, and styling are kept.</p>
+    </Dialog>}
+
+    {modal?.type === "bookmark-delete" && <Dialog title="Delete this bookmark?" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
+      actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Keep bookmark</button>
+        <button className="button danger" disabled={Boolean(busy)} onClick={() => edit({ type: "bookmark_delete", id: modal.entry.id }, "Deleting bookmark...", () => setModal(null))}>Delete {modal.entry.childCount ? "group" : "bookmark"}</button></>}>
+      <p><strong>{modal.entry.title}</strong>{modal.entry.childCount ? " and all its descendant bookmarks will be removed from the outline." : " will be removed from the outline."}</p>
+      <p>PDF pages and content are unchanged. Undo restores the entire bookmark group.</p>
+    </Dialog>}
+
+    {modal?.type === "attachment-remove" && <Dialog title="Remove this attachment?" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
+      actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Keep attachment</button>
+        <button className="button danger" disabled={Boolean(busy)} onClick={() => edit({ type: "attachment_remove", id: modal.attachment.id }, "Removing attachment...", () => setModal(null))}>Remove from list</button></>}>
+      <p><strong>{modal.attachment.name}</strong> will be removed from the document attachment list. Undo is available.</p>
+      <p>This is <strong>not secure erasure</strong>. Unreferenced payloads, undo snapshots, page attachment annotations, or other associated-file references can remain. The source file is unchanged.</p>
+    </Dialog>}
+
+    {modal?.type === "attachment-export" && <Dialog title="Save an untrusted attachment?" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
+      actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Cancel</button>
+        <button className="button primary" disabled={Boolean(busy)} onClick={() => exportAttachment(modal.attachment)}><FileOutput size={15} />Save attachment</button></>}>
+      <p><strong>{modal.attachment.name}</strong> is data supplied by this PDF, not a trusted Folio resource.</p>
+      <p>Choose a separate output location. Folio sanitizes the suggested filename and never opens or executes the file. Inspect it with trusted tools before using it.</p>
+    </Dialog>}
 
     {modal?.type === "password" && <PasswordDialog challenge={modal.challenge} busy={Boolean(busy)} error={error}
       onCancel={() => cancelPassword(modal.challenge.requestId)}

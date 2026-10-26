@@ -1,4 +1,5 @@
 import type { NumberPosition, PageGeometry } from "./authoring.ts";
+import type { MetadataFields, ProtectionAccess } from "./documentUtilitiesModel";
 
 export type Quad = [number, number, number, number, number, number, number, number];
 export type Point = [number, number];
@@ -58,6 +59,7 @@ export interface DocumentInfo {
   passwordProtected: boolean;
   copyAllowed: boolean;
   pages: { key: string; rotation: number; geometry: PageGeometry }[];
+  permissions: ProtectionAccess;
   annotations: AnnotationInfo[];
 }
 
@@ -94,6 +96,12 @@ export interface ExistingTextRun {
 export type ReplacementFont = "original" | "noto";
 
 export type Edit =
+  | { type: "metadata"; fields: MetadataFields }
+  | { type: "bookmark_create"; parent: string | null; at: number; title: string; page: number }
+  | { type: "bookmark_rename"; id: string; title: string }
+  | { type: "bookmark_move"; id: string; parent: string | null; at: number }
+  | { type: "bookmark_delete"; id: string }
+  | { type: "attachment_remove"; id: string }
   | { type: "rotate"; page: number; degrees: 90 | -90 | 180 }
   | { type: "move"; from: number; to: number }
   | { type: "delete"; page: number }
@@ -114,7 +122,7 @@ export type Edit =
 
 export type Tool = "select" | "hand" | "highlight" | "note" | "text" | "ink" | "edit-text" | "redact" | "image" | "crop";
 export type Mode = "read" | "write" | "comment" | "organize";
-export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write" | "edit" | "redact" | "signatures" | "authoring" | "forms";
+export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write" | "edit" | "redact" | "signatures" | "authoring" | "forms" | "properties" | "attachments";
 export type Zoom = { mode: "page" | "width" } | { mode: "custom"; scale: number };
 
 export interface SearchResult {

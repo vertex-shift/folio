@@ -1,7 +1,13 @@
+use std::{collections::BTreeMap, sync::Arc};
+
 use lopdf::{
-    Document, LoadOptions,
-    encryption::{DecryptionError, Permissions},
+    Document, LoadOptions, Object,
+    encryption::{
+        DecryptionError, EncryptionState, EncryptionVersion, Permissions,
+        crypt_filters::{Aes256CryptFilter, CryptFilter},
+    },
 };
+use serde::{Deserialize, Serialize};
 
 use crate::document::{Error, MAX_DOCUMENT_BYTES, Result, invalid};
 
@@ -9,7 +15,71 @@ pub(crate) struct Loaded {
     pub document: Document,
     pub copy_allowed: bool,
     pub editable: bool,
-    pub fillable: bool,
+    pub permissions: AccessPermissions,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessPermissions {
+    pub owner_authenticated: bool,
+    pub print_allowed: bool,
+    pub high_quality_print_allowed: bool,
+    pub copy_allowed: bool,
+    pub modify_allowed: bool,
+    pub annotate_allowed: bool,
+    pub fill_forms_allowed: bool,
+    pub assemble_allowed: bool,
+}
+
+impl AccessPermissions {
+    fn unrestricted() -> Self {
+        Self {
+            owner_authenticated: true,
+            print_allowed: true,
+            high_quality_print_allowed: true,
+            copy_allowed: true,
+            modify_allowed: true,
+            annotate_allowed: true,
+            fill_forms_allowed: true,
+            assemble_allowed: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrintPermission {
+    None,
+    Low,
+    High,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CopyPermissions {
+    pub print: PrintPermission,
+    pub copy: bool,
+    pub edit: bool,
+    pub annotate: bool,
+    pub fill_forms: bool,
+    pub assemble: bool,
+}
+
+// Credentials deliberately implement neither Debug nor Serialize.
+#[derive(Deserialize)]
+#[serde(
+    tag = "mode",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum CopyProtection {
+    Protect {
+        opening_password: String,
+        owner_password: String,
+        permissions: CopyPermissions,
+    },
+    Unprotect,
 }
 
 fn password_error(error: lopdf::Error) -> Error {
@@ -58,7 +128,7 @@ pub(crate) fn load(bytes: &[u8], password: Option<&str>) -> Result<Loaded> {
             document,
             copy_allowed: true,
             editable: true,
-            fillable: true,
+            permissions: AccessPermissions::unrestricted(),
         });
     };
     let Some(password) = password else {
@@ -73,6 +143,43 @@ pub(crate) fn load(bytes: &[u8], password: Option<&str>) -> Result<Loaded> {
     }
     // Authenticate the supplied password even when the reader automatically used
     // an empty opening password. Owner access must not be inferred from that fallback.
+    let header = authentication_header(&document)?;
+    header
+        .authenticate_password(password)
+        .map_err(password_error)?;
+    let owner = authenticate_owner(&document, password)?;
+    let permissions = state.permissions();
+    let required = Permissions::MODIFIABLE | Permissions::COPYABLE | Permissions::ANNOTABLE;
+    let editable = owner
+        || permissions.contains(required)
+            && (state.revision() == 2 || permissions.contains(Permissions::ASSEMBLABLE));
+    let allowed = |permission| owner || permissions.contains(permission);
+    let access = AccessPermissions {
+        owner_authenticated: owner,
+        print_allowed: allowed(Permissions::PRINTABLE),
+        high_quality_print_allowed: allowed(Permissions::PRINTABLE)
+            && (state.revision() == 2 || allowed(Permissions::PRINTABLE_IN_HIGH_QUALITY)),
+        copy_allowed: allowed(Permissions::COPYABLE),
+        modify_allowed: allowed(Permissions::MODIFIABLE),
+        annotate_allowed: allowed(Permissions::ANNOTABLE),
+        fill_forms_allowed: allowed(Permissions::ANNOTABLE)
+            || state.revision() > 2 && allowed(Permissions::FILLABLE),
+        assemble_allowed: allowed(Permissions::ASSEMBLABLE)
+            || state.revision() == 2 && allowed(Permissions::MODIFIABLE),
+    };
+    Ok(Loaded {
+        document,
+        copy_allowed: access.copy_allowed,
+        editable,
+        permissions: access,
+    })
+}
+
+fn authentication_header(document: &Document) -> Result<Document> {
+    let state = document
+        .encryption_state
+        .as_ref()
+        .ok_or_else(|| invalid("This document does not use password protection."))?;
     let mut header = Document::new();
     if let Ok(id) = document.trailer.get(b"ID") {
         header
@@ -81,32 +188,115 @@ pub(crate) fn load(bytes: &[u8], password: Option<&str>) -> Result<Loaded> {
     }
     let encrypt = header.add_object(state.encode().map_err(lopdf::Error::from)?);
     header.trailer.set("Encrypt", encrypt);
-    header
-        .authenticate_password(password)
-        .map_err(password_error)?;
-    let owner = match header.authenticate_owner_password(password) {
-        Ok(()) => true,
-        Err(lopdf::Error::Decryption(DecryptionError::IncorrectPassword)) => false,
-        Err(error) => return Err(password_error(error)),
-    };
-    let permissions = state.permissions();
-    let required = Permissions::MODIFIABLE | Permissions::COPYABLE | Permissions::ANNOTABLE;
-    let editable = owner
-        || permissions.contains(required)
-            && (state.revision() == 2 || permissions.contains(Permissions::ASSEMBLABLE));
-    let copy_allowed = owner || permissions.contains(Permissions::COPYABLE);
-    let fillable = owner
-        || if state.revision() == 2 {
-            permissions.contains(Permissions::ANNOTABLE)
-        } else {
-            permissions.contains(Permissions::FILLABLE)
-        };
-    Ok(Loaded {
-        document,
-        copy_allowed,
-        editable,
-        fillable,
-    })
+    Ok(header)
+}
+
+pub fn authenticate_owner(document: &Document, password: &str) -> Result<bool> {
+    if password.len() > 1024 {
+        return Err(invalid("The owner password exceeds 1,024 UTF-8 bytes."));
+    }
+    match authentication_header(document)?.authenticate_owner_password(password) {
+        Ok(()) => Ok(true),
+        Err(lopdf::Error::Decryption(DecryptionError::IncorrectPassword))
+        | Err(lopdf::Error::InvalidPassword) => Ok(false),
+        Err(error) => Err(password_error(error)),
+    }
+}
+
+pub(crate) fn author_copy(
+    source: &Document,
+    owner_authenticated: bool,
+    authorization_password: Option<&str>,
+    protection: &CopyProtection,
+) -> Result<Vec<u8>> {
+    if source.encryption_state.is_some() && !owner_authenticated {
+        let password = authorization_password.ok_or_else(|| {
+            invalid("Enter the current owner password to remove or replace this PDF's protection.")
+        })?;
+        if !authenticate_owner(source, password)? {
+            return Err(invalid(
+                "That is not the current owner password. The original and its protection are unchanged.",
+            ));
+        }
+    }
+    let mut output = source.clone();
+    output.encryption_state = None;
+    output.trailer.remove(b"Encrypt");
+    output.prune_objects();
+    if let CopyProtection::Protect {
+        opening_password,
+        owner_password,
+        permissions,
+    } = protection
+    {
+        if owner_password.is_empty() || owner_password == opening_password {
+            return Err(invalid(
+                "Set a nonempty owner password different from the opening password.",
+            ));
+        }
+        if owner_password.len() > 127 || opening_password.len() > 127 {
+            return Err(invalid(
+                "New AES-256 passwords must be at most 127 UTF-8 bytes; Folio will not truncate them.",
+            ));
+        }
+        let mut flags = Permissions::COPYABLE_FOR_ACCESSIBILITY;
+        match permissions.print {
+            PrintPermission::None => {}
+            PrintPermission::Low => flags |= Permissions::PRINTABLE,
+            PrintPermission::High => {
+                flags |= Permissions::PRINTABLE | Permissions::PRINTABLE_IN_HIGH_QUALITY
+            }
+        }
+        for (enabled, permission) in [
+            (permissions.copy, Permissions::COPYABLE),
+            (permissions.edit, Permissions::MODIFIABLE),
+            (permissions.annotate, Permissions::ANNOTABLE),
+            (permissions.fill_forms, Permissions::FILLABLE),
+            (permissions.assemble, Permissions::ASSEMBLABLE),
+        ] {
+            if enabled {
+                flags |= permission;
+            }
+        }
+        let mut encryption_key = [0; 32];
+        let mut file_id = [0; 16];
+        getrandom::fill(&mut encryption_key)
+            .and_then(|()| getrandom::fill(&mut file_id))
+            .map_err(|_| {
+                invalid(
+                    "Operating-system randomness is unavailable; no protected copy was created.",
+                )
+            })?;
+        let filter: Arc<dyn CryptFilter> = Arc::new(Aes256CryptFilter);
+        let state = EncryptionState::try_from(EncryptionVersion::V5 {
+            owner_password,
+            user_password: opening_password,
+            permissions: flags,
+            encrypt_metadata: true,
+            file_encryption_key: &encryption_key,
+            crypt_filters: BTreeMap::from([(b"StdCF".to_vec(), filter)]),
+            stream_filter: b"StdCF".to_vec(),
+            string_filter: b"StdCF".to_vec(),
+        })?;
+        output.trailer.set(
+            "ID",
+            vec![
+                Object::string_literal(file_id),
+                Object::string_literal(file_id),
+            ],
+        );
+        output.version = "2.0".into();
+        output.encryption_state = Some(state);
+        if authenticate_owner(&output, opening_password)? {
+            return Err(invalid(
+                "The opening and owner passwords become identical after PDF password normalization. Choose different passwords.",
+            ));
+        }
+        authentication_header(&output)?
+            .authenticate_user_password(opening_password)
+            .map_err(password_error)?;
+    }
+    serialize(&output)
 }
 
 pub(crate) fn serialize(document: &Document) -> Result<Vec<u8>> {

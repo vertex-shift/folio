@@ -7,6 +7,8 @@ import { intersectsPdfRect } from "../src/lib/geometry.ts";
 
 const document: DocumentInfo = { id: 42, revision: 3, name: "Synthetic.pdf", pageCount: 3, byteLength: 1000,
   dirty: false, canUndo: false, canRedo: false, readOnlyReason: null, passwordProtected: false, copyAllowed: true, annotations: [],
+  permissions: { ownerAuthenticated: true, printAllowed: true, highQualityPrintAllowed: true,
+    copyAllowed: true, modifyAllowed: true, annotateAllowed: true, fillFormsAllowed: true, assembleAllowed: true },
   pages: [0, 90, 270].map((rotation, index) => ({ key: String(index), rotation, geometry: {
     mediaBox: [10, -20, 330, 440], bounds: [30, 10, 310, 410], originalBounds: [30, 10, 310, 410], rotation,
     userUnit: index === 1 ? 2 : 1, widthPoints: index === 0 ? 280 : index === 1 ? 800 : 400,
