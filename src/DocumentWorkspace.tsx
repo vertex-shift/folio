@@ -766,7 +766,7 @@ export default function DocumentWorkspace(props: Props) {
     </div>
 
     {info?.readOnlyReason && <div className="readonly-banner" role="status"><LockKeyhole size={15} />{info.readOnlyReason}</div>}
-    {info?.passwordProtected && !info.readOnlyReason && <div className="protected-banner" role="status"><LockKeyhole size={15} />Password protected. Saved copies and exports retain this PDF's protection.</div>}
+    {info?.passwordProtected && !info.readOnlyReason && <div className="protected-banner" role="status"><LockKeyhole size={15} />Password protected. Ordinary PDF saves keep this document's passwords and permissions.</div>}
     {redactions.length > 0 && <div className="readonly-banner redaction-source-banner" role="status"><Eraser size={15} />
       Original PDF: {redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}. Only exported copies are redacted.</div>}
 
@@ -931,7 +931,7 @@ export default function DocumentWorkspace(props: Props) {
                 </button>
               </div>)}
           </div>
-          {readOnly && <p className="organize-readonly">This signed PDF can be viewed but not reorganized.</p>}
+          {readOnly && <p className="organize-readonly">This PDF is read-only and cannot be reorganized.</p>}
         </> : <>
           <div className={`page-scroll ${tool === "hand" ? "pannable" : ""}`} ref={viewerRef} tabIndex={0} aria-label="Continuous PDF page scroll area"
             onPointerDown={(event) => {
