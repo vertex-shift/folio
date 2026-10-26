@@ -33,6 +33,9 @@ import AttachmentsPanel from "./components/AttachmentsPanel";
 import ProtectionCopyDialog from "./components/ProtectionCopyDialog";
 import OcrPanel, { OcrJobProgress } from "./components/OcrPanel";
 import OutputDialog from "./components/OutputDialog";
+import PreflightPanel from "./features/preflight/PreflightPanel";
+import ArchiveDialog from "./features/preflight/ArchiveDialog";
+import "./features/preflight/styles.css";
 import { bridge, native, runtimeIssue } from "./lib/bridge";
 import { createDraftSynchronizer, hasDocumentDrafts } from "./lib/draftProtection";
 import { documentUtilities } from "./lib/documentUtilitiesBridge";
@@ -112,6 +115,7 @@ const panelLabels: Record<Panel, string> = {
   "form-designer": "Design form fields",
   properties: "Document properties", attachments: "File attachments",
   ocr: "Recognize scanned text",
+  preflight: "Technical preflight",
 };
 
 function typingTarget(target: EventTarget | null): boolean {
@@ -179,6 +183,7 @@ export default function DocumentWorkspace(props: Props) {
   const [ocrCanceling, setOcrCanceling] = useState(false);
   const ocrJob = useRef<{ controller: AbortController; documentId: number; revision: number } | null>(null);
   const [outputMode, setOutputMode] = useState<OutputAction | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const gesturePages = useRef(new Set<number>());
   const [gestureDraft, setGestureDraft] = useState(false);
   const redactionsRef = useRef(redactions);
@@ -278,8 +283,8 @@ export default function DocumentWorkspace(props: Props) {
   }), []);
 
   useEffect(() => {
-    props.onActivity(documentId, { busy: Boolean(busy) || gestureDraft, pendingDraft, modal: Boolean(modal) || Boolean(outputMode), outputPending: Boolean(outputMode) });
-  }, [documentId, busy, gestureDraft, pendingDraft, modal, outputMode, props.onActivity]);
+    props.onActivity(documentId, { busy: Boolean(busy) || gestureDraft, pendingDraft, modal: Boolean(modal) || Boolean(outputMode) || archiveOpen, outputPending: Boolean(outputMode) || archiveOpen });
+  }, [documentId, busy, gestureDraft, pendingDraft, modal, outputMode, archiveOpen, props.onActivity]);
 
   useEffect(() => () => props.onActivity(documentId, null), [documentId, props.onActivity]);
 
@@ -914,6 +919,26 @@ export default function DocumentWorkspace(props: Props) {
     });
   }
 
+  async function prepareTechnical(): Promise<DocumentInfo> {
+    const current = infoRef.current;
+    if (!current) throw new Error("Open a PDF before technical inspection or archival export.");
+    await syncDraft(current.id, draftProjection());
+    if (draftProjection()) throw new Error("Apply or discard every document draft and clear redaction marks before technical inspection or archival export.");
+    if (infoRef.current?.id !== current.id || infoRef.current.revision !== current.revision) {
+      throw new Error("The technical source changed. Review the current PDF again.");
+    }
+    if (!current.permissions.copyAllowed) throw new Error("This PDF restricts copying. Reopen it with the owner password.");
+    return current;
+  }
+
+  function requestArchive() {
+    if (busyRef.current) { setToast("Wait for the current document action to finish."); return; }
+    void run("Preparing archival controls...", async () => {
+      await prepareTechnical();
+      setError(null); setArchiveOpen(true);
+    });
+  }
+
   function updateRedactions(next: RedactionMark[]) {
     redactionsRef.current = next;
     setRedactions(next);
@@ -1175,6 +1200,8 @@ export default function DocumentWorkspace(props: Props) {
       case "print": requestOutput("print"); break;
       case "export": requestOutput("export"); break;
       case "optimize": requestOutput("optimize"); break;
+      case "preflight": setTool("select"); showPanel("preflight"); break;
+      case "archive": requestArchive(); break;
       case "undo": history(false); break;
       case "redo": history(true); break;
       case "find": showPanel("search"); break;
@@ -1186,7 +1213,7 @@ export default function DocumentWorkspace(props: Props) {
   actionRef.current = {
     open, save, history, find: () => showPanel("search"),
     action: requestAction, page: changePage, zoom: changeZoom, tool: chooseTool,
-    menu: handleMenu, hasModal: Boolean(modal) || Boolean(outputMode) || props.blocked,
+    menu: handleMenu, hasModal: Boolean(modal) || Boolean(outputMode) || archiveOpen || props.blocked,
     escape: () => { if (!busyRef.current) { setModal(null); setTool("select"); } },
   };
 
@@ -1427,6 +1454,7 @@ export default function DocumentWorkspace(props: Props) {
               <span className="tool-icon teal"><LayoutGrid size={19} /></span><span>Organize pages</span><ChevronRight size={14} className="list-arrow" />
             </button>
             <button disabled={disabled} onClick={() => showPanel("properties")}><span className="tool-icon neutral"><Info size={18} /></span><span>Document properties</span><ChevronRight size={14} className="list-arrow" /></button>
+            <button disabled={disabled} onClick={() => { setTool("select"); showPanel("preflight"); }}><span className="tool-icon neutral"><ClipboardList size={18} /></span><span>Technical preflight</span><ChevronRight size={14} className="list-arrow" /></button>
             <button disabled={disabled} onClick={() => showPanel("bookmarks")}><span className="tool-icon neutral"><Bookmark size={18} /></span><span>Edit bookmarks</span><ChevronRight size={14} className="list-arrow" /></button>
             <button disabled={disabled} onClick={() => showPanel("attachments")}><span className="tool-icon neutral"><Paperclip size={18} /></span><span>File attachments</span><ChevronRight size={14} className="list-arrow" /></button>
             <button disabled={disabled || pendingDraft || Boolean(info?.readOnlyReason?.match(/signed|certif/i))}
@@ -1437,6 +1465,9 @@ export default function DocumentWorkspace(props: Props) {
             </button>
             <button disabled={disabled} onClick={() => requestOutput("export")}>
               <span className="tool-icon neutral"><FileDown size={18} /></span><span>Export images or text</span>
+            </button>
+            <button disabled={disabled} onClick={requestArchive}>
+              <span className="tool-icon neutral"><FileOutput size={18} /></span><span>PDF/A-2b archival copy</span>
             </button>
             <button disabled={disabled || readOnly} onClick={() => requestOutput("optimize")}>
               <span className="tool-icon neutral"><Minimize2 size={18} /></span><span>Optimize PDF copy</span>
@@ -1458,6 +1489,9 @@ export default function DocumentWorkspace(props: Props) {
         </>}
         {panel === "signatures" && info && <SignaturesPanel info={info} active={props.active}
           disabled={disabled} pendingDraft={pendingDraft} onSign={reviewSigning} />}
+        {panel === "preflight" && info && <PreflightPanel info={info} disabled={disabled} pending={pendingDraft}
+          current={() => infoRef.current} hasPending={draftProjection} prepare={prepareTechnical} run={run} onError={setError}
+          onNotice={setToast} onArchive={requestArchive} />}
         {panel === "authoring" && info && authoring.draft && info.pages[authoring.draft.page] && <AuthoringPanel
           draft={authoring.draft} geometry={info.pages[authoring.draft.page].geometry}
           currentPage={page} pageCount={info.pageCount} disabled={authoringDisabled}
@@ -1763,7 +1797,7 @@ export default function DocumentWorkspace(props: Props) {
       <div className="privacy-status"><ShieldCheck size={12} /><span>{runtimeIssue ? "Desktop runtime unavailable" : native ? "Local files. No uploads." : "Preview uses the real Rust engine"}</span></div>
     </footer>
 
-    {error && !modal && !outputMode && !utilityPanel && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
+    {error && !modal && !outputMode && !archiveOpen && !utilityPanel && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
     {toast && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "authoring" && authoring.draft)) && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
 
     {modal?.type === "protection-copy" && info && <ProtectionCopyDialog info={info} busy={Boolean(busy)} error={error}
@@ -1829,6 +1863,9 @@ export default function DocumentWorkspace(props: Props) {
     <OutputDialog info={info} mode={outputMode} busy={Boolean(busy)} pendingDraft={pendingDraft} error={error}
       current={() => infoRef.current} run={run} onClearError={() => setError(null)} onResourceError={notifyError}
       onNotice={setToast} onClose={() => { setOutputMode(null); setError(null); }} />
+    {archiveOpen && info && <ArchiveDialog info={info} busy={Boolean(busy)} pending={pendingDraft} error={error}
+      current={() => infoRef.current} hasPending={draftProjection} prepare={prepareTechnical} run={run}
+      onError={setError} onNotice={setToast} onClose={() => { setArchiveOpen(false); setError(null); }} />}
 
     {modal?.type === "password" && <PasswordDialog challenge={modal.challenge} busy={Boolean(busy)} error={error}
       onCancel={() => cancelPassword(modal.challenge.requestId)}

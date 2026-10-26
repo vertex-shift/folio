@@ -229,6 +229,7 @@ impl Session {
             return Err(invalid("This PDF has no readable pages."));
         }
         let signed = crate::signatures::has_signatures(&document);
+        let archival = crate::archive::is_folio_archive(&document);
         let password = document
             .was_encrypted()
             .then(|| password.unwrap_or("").to_owned());
@@ -244,7 +245,9 @@ impl Session {
             next_revision: 1,
             undo: VecDeque::new(),
             redo: VecDeque::new(),
-            read_only_reason: if signed {
+            read_only_reason: if archival {
+                Some("Folio archival raster copy: read-only. Edit the original PDF and export a new archive; rewriting this copy could invalidate its unverified PDF/A declaration.".to_owned())
+            } else if signed {
                 Some("Digitally signed PDF: read-only. Rewriting this file would invalidate its signatures.".to_owned())
             } else if !loaded.editable {
                 Some(if loaded.permissions.fill_forms_allowed {
@@ -257,7 +260,7 @@ impl Session {
             },
             password,
             copy_allowed: loaded.copy_allowed,
-            form_fill_allowed: !signed && loaded.permissions.fill_forms_allowed,
+            form_fill_allowed: !signed && !archival && loaded.permissions.fill_forms_allowed,
             permissions: loaded.permissions,
             signed,
         };
@@ -312,6 +315,16 @@ impl Session {
         &self.bytes
     }
 
+    pub(crate) fn is_signed(&self) -> bool { self.signed }
+
+    pub(crate) fn technical_findings(&self) -> Result<Vec<crate::preflight::Finding>> {
+        crate::preflight::inspect(&self.document)
+    }
+
+    pub(crate) fn check_archive_appearances(&self) -> Result<()> {
+        crate::archive::check_appearances(&self.document)
+    }
+
     pub fn signature_report(&self) -> Result<crate::signatures::SignatureReport> {
         self.signature_report_with_trust(&crate::signatures::TrustStore::default())
     }
@@ -342,6 +355,9 @@ impl Session {
     }
 
     fn ensure_signing_permissions(&self) -> Result<()> {
+        if crate::archive::is_folio_archive(&self.document) {
+            return Err(invalid("Folio archival copies are read-only, including signing. Sign the original PDF or create a separate non-archival workflow."));
+        }
         if !self.permissions.modify_allowed || !self.permissions.fill_forms_allowed {
             return Err(invalid(
                 "This PDF does not grant the permissions required for signature export.",
@@ -552,6 +568,9 @@ impl Session {
         protection: &crate::protection::CopyProtection,
         authorization_password: Option<&str>,
     ) -> Result<Vec<u8>> {
+        if crate::archive::is_folio_archive(&self.document) {
+            return Err(invalid("Folio archival copies are read-only and cannot be reprotected or unprotected. PDF/A forbids encryption; use the original PDF."));
+        }
         if self.signed {
             return Err(invalid(
                 "Signed or certified PDFs cannot be reprotected or unprotected; changing protection would invalidate signatures.",

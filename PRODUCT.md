@@ -153,6 +153,34 @@ The desktop app processes document contents locally.
   guarantee a compression ratio. Output cancellation/failure preserves all
   tabs, source bytes, saved state and history. Unapplied drafts/areas block
   ordinary output, and native output copies never clobber existing paths.
+- Technical preflight: inspect bounded local PDF dictionary/resource facts,
+  including font embedding-stream presence, page boxes/rotation/page-local
+  UserUnit, image declarations, forms/active features, document language/tag
+  presence and namespace-resolved existing PDF/A/PDF/UA XMP declarations.
+  Distinguish observed facts, scoped absence, unsupported inspection and
+  unchecked properties. Declarations never become validated input conformance.
+  This is not a full accessibility, PDF/UA, font, or arbitrary-input PDF/A
+  validator. Separate JSON report export honors copying permissions and
+  explicitly discloses unencrypted protected-source properties.
+- Raster archival copies: export all explicitly selected source pages to a
+  separate, fresh PDF 1.7 image-only PDF/A-2b document at exactly 150 or 300 DPI,
+  using bounded opaque lossless sRGB pixels, the actual CropBox/rotation/
+  page-local UserUnit physical geometry, pinned redistributable ICC sRGB2014,
+  an output intent and UTF-8 identification XMP. Copy no source objects,
+  metadata/history, text/fonts, tags, attachments, code, interactive fields,
+  or signatures. Explicitly acknowledge vector/search/accessibility/
+  interactivity/signature loss; refuse missing/unsupported appearances,
+  drafts, staged images and redaction marks instead of silently omitting them.
+  PDF/A forbids encryption: protected sources need actual owner authentication,
+  copying rights and an explicit unencrypted-copy acknowledgment. Signed
+  sources require an explicit unsigned-copy acknowledgment and remain read-only.
+  Generated Folio archives open read-only, including narrow protection/signing/
+  form-fill/optimization/extraction/import rewrite paths; exact-byte copies and
+  honest non-PDF exports remain available. Edit the original and export again.
+  Isolated jobs use distinct identifiers and source ID/revision/epoch checks,
+  permanently invalidate on edits/undo/drafts/staging/close, guard close/quit/
+  unload, and preserve source bytes, history and saved paths. No runtime Java
+  service, cloud validator, OCR, automatic redaction, or PDF/UA authoring claim.
 - User-requested modern polish and subtle animation: refine the existing
   document-first shell with coherent control shapes, cleaner surfaces,
   restrained elevation, and purposeful contextual feedback. Honor Reduce

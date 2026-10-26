@@ -25,6 +25,7 @@ export function collectNotices(root) {
     append(name, join(root, "node_modules", name, license));
   }
   append("Noto Sans embedded PDF font", join(root, "src-tauri/resources/fonts/OFL.txt"));
+  append("ICC sRGB2014 archival output profile / full license and provenance", join(root, "src-tauri/resources/color/NOTICE.txt"));
   append("English OCR model / tessdata_fast 87416418657359cb625c412a48b6e1d6d41c29bd (Apache-2.0)", join(root, "src-tauri/resources/ocr/LICENSE"));
   append("Offline OCR provenance", join(root, "src-tauri/resources/ocr/NOTICE"));
   for (const name of ["tesseract", "leptonica", "giflib", "libjpeg", "libpng", "libtiff", "libwebp", "libwebp-patents", "openlibm", "zlib"]) {

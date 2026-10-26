@@ -524,6 +524,26 @@ remain. Theme colors still switch atomically without low-contrast crossfades.
 
 ## Do's and Don'ts
 
+### Technical preflight and archival copies
+
+Extend the existing Operate surface, never replace the document well with a
+compliance dashboard. All tools and the native File menu expose Technical
+preflight and PDF/A-2b archival copy as separate actions. The inspection panel
+lists concrete observations with explicit fact/absent/unsupported/unchecked
+states, scope and source revision; no green "compliant" badge is inferred from
+tag flags or XMP declarations. The JSON report is a separate, permission-checked
+disclosure, not a certificate.
+
+Archival export uses the existing focused dialog, semantic warning/input/action
+tokens, native keyboard focus and fixed visible footer actions. Put the
+irreversible structure/signature losses before the acknowledgment. Show the
+explicit page selection, 150/300-DPI choice, owner/unencrypted boundary,
+cancellable rendering progress, exact resource limits and source invariance.
+The dialog body scrolls on compact windows without hiding its actions. Reuse
+all five themes and existing reduced-motion behavior; PDF pixels and geometry
+never animate. Generated archival copies open read-only, with editing directed
+back to the original rather than silently retaining a conformance declaration.
+
 ### Do
 - Do keep the document as the primary work surface.
 - Do use semantic action, selection, and focus colors consistently in every palette.

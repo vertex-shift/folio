@@ -212,6 +212,18 @@ struct ComparisonExport {
     allow_unencrypted: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ArchiveId { archive_id: u64 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InspectionId { inspection_id: u64 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InspectionExport { inspection_id: u64, allow_unencrypted: bool }
+
 enum Payload {
     Json(serde_json::Value),
     Pdf(Vec<u8>),
@@ -347,6 +359,54 @@ fn handle(
         (&Method::Post, "/output/begin") => {
             let input: folio_core::output::OutputRequest = json_body(request)?;
             return json(workspace.begin_output(input)?);
+        }
+        (&Method::Post, "/preflight/inspect") => {
+            let input: folio_core::archive::SourceRef = json_body(request)?;
+            return json(workspace.inspect_technical(input)?);
+        }
+        (&Method::Post, "/preflight/check") => {
+            let input: InspectionId = json_body(request)?;
+            return json(workspace.check_inspection(input.inspection_id)?);
+        }
+        (&Method::Post, "/preflight/report") => {
+            let input: InspectionExport = json_body(request)?;
+            return Ok(Payload::Output(workspace.inspection_report(input.inspection_id, input.allow_unencrypted)?, "application/json"));
+        }
+        (&Method::Post, "/preflight/cancel") => {
+            let input: InspectionId = json_body(request)?;
+            return json(workspace.cancel_inspection(input.inspection_id));
+        }
+        (&Method::Post, "/archive/begin") => {
+            let input: folio_core::archive::Request = json_body(request)?;
+            return json(workspace.begin_archive(input)?);
+        }
+        (&Method::Post, "/archive/check") => {
+            let input: ArchiveId = json_body(request)?;
+            return json(workspace.check_archive(input.archive_id)?);
+        }
+        (&Method::Post, "/archive/render-bytes") => {
+            let input: ArchiveId = json_body(request)?;
+            return Ok(Payload::Pdf(workspace.archive_render_bytes(input.archive_id)?));
+        }
+        (&Method::Post, "/archive/page") => {
+            let archive_id = numeric_header(request, "X-Folio-Archive-Id")?;
+            let index = usize::try_from(numeric_header(request, "X-Folio-Archive-Index")?)
+                .map_err(|_| Error::Invalid("The archival page index is invalid.".into()))?;
+            let limit = folio_core::archive::MAX_PNG_BYTES;
+            if request.body_length().is_some_and(|length| length > limit) { return Err(Error::Invalid("An archival page exceeds 64 MiB of PNG.".into())); }
+            let mut bytes = Vec::new();
+            request.as_reader().take(limit as u64 + 1).read_to_end(&mut bytes)?;
+            if bytes.len() > limit { return Err(Error::Invalid("An archival page exceeds 64 MiB of PNG.".into())); }
+            workspace.stage_archive_page(archive_id, index, &bytes)?;
+            return json(());
+        }
+        (&Method::Post, "/archive/file") => {
+            let input: ArchiveId = json_body(request)?;
+            return Ok(Payload::Pdf(workspace.archive_bytes(input.archive_id)?));
+        }
+        (&Method::Post, "/archive/cancel") => {
+            let input: ArchiveId = json_body(request)?;
+            return json(workspace.cancel_archive(input.archive_id));
         }
         (&Method::Post, "/comparison/begin") => {
             let input: folio_core::comparison::Request = json_body(request)?;

@@ -1259,6 +1259,45 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 
 ========================================================================
+ICC sRGB2014 archival output profile / full license and provenance
+========================================================================
+ICC sRGB2014 profile
+====================
+
+File: sRGB2014.icc (unmodified, 3,024 bytes)
+SHA-256: 384b832de3412066743b52a75ee906b6fb9fb8d9e09e936fc2c43223815c6e0a
+Downloaded 2026-10-26 from:
+https://registry.color.org/rgb-registry/profiles/sRGB2014.icc
+Profile documentation:
+https://registry.color.org/rgb-registry/srgbprofiles
+License:
+https://registry.color.org/profile-library/#license
+
+The profile's copyright tag identifies:
+Copyright International Color Consortium, 2015
+
+The ICC's sRGB profile page explicitly subjects sRGB2014.icc to the general
+licensing terms for ICC profiles. Those terms, in full, are:
+
+"This profile is made available by the International Color Consortium, and
+may be copied, distributed, embedded, made, used, and sold without restriction.
+Altered versions of this profile shall have the original identification and
+copyright information removed and shall not be misrepresented as the original
+profile."
+
+The ICC Profile Library also states:
+
+"The copyright owner and terms of use of an ICC profile are normally identified
+in the Creator field in the profile header and in the Copyright tag. Where ICC
+is the copyright owner, the following license terms apply:"
+
+The profile is embedded unchanged in Folio's fresh raster archival copies.
+It is not an Adobe or operating-system color profile. The pinned checksum and
+ICC/RGB header are checked before creating a copy.
+
+
+
+========================================================================
 English OCR model / tessdata_fast 87416418657359cb625c412a48b6e1d6d41c29bd (Apache-2.0)
 ========================================================================
 

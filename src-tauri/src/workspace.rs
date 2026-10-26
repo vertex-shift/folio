@@ -24,6 +24,9 @@ pub struct Workspace {
     authoring_images: crate::authoring::ImageStaging,
     pub(crate) outputs: crate::output::OutputJobs,
     pub(crate) comparisons: crate::comparison::ComparisonJobs,
+    pub(crate) archives: crate::archive::ArchiveJobs,
+    pub(crate) inspections: crate::preflight::Inspections,
+    technical_epochs: BTreeMap<u64, u64>,
     signature_trust: crate::signatures::TrustStore,
 }
 
@@ -134,17 +137,20 @@ impl Workspace {
             && (document.is_dirty()
                 || self.drafts.contains(&id)
                 || self.authoring_images.contains(id)
-                || self.outputs.has_document(id))
+                || self.outputs.has_document(id)
+                || self.archives.has_document(id))
         {
             return Err(Error::Invalid("This PDF has unsaved changes or pending marks. Save or explicitly discard them before closing the tab.".into()));
         }
         self.sessions.remove(&id);
         self.comparisons.invalidate(id);
+        self.invalidate_technical(id);
         self.drafts.remove(&id);
         self.authoring_images.clear(id);
         self.redactions.retain(|_, job| job.plan.document_id != id);
         self.ocrs.retain(|_, job| job.plan.document_id != id);
         self.outputs.close_document(id);
+        self.technical_epochs.remove(&id);
         self.pending_open.retain(|_, pending| {
             !matches!(pending.kind,
             OpenKind::Import { document_id, .. } if document_id == id)
@@ -164,6 +170,7 @@ impl Workspace {
         self.document(id)?;
         if pending {
             self.comparisons.invalidate(id);
+            self.invalidate_technical(id);
             self.drafts.insert(id);
             self.ocrs.retain(|_, job| job.plan.document_id != id);
         } else {
@@ -177,6 +184,7 @@ impl Workspace {
             || !self.drafts.is_empty()
             || !self.authoring_images.is_empty()
             || self.outputs.is_pending()
+            || self.archives.is_pending()
     }
 
     pub fn stage_authoring_image(
@@ -187,6 +195,7 @@ impl Workspace {
     ) -> Result<crate::authoring::ImageAsset> {
         self.check_revision(id, revision)?.ensure_writable()?;
         self.comparisons.invalidate(id);
+        self.invalidate_technical(id);
         self.authoring_images.stage(id, revision, bytes)
     }
 
@@ -199,6 +208,7 @@ impl Workspace {
     ) -> Result<DocumentInfo> {
         self.check_revision(id, revision)?.ensure_writable()?;
         self.comparisons.invalidate(id);
+        self.invalidate_technical(id);
         let image = self.authoring_images.get(id, revision, asset_id)?;
         let session = self
             .sessions
@@ -556,6 +566,8 @@ impl Workspace {
     }
 
     pub fn current_mut(&mut self, id: u64, revision: u64) -> Result<&mut Session> {
+        self.check_revision(id, revision)?;
+        self.invalidate_technical(id);
         let session = self
             .sessions
             .get_mut(&id)
@@ -569,6 +581,17 @@ impl Workspace {
         self.ocrs.retain(|_, job| job.plan.document_id != id);
         self.comparisons.invalidate(id);
         Ok(session)
+    }
+
+    pub fn invalidate_technical(&mut self, id: u64) {
+        let epoch = self.technical_epochs.entry(id).or_default();
+        *epoch = epoch.saturating_add(1);
+        self.archives.invalidate(id);
+        self.inspections.invalidate(id);
+    }
+
+    pub(crate) fn technical_epoch(&self, id: u64) -> u64 {
+        self.technical_epochs.get(&id).copied().unwrap_or(0)
     }
 
     pub fn check_revision(&self, id: u64, revision: u64) -> Result<&Session> {
@@ -609,6 +632,7 @@ impl Workspace {
             .check_revision(id, revision)?
             .redaction_plan(job_id, dpi, regions)?;
         self.comparisons.invalidate(id);
+        self.invalidate_technical(id);
         self.next_redaction_id = job_id;
         self.redactions.retain(|_, job| job.plan.document_id != id);
         self.redactions.insert(job_id, Job::new(plan.clone()));

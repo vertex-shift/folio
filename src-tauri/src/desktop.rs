@@ -32,6 +32,9 @@ mod form_commands;
 #[path = "desktop_comparison.rs"]
 mod comparison_commands;
 
+#[path = "desktop_archive.rs"]
+mod archive_commands;
+
 async fn with_state<T: Send + 'static>(
     app: AppHandle,
     action: impl FnOnce(&mut DesktopState) -> Result<T> + Send + 'static,
@@ -838,6 +841,8 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 None::<&str>,
             )?,
             &MenuItem::with_id(app, "optimize", "Optimize PDF Copy...", true, None::<&str>)?,
+            &MenuItem::with_id(app, "preflight", "Technical Preflight...", true, None::<&str>)?,
+            &MenuItem::with_id(app, "archive", "Export PDF/A-2b Archival Copy...", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "close-tab", "Close PDF", true, Some("CmdOrCtrl+W"))?,
         ],
@@ -952,6 +957,16 @@ pub fn run() {
             comparison_commands::finish_comparison,
             comparison_commands::save_comparison_report,
             comparison_commands::cancel_comparison,
+            archive_commands::inspect_technical,
+            archive_commands::check_inspection,
+            archive_commands::cancel_inspection,
+            archive_commands::save_inspection_report,
+            archive_commands::begin_archive,
+            archive_commands::check_archive,
+            archive_commands::archive_render_bytes,
+            archive_commands::stage_archive_page,
+            archive_commands::save_archive_copy,
+            archive_commands::cancel_archive,
         ])
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();

@@ -122,7 +122,7 @@ export type Edit =
 
 export type Tool = "select" | "hand" | "highlight" | "note" | "text" | "ink" | "edit-text" | "redact" | "image" | "crop" | "form-widget";
 export type Mode = "read" | "write" | "comment" | "organize";
-export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write" | "edit" | "redact" | "signatures" | "authoring" | "forms" | "form-designer" | "properties" | "attachments" | "ocr";
+export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write" | "edit" | "redact" | "signatures" | "authoring" | "forms" | "form-designer" | "properties" | "attachments" | "ocr" | "preflight";
 export type Zoom = { mode: "page" | "width" } | { mode: "custom"; scale: number };
 
 export interface SearchResult {
