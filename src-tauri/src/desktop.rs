@@ -195,7 +195,7 @@ async fn extract_document_pages(
     pages: Vec<usize>,
 ) -> std::result::Result<Option<String>, String> {
     let (bytes, name) = with_state(app.clone(), move |state| {
-        let session = state.workspace.check_revision(document_id, revision)?;
+        let session = state.workspace.ensure_export_ready(document_id, revision)?;
         let stem = std::path::Path::new(&session.name)
             .file_stem()
             .unwrap_or_default()
@@ -217,7 +217,7 @@ async fn extract_document_pages(
         state
             .workspace
             .ensure_output_available(document_id, &path)?;
-        let session = state.workspace.check_revision(document_id, revision)?;
+        let session = state.workspace.ensure_export_ready(document_id, revision)?;
         session.ensure_separate_output(&path)?;
         atomic_write(&path, &bytes)?;
         Ok(path.to_string_lossy().into_owned())
@@ -246,7 +246,11 @@ async fn document_bytes(
     render: bool,
 ) -> std::result::Result<tauri::ipc::Response, String> {
     with_state(app, move |state| {
-        let session = state.workspace.check_revision(document_id, revision)?;
+        let session = if render {
+            state.workspace.check_revision(document_id, revision)?
+        } else {
+            state.workspace.ensure_export_ready(document_id, revision)?
+        };
         let bytes = if render {
             session.render_bytes()?
         } else {
@@ -404,7 +408,7 @@ async fn save_document(
     save_as: bool,
 ) -> std::result::Result<Option<DocumentInfo>, String> {
     let (bytes, suggested_name, directory, previous_path) = with_state(app.clone(), move |state| {
-        let session = state.workspace.check_revision(document_id, revision)?;
+        let session = state.workspace.ensure_export_ready(document_id, revision)?;
         let directory = session
             .saved_path
             .as_ref()
@@ -443,6 +447,7 @@ async fn save_document(
         state
             .workspace
             .ensure_output_available(document_id, &path)?;
+        state.workspace.ensure_export_ready(document_id, revision)?;
         let session = state.workspace.current_mut(document_id, revision)?;
         atomic_write(&path, &bytes)?;
         session.record_saved(path, revision);

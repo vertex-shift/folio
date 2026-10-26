@@ -219,7 +219,7 @@ fn handle(
             let input: ExtractRequest = json_body(request)?;
             return Ok(Payload::Pdf(
                 workspace
-                    .check_revision(input.document_id, input.revision)?
+                    .ensure_export_ready(input.document_id, input.revision)?
                     .extract_pages(&input.pages)?,
             ));
         }
@@ -245,7 +245,11 @@ fn handle(
             let revision = header(request, "X-Revision")
                 .and_then(|value| value.parse().ok())
                 .ok_or_else(|| Error::Invalid("The document revision is missing.".into()))?;
-            let session = workspace.check_revision(id, revision)?;
+            let session = if route == "/render-bytes" {
+                workspace.check_revision(id, revision)?
+            } else {
+                workspace.ensure_export_ready(id, revision)?
+            };
             return Ok(Payload::Pdf(if route == "/render-bytes" {
                 session.render_bytes()?
             } else {

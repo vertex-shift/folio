@@ -159,6 +159,16 @@ impl Workspace {
         self.is_dirty() || !self.drafts.is_empty()
     }
 
+    pub fn ensure_export_ready(&self, id: u64, revision: u64) -> Result<&Session> {
+        let session = self.check_revision(id, revision)?;
+        if self.drafts.contains(&id) {
+            return Err(Error::Invalid(
+                "Apply or discard pending edits before saving or exporting this PDF. Use Export redacted copy for pending redactions.".into(),
+            ));
+        }
+        Ok(session)
+    }
+
     pub fn ensure_output_available(&self, id: u64, path: &Path) -> Result<()> {
         for session in self.sessions.values().filter(|session| session.id != id) {
             for other in [&session.source_path, &session.saved_path]

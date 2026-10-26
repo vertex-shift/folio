@@ -136,6 +136,11 @@ that is open in another tab.
 Tabs and view state are in-memory, not an autosave or restart-recovery system.
 Save copies of important work before quitting.
 
+Ordinary saves, PDF downloads, and page extraction also check pending edits in
+the document engine, not only in the interface. Apply or discard those drafts
+first. Pending redactions require the dedicated **Export redacted copy**
+workflow; viewing the current document remains available.
+
 ## Password-protected PDFs
 
 Opening a supported standard-password PDF prompts for its password in the
