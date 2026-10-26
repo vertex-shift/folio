@@ -18,6 +18,7 @@ interface Props {
   initialSize?: { width: number; height: number };
   tool: Tool;
   disabled: boolean;
+  copyAllowed: boolean;
   annotations: AnnotationInfo[];
   selectedAnnotation: string | null;
   query: string;
@@ -314,7 +315,7 @@ export default function PdfPage(props: Props) {
   return (
     <div
       ref={paperRef}
-      className={`pdf-paper tool-${props.tool}`}
+      className={`pdf-paper tool-${props.tool}${props.copyAllowed ? "" : "copy-restricted"}`}
       style={size}
       role="region"
       aria-label={`PDF page ${props.page + 1}`}

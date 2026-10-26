@@ -17,6 +17,8 @@ const HISTORY_STEPS: usize = 20;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("This PDF needs a password to open.")]
+    PasswordRequired { incorrect: bool },
     #[error("{0}")]
     Invalid(String),
     #[error("The PDF could not be processed: {0}")]
@@ -60,6 +62,8 @@ pub struct DocumentInfo {
     pub can_undo: bool,
     pub can_redo: bool,
     pub read_only_reason: Option<String>,
+    pub password_protected: bool,
+    pub copy_allowed: bool,
     pub pages: Vec<PageInfo>,
     pub annotations: Vec<AnnotationInfo>,
 }
@@ -144,6 +148,8 @@ pub struct Session {
     undo: VecDeque<Snapshot>,
     redo: VecDeque<Snapshot>,
     read_only_reason: Option<String>,
+    password: Option<String>,
+    copy_allowed: bool,
 }
 
 impl Session {
@@ -153,15 +159,21 @@ impl Session {
         source_path: Option<PathBuf>,
         id: u64,
     ) -> Result<Self> {
+        Self::from_bytes_with_password(bytes, name, source_path, id, None)
+    }
+
+    pub fn from_bytes_with_password(
+        bytes: Vec<u8>,
+        name: String,
+        source_path: Option<PathBuf>,
+        id: u64,
+        password: Option<&str>,
+    ) -> Result<Self> {
         if bytes.len() > MAX_DOCUMENT_BYTES {
             return Err(invalid("This PDF is larger than the 128 MB MVP limit."));
         }
-        let document = Document::load_mem(&bytes)?;
-        if document.is_encrypted() || document.was_encrypted() {
-            return Err(invalid(
-                "Password-protected PDFs are not supported yet. Open an unencrypted copy.",
-            ));
-        }
+        let loaded = crate::protection::load(&bytes, password)?;
+        let document = loaded.document;
         if document.get_pages().is_empty() {
             return Err(invalid("This PDF has no readable pages."));
         }
@@ -171,6 +183,9 @@ impl Session {
                     || (dict.has(b"ByteRange") && dict.has(b"Contents"))
             })
         });
+        let password = document
+            .was_encrypted()
+            .then(|| password.unwrap_or("").to_owned());
         let session = Self {
             id,
             name,
@@ -183,17 +198,27 @@ impl Session {
             next_revision: 1,
             undo: VecDeque::new(),
             redo: VecDeque::new(),
-            read_only_reason: signed.then(|| {
-                "Digitally signed PDF: read-only. Rewriting this file would invalidate its signatures."
-                    .to_owned()
-            }),
+            read_only_reason: if signed {
+                Some("Digitally signed PDF: read-only. Rewriting this file would invalidate its signatures.".to_owned())
+            } else if !loaded.editable {
+                Some("This PDF's permissions are restricted. Reopen it with the owner password to edit or export pages.".to_owned())
+            } else {
+                None
+            },
+            password,
+            copy_allowed: loaded.copy_allowed,
         };
         session.info()?;
         Ok(session)
     }
 
     pub fn from_path(path: PathBuf, id: u64) -> Result<Self> {
-        let metadata = fs::metadata(&path)?;
+        let (bytes, name) = Self::read_path(&path)?;
+        Self::from_bytes(bytes, name, Some(path), id)
+    }
+
+    pub(crate) fn read_path(path: &Path) -> Result<(Vec<u8>, String)> {
+        let metadata = fs::metadata(path)?;
         if !metadata.is_file() {
             return Err(invalid("Choose a PDF file, not a folder."));
         }
@@ -205,7 +230,7 @@ impl Session {
             .ok_or_else(|| invalid("The selected file has no name."))?
             .to_string_lossy()
             .into_owned();
-        Self::from_bytes(fs::read(&path)?, name, Some(path), id)
+        Ok((fs::read(path)?, name))
     }
 
     pub fn demo(id: u64) -> Result<Self> {
@@ -232,6 +257,20 @@ impl Session {
 
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    pub fn render_bytes(&self) -> Result<Vec<u8>> {
+        if self.password.is_none() {
+            return Ok(self.bytes.clone());
+        }
+        let mut document = self.document.clone();
+        document.encryption_state = None;
+        crate::protection::serialize(&document)
+    }
+
+    pub fn protect_export(&self, bytes: Vec<u8>) -> Result<Vec<u8>> {
+        self.ensure_writable()?;
+        crate::protection::protect_export(&self.document, bytes)
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -264,6 +303,8 @@ impl Session {
             can_undo: !self.undo.is_empty(),
             can_redo: !self.redo.is_empty(),
             read_only_reason: self.read_only_reason.clone(),
+            password_protected: self.password.is_some(),
+            copy_allowed: self.copy_allowed,
             pages,
             annotations: annotations(&self.document)?,
         })
@@ -276,13 +317,22 @@ impl Session {
 
     pub fn import_pages(&mut self, bytes: Vec<u8>, at: usize) -> Result<DocumentInfo> {
         let donor = Self::from_bytes(bytes, "Imported PDF".into(), None, 0)?;
+        self.import_session(donor, at)
+    }
+
+    pub(crate) fn import_session(&mut self, donor: Session, at: usize) -> Result<DocumentInfo> {
         donor.ensure_writable()?;
+        if donor.password.is_some() && self.password.is_none() {
+            return Err(invalid(
+                "Encrypted pages cannot be inserted into an unencrypted PDF. Open a password-protected destination first; Folio will not remove password protection.",
+            ));
+        }
         self.mutate(|next| crate::pages::import_pages(next, donor.document, at))
     }
 
     pub fn extract_pages(&self, pages: &[usize]) -> Result<Vec<u8>> {
         self.ensure_writable()?;
-        crate::pages::extract_pages(&self.document, pages)
+        self.protect_export(crate::pages::extract_pages(&self.document, pages)?)
     }
 
     pub fn text_runs(&self, page: usize) -> Result<Vec<crate::text_edit::TextRun>> {
@@ -314,7 +364,7 @@ impl Session {
         Ok(())
     }
 
-    fn ensure_writable(&self) -> Result<()> {
+    pub(crate) fn ensure_writable(&self) -> Result<()> {
         if let Some(reason) = &self.read_only_reason {
             return Err(invalid(reason));
         }
@@ -326,8 +376,7 @@ impl Session {
         let mut next = self.document.clone();
         change(&mut next)?;
         annotations(&next)?;
-        let mut bytes = Vec::new();
-        next.save_to(&mut bytes)?;
+        let bytes = crate::protection::serialize(&next)?;
         if bytes.len() > MAX_DOCUMENT_BYTES {
             return Err(invalid("The edited PDF exceeds the 128 MB MVP limit."));
         }
@@ -348,7 +397,7 @@ impl Session {
             .undo
             .back()
             .ok_or_else(|| invalid("There is no change to undo."))?;
-        let document = Document::load_mem(&snapshot.bytes)?;
+        let document = crate::protection::load(&snapshot.bytes, self.password.as_deref())?.document;
         let snapshot = self
             .undo
             .pop_back()
@@ -367,7 +416,7 @@ impl Session {
             .redo
             .back()
             .ok_or_else(|| invalid("There is no change to redo."))?;
-        let document = Document::load_mem(&snapshot.bytes)?;
+        let document = crate::protection::load(&snapshot.bytes, self.password.as_deref())?.document;
         let snapshot = self
             .redo
             .pop_back()

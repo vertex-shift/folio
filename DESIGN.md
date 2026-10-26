@@ -173,6 +173,34 @@ the organize heading 23px, and dialogs 20px. Compact metadata and page
 numbers use 10px and 11px text with tabular numerals where relevant.
 Do not reuse metadata sizing for primary actions.
 
+## Protected document opening
+
+Use the existing focused dialog for password entry, not a new workspace or
+sign-in page. Name the selected PDF, mask the input, allow an empty opening
+password, and offer explicit Unlock PDF and Cancel actions. Show incorrect
+passwords inline, return focus to the field after each attempt, and preserve
+the existing document until unlocking succeeds. Passwords are not preferences.
+
+Use the established informational palette for an editable protected-document
+notice; keep amber read-only notices for restricted permissions and signatures.
+Saves and exports retain protection. Redaction review must disclose that
+encryption parameters, including a legacy file identifier where required,
+are retained even though original document content and metadata are removed.
+
+## Document tabs
+
+The title bar contains a horizontally scrollable tab strip. Give each PDF a
+named tab, an unsaved indicator when needed, and a separate close button;
+never nest the close button inside the tab's selection button. The active
+tab uses the workspace surface and inactive tabs use title-bar tones. Keep
+the add-document action outside the scroll area so it stays available.
+
+Use tab/tabpanel semantics, roving keyboard focus, arrow/Home/End navigation,
+and visible focus. Preserve each document's working/view state independently.
+Opening PDFs is additive, not a destructive navigation requiring discard.
+Close decisions name the affected PDF; quitting reviews unsaved inactive tabs
+as well. An empty workspace still offers opening and document creation.
+
 PDF page typography is rendered from the file itself. The generated example
 PDF uses standard PDF fonts; it is not the interface's typography source.
 The existing-text edit hover uses a translucent document-blue overlay, not
@@ -310,21 +338,38 @@ atomically, without interpolating through low-contrast intermediate colors.
 
 ## Motion
 
-**Thesis:** tools reveal context; the document remains still. The authored
-moment is a 200ms side-panel mask reveal with a 5px lateral settle, using
-`cubic-bezier(0.16, 1, 0.3, 1)`. It runs only when a panel opens or changes
-purpose, never when a page scrolls or a source-text list refreshes.
+**Thesis:** the selected work surface travels; the document remains still.
+The focal interaction is a 260ms shared selection surface that glides between
+PDF tabs. Read/Write/Comment/Organize and the review-tool dock echo that
+continuity more quietly. Move the selection paint, never the control targets
+or PDF pixels. Use `cubic-bezier(0.16, 1, 0.3, 1)` for confident deceleration,
+not elastic overshoot.
 
-Supporting feedback uses 140ms color/border transitions and 100ms press
-feedback. Only the button's icon/label moves by 1px; its hit target does not
-move or shrink. Popovers settle from 3px above; protected dialogs settle 5px
-with a 0.99 scale. Dialog surfaces stay opaque throughout; the scrim changes
-separately. Notifications use a short opacity acknowledgment.
+`SelectionIndicator.tsx` measures final geometry once and uses Web Animations
+FLIP transforms rather than animating layout properties. Interrupted travel
+starts from the currently visible position. Resizing snaps to accurate bounds;
+hidden workspaces stop moving. The legacy selected styling remains the static
+fallback. All marker surfaces use the current palette and ignore pointer input.
 
-The work is bounded to chrome; no page/canvas animation, scroll reveal,
-staggered tool rows, width/height animation, persistent will-change, or motion
-dependency. Reduced Motion removes spatial/keyframe animation and smooth
-search scrolling, preserving 80ms color feedback and all visible state cues.
+Panels use a 240ms cropped reveal with an 8px lateral settle only when opened
+or changed. Dialogs settle 10px at 0.985 scale with a bounded shadow transition;
+they stay fully opaque and focusable throughout. The appearance popover opens
+from its trigger, with 180ms icon/label settles spaced 16ms apart, capped at
+64ms total delay. Radio targets and focus rings do not move.
+
+Supporting feedback uses 140ms colors/borders and 100ms press feedback.
+The add-document icon turns without shifting its target; tool arrows lean
+toward their destination. New tab labels crop into view, unsaved dots appear
+once, and successful notifications draw their check mark. Busy feedback is
+shown only after 160ms, avoiding a spinner flash for fast tab switches.
+No action, document state change, or keyboard interaction waits for animation.
+
+The work is bounded to chrome: no page/canvas/thumbnail animation, scroll
+reveal, staggered tool rows, animated width/height, permanent will-change,
+decorative loops, or new dependency. Live Reduce Motion changes cancel
+selection travel immediately and remove spatial/keyframe effects and smooth
+search scrolling. Static selection, focus, status text, and 80ms color feedback
+remain. Theme colors still switch atomically without low-contrast crossfades.
 
 ## Do's and Don'ts
 

@@ -6,17 +6,16 @@ use tauri::{
 };
 
 use crate::{
-    document::{DocumentInfo, Edit, Error, Result, Session, atomic_write},
-    workspace::Workspace,
+    document::{DocumentInfo, Edit, Error, Result, atomic_write},
+    workspace::{OpenOutcome, Workspace, WorkspaceInfo},
 };
 
 #[derive(Default)]
 struct DesktopState {
     workspace: Workspace,
-    pending_path: Option<PathBuf>,
+    pending_paths: Vec<PathBuf>,
     ui_ready: bool,
     allow_exit: bool,
-    pending_draft: bool,
 }
 
 type SharedState = Mutex<DesktopState>;
@@ -38,58 +37,112 @@ async fn with_state<T: Send + 'static>(
 }
 
 #[tauri::command]
-async fn bootstrap(app: AppHandle) -> std::result::Result<DocumentInfo, String> {
+async fn bootstrap(app: AppHandle) -> std::result::Result<WorkspaceInfo, String> {
     with_state(app, |state| {
         state.ui_ready = true;
-        match state.pending_path.take() {
-            Some(path) => state.workspace.open_path(path, false),
-            None => state.workspace.bootstrap(),
-        }
+        let paths = std::mem::take(&mut state.pending_paths);
+        let opening = state.workspace.request_open_paths(paths);
+        let mut snapshot = state.workspace.snapshot()?;
+        snapshot.opening.extend(
+            opening
+                .into_iter()
+                .filter(|outcome| matches!(outcome, OpenOutcome::Failed { .. })),
+        );
+        Ok(snapshot)
     })
     .await
 }
 
 #[tauri::command]
-async fn open_document(
-    app: AppHandle,
-    discard_changes: bool,
-) -> std::result::Result<Option<DocumentInfo>, String> {
-    let file = rfd::AsyncFileDialog::new()
-        .set_title("Open PDF")
+async fn open_document(app: AppHandle) -> std::result::Result<Vec<OpenOutcome>, String> {
+    let files = rfd::AsyncFileDialog::new()
+        .set_title("Open PDFs in new tabs")
         .add_filter("PDF document", &["pdf"])
-        .pick_file()
+        .pick_files()
         .await;
-    let Some(file) = file else {
-        return Ok(None);
+    let Some(files) = files else {
+        return Ok(Vec::new());
     };
-    let path = file.path().to_path_buf();
+    let paths = files
+        .into_iter()
+        .map(|file| file.path().to_path_buf())
+        .collect();
     with_state(app, move |state| {
-        state.workspace.open_path(path, discard_changes)
+        Ok(state.workspace.request_open_paths(paths))
     })
     .await
-    .map(Some)
 }
 
 #[tauri::command]
 async fn open_document_path(
     app: AppHandle,
     path: String,
-    discard_changes: bool,
-) -> std::result::Result<DocumentInfo, String> {
+) -> std::result::Result<OpenOutcome, String> {
     with_state(app, move |state| {
-        state
-            .workspace
-            .open_path(PathBuf::from(path), discard_changes)
+        state.workspace.request_open_path(PathBuf::from(path))
     })
     .await
 }
 
 #[tauri::command]
-async fn open_example(
+async fn open_document_paths(
     app: AppHandle,
-    discard_changes: bool,
+    paths: Vec<String>,
+) -> std::result::Result<Vec<OpenOutcome>, String> {
+    with_state(app, move |state| {
+        Ok(state
+            .workspace
+            .request_open_paths(paths.into_iter().map(PathBuf::from).collect()))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn activate_document(
+    app: AppHandle,
+    document_id: u64,
 ) -> std::result::Result<DocumentInfo, String> {
-    with_state(app, move |state| state.workspace.open_demo(discard_changes)).await
+    with_state(app, move |state| state.workspace.activate(document_id)).await
+}
+
+#[tauri::command]
+async fn close_document(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+    discard_changes: bool,
+) -> std::result::Result<WorkspaceInfo, String> {
+    with_state(app, move |state| {
+        state
+            .workspace
+            .close_document(document_id, revision, discard_changes)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn unlock_document(
+    app: AppHandle,
+    request_id: u64,
+    password: String,
+) -> std::result::Result<OpenOutcome, String> {
+    with_state(app, move |state| {
+        state.workspace.unlock_document(request_id, &password)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn cancel_open(app: AppHandle, request_id: u64) -> std::result::Result<bool, String> {
+    with_state(app, move |state| {
+        Ok(state.workspace.cancel_open(request_id))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn open_example(app: AppHandle) -> std::result::Result<DocumentInfo, String> {
+    with_state(app, move |state| state.workspace.open_demo()).await
 }
 
 #[tauri::command]
@@ -97,12 +150,9 @@ async fn create_document(
     app: AppHandle,
     width: f32,
     height: f32,
-    discard_changes: bool,
 ) -> std::result::Result<DocumentInfo, String> {
     with_state(app, move |state| {
-        state
-            .workspace
-            .create_document(width, height, discard_changes)
+        state.workspace.create_document(width, height)
     })
     .await
 }
@@ -113,7 +163,7 @@ async fn import_document_pages(
     document_id: u64,
     revision: u64,
     at: usize,
-) -> std::result::Result<Option<DocumentInfo>, String> {
+) -> std::result::Result<Option<OpenOutcome>, String> {
     with_state(app.clone(), move |state| {
         state.workspace.check_revision(document_id, revision)?;
         Ok(())
@@ -129,11 +179,9 @@ async fn import_document_pages(
     };
     let path = file.path().to_path_buf();
     with_state(app, move |state| {
-        let donor = Session::from_path(path, 0)?;
         state
             .workspace
-            .current_mut(document_id, revision)?
-            .import_pages(donor.bytes().to_vec(), at)
+            .request_import_path(document_id, revision, at, path)
     })
     .await
     .map(Some)
@@ -166,6 +214,9 @@ async fn extract_document_pages(
     };
     let path = pdf_output_path(file.path().to_path_buf())?;
     with_state(app, move |state| {
+        state
+            .workspace
+            .ensure_output_available(document_id, &path)?;
         let session = state.workspace.check_revision(document_id, revision)?;
         session.ensure_separate_output(&path)?;
         atomic_write(&path, &bytes)?;
@@ -192,15 +243,16 @@ async fn document_bytes(
     app: AppHandle,
     document_id: u64,
     revision: u64,
+    render: bool,
 ) -> std::result::Result<tauri::ipc::Response, String> {
     with_state(app, move |state| {
-        Ok(tauri::ipc::Response::new(
-            state
-                .workspace
-                .check_revision(document_id, revision)?
-                .bytes()
-                .to_vec(),
-        ))
+        let session = state.workspace.check_revision(document_id, revision)?;
+        let bytes = if render {
+            session.render_bytes()?
+        } else {
+            session.bytes().to_vec()
+        };
+        Ok(tauri::ipc::Response::new(bytes))
     })
     .await
 }
@@ -302,10 +354,9 @@ async fn export_redacted_copy(
     };
     let path = pdf_output_path(file.path().to_path_buf())?;
     with_state(app, move |state| {
-        state
-            .workspace
-            .check_redaction(job_id)?
-            .ensure_separate_output(&path)?;
+        let session = state.workspace.check_redaction(job_id)?;
+        session.ensure_separate_output(&path)?;
+        state.workspace.ensure_output_available(session.id, &path)?;
         atomic_write(&path, &bytes)?;
         Ok(path.to_string_lossy().into_owned())
     })
@@ -389,6 +440,9 @@ async fn save_document(
     };
     let path = pdf_output_path(path)?;
     with_state(app, move |state| {
+        state
+            .workspace
+            .ensure_output_available(document_id, &path)?;
         let session = state.workspace.current_mut(document_id, revision)?;
         atomic_write(&path, &bytes)?;
         session.record_saved(path, revision);
@@ -399,12 +453,15 @@ async fn save_document(
 }
 
 #[tauri::command]
-fn close_application(app: AppHandle) -> std::result::Result<(), String> {
+fn close_application(app: AppHandle, discard_changes: bool) -> std::result::Result<(), String> {
     {
         let state = app.state::<SharedState>();
         let mut state = state
             .lock()
             .map_err(|_| "Document state is unavailable. Restart Folio.")?;
+        if state.workspace.has_unsaved_changes() && !discard_changes {
+            return Err("There are unsaved PDF tabs or pending drafts. Review them or explicitly discard all changes before quitting.".into());
+        }
         state.allow_exit = true;
     }
     app.exit(0);
@@ -418,13 +475,7 @@ async fn set_document_draft(
     pending: bool,
 ) -> std::result::Result<(), String> {
     with_state(app, move |state| {
-        if state.workspace.current()?.id != document_id {
-            return Err(Error::Invalid(
-                "The draft belongs to a different document.".into(),
-            ));
-        }
-        state.pending_draft = pending;
-        Ok(())
+        state.workspace.set_draft(document_id, pending)
     })
     .await
 }
@@ -432,7 +483,7 @@ async fn set_document_draft(
 fn protect_exit(app: &AppHandle) -> bool {
     let state = app.state::<SharedState>();
     match state.try_lock() {
-        Ok(state) => !state.allow_exit && (state.workspace.is_dirty() || state.pending_draft),
+        Ok(state) => !state.allow_exit && state.workspace.has_unsaved_changes(),
         Err(_) => true,
     }
 }
@@ -485,7 +536,7 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 Some("CmdOrCtrl+Shift+S"),
             )?,
             &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::close_window(app, None)?,
+            &MenuItem::with_id(app, "close-tab", "Close PDF", true, Some("CmdOrCtrl+W"))?,
         ],
     )?;
     let edit_menu = Submenu::with_items(
@@ -517,14 +568,18 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 }
 
 pub fn run() {
-    let pending_path = std::env::args_os().skip(1).map(PathBuf::from).find(|path| {
-        path.extension()
-            .is_some_and(|value| value.eq_ignore_ascii_case("pdf"))
-    });
+    let pending_paths = std::env::args_os()
+        .skip(1)
+        .map(PathBuf::from)
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|value| value.eq_ignore_ascii_case("pdf"))
+        })
+        .collect();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(Mutex::new(DesktopState {
-            pending_path,
+            pending_paths,
             ..Default::default()
         }))
         .setup(|app| {
@@ -538,6 +593,11 @@ pub fn run() {
             bootstrap,
             open_document,
             open_document_path,
+            open_document_paths,
+            activate_document,
+            close_document,
+            unlock_document,
+            cancel_open,
             open_example,
             document_bytes,
             edit_document,
@@ -563,6 +623,7 @@ pub fn run() {
                 "undo",
                 "redo",
                 "find",
+                "close-tab",
             ]
             .contains(&id)
             {
@@ -589,20 +650,36 @@ pub fn run() {
         }
         #[cfg(target_os = "macos")]
         RunEvent::Opened { urls } => {
-            for url in urls.into_iter().take(1) {
-                let Ok(path) = url.to_file_path() else {
-                    eprintln!("Folio can open local file URLs only.");
-                    continue;
-                };
-                let state = app.state::<SharedState>();
-                match state.lock() {
-                    Ok(mut state) if !state.ui_ready => state.pending_path = Some(path),
-                    Ok(state) => {
-                        drop(state);
-                        emit(app, "open-path", &path.to_string_lossy());
+            let paths: Vec<_> = urls
+                .into_iter()
+                .filter_map(|url| match url.to_file_path() {
+                    Ok(path) => Some(path),
+                    Err(_) => {
+                        eprintln!("Folio can open local file URLs only.");
+                        None
                     }
-                    Err(error) => eprintln!("Could not open the requested PDF: {error}"),
+                })
+                .collect();
+            let state = app.state::<SharedState>();
+            match state.lock() {
+                Ok(mut state) if !state.ui_ready => {
+                    for path in paths {
+                        if !state.pending_paths.contains(&path) {
+                            state.pending_paths.push(path);
+                        }
+                    }
                 }
+                Ok(state) => {
+                    drop(state);
+                    let paths: Vec<_> = paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .collect();
+                    if let Err(error) = app.emit("open-paths", paths) {
+                        eprintln!("Could not deliver PDF opening request: {error}");
+                    }
+                }
+                Err(error) => eprintln!("Could not open the requested PDFs: {error}"),
             }
         }
         _ => {}

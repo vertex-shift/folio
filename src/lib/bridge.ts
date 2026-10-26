@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getIdentifier } from "@tauri-apps/api/app";
-import type { DocumentInfo, Edit, ExistingTextRun, RedactionPlan, RedactionRegion } from "./types";
+import type { DocumentInfo, Edit, ExistingTextRun, OpenOutcome, RedactionPlan, RedactionRegion, WorkspaceInfo } from "./types";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { safeExternalUrl } from "./navigation";
 import { resolveRuntime } from "./runtime";
@@ -71,19 +71,19 @@ function downloadPdf(bytes: Uint8Array, name: string) {
 }
 
 export const bridge = {
-  bootstrap(): Promise<DocumentInfo> {
+  bootstrap(): Promise<WorkspaceInfo> {
     if (runtimeIssue) return Promise.reject(new Error(runtimeIssue));
     return native ? invoke("bootstrap") : previewJson("/bootstrap");
   },
-  open(discardChanges: boolean): Promise<DocumentInfo | null> {
+  open(): Promise<OpenOutcome[]> {
     if (!native) throw new Error("Use the browser file picker in browser preview.");
-    return invoke("open_document", { discardChanges });
+    return invoke("open_document");
   },
-  openPath(path: string, discardChanges: boolean): Promise<DocumentInfo> {
+  openPaths(paths: string[]): Promise<OpenOutcome[]> {
     if (!native) throw new Error("File paths can only be opened in the desktop application.");
-    return invoke("open_document_path", { path, discardChanges });
+    return invoke("open_document_paths", { paths });
   },
-  async openFile(file: File, discardChanges: boolean): Promise<DocumentInfo> {
+  async openFile(file: File): Promise<OpenOutcome> {
     if (native) throw new Error("Use the native file picker in the desktop application.");
     if (file.size > 128 * 1024 * 1024) throw new Error("This PDF is larger than the 128 MB MVP limit.");
     return previewJson("/open", {
@@ -91,28 +91,44 @@ export const bridge = {
       headers: {
         "Content-Type": "application/pdf",
         "X-File-Name": encodeURIComponent(file.name),
-        "X-Discard-Changes": String(discardChanges),
       },
       body: file,
     });
   },
-  example(discardChanges: boolean): Promise<DocumentInfo> {
+  unlock(requestId: number, password: string): Promise<OpenOutcome> {
+    return native ? invoke("unlock_document", { requestId, password })
+      : previewJson("/unlock", post({ requestId, password }));
+  },
+  cancelOpen(requestId: number): Promise<boolean> {
+    return native ? invoke("cancel_open", { requestId })
+      : previewJson("/open/cancel", post({ requestId }));
+  },
+  activate(documentId: number): Promise<DocumentInfo> {
+    return native ? invoke("activate_document", { documentId })
+      : previewJson("/activate", post({ documentId }));
+  },
+  closeDocument(info: DocumentInfo, discardChanges: boolean): Promise<WorkspaceInfo> {
+    return native ? invoke("close_document", { ...revision(info), discardChanges })
+      : previewJson("/close", post({ ...revision(info), discardChanges }));
+  },
+  example(): Promise<DocumentInfo> {
     return native
-      ? invoke("open_example", { discardChanges })
-      : previewJson("/demo", { method: "POST", headers: { "X-Discard-Changes": String(discardChanges) } });
+      ? invoke("open_example")
+      : previewJson("/demo", { method: "POST" });
   },
-  create(width: number, height: number, discardChanges: boolean): Promise<DocumentInfo> {
-    return native ? invoke("create_document", { width, height, discardChanges })
-      : previewJson("/create", post({ width, height, discardChanges }));
+  create(width: number, height: number): Promise<DocumentInfo> {
+    return native ? invoke("create_document", { width, height })
+      : previewJson("/create", post({ width, height }));
   },
-  import(info: DocumentInfo, at: number): Promise<DocumentInfo | null> {
+  import(info: DocumentInfo, at: number): Promise<OpenOutcome | null> {
     if (!native) throw new Error("Use the preview's PDF import file picker.");
     return invoke("import_document_pages", { ...revision(info), at });
   },
-  importFile(info: DocumentInfo, file: File, at: number): Promise<DocumentInfo> {
+  importFile(info: DocumentInfo, file: File, at: number): Promise<OpenOutcome> {
     if (file.size > 128 * 1024 * 1024) throw new Error("The imported PDF exceeds the 128 MiB limit.");
     return previewJson("/import", { method: "POST", headers: {
       "X-Document-Id": String(info.id), "X-Revision": String(info.revision), "X-Insert-At": String(at),
+      "X-File-Name": encodeURIComponent(file.name),
       "Content-Type": "application/pdf",
     }, body: file });
   },
@@ -122,12 +138,12 @@ export const bridge = {
     downloadPdf(new Uint8Array(await response.arrayBuffer()), info.name.replace(/\.pdf$/i, "") + "-pages.pdf");
     return true;
   },
-  async bytes(info: DocumentInfo): Promise<Uint8Array> {
+  async bytes(info: DocumentInfo, render = false): Promise<Uint8Array> {
     if (native) {
-      const buffer = await invoke<ArrayBuffer>("document_bytes", revision(info));
+      const buffer = await invoke<ArrayBuffer>("document_bytes", { ...revision(info), render });
       return new Uint8Array(buffer);
     }
-    const response = await previewResponse("/bytes", {
+    const response = await previewResponse(render ? "/render-bytes" : "/bytes", {
       headers: { "X-Document-Id": String(info.id), "X-Revision": String(info.revision) },
     });
     return new Uint8Array(await response.arrayBuffer());
@@ -181,10 +197,11 @@ export const bridge = {
     opened.opener = null;
   },
   draft(documentId: number, pending: boolean): Promise<void> {
-    return native ? invoke("set_document_draft", { documentId, pending }) : Promise.resolve();
+    return native ? invoke("set_document_draft", { documentId, pending })
+      : previewJson("/draft", post({ documentId, pending }));
   },
-  close(): Promise<void> {
+  close(discardChanges: boolean): Promise<void> {
     if (!native) throw new Error("Close the browser tab to leave the browser preview.");
-    return invoke("close_application");
+    return invoke("close_application", { discardChanges });
   },
 };

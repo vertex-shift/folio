@@ -2,7 +2,7 @@
 version: 1
 slug: "src-app-tsx"
 primary_target: "src/App.tsx"
-related_targets: ["src/styles.css", "src/themes.css", "src/components/AppearancePicker.tsx"]
+related_targets: ["src/DocumentWorkspace.tsx", "src/styles.css", "src/themes.css", "src/components/AppearancePicker.tsx", "src/components/DocumentTabs.tsx"]
 ---
 
 # PDF workspace
@@ -62,13 +62,18 @@ dialogs at 16px. Use cleaner Light/graphite Dark chrome, restrained offset
 elevation, compact system typography, and a tonal active mode segment.
 Preserve all five themes, factual copy, tool locations, and PDF pixels.
 
-Motion thesis: contextual tools reveal their relationship to the document,
-while the document itself stays still. The focal moment is a 200ms panel
-mask/lateral settle; supporting colors respond in 140ms and press feedback
-in 100ms. Animate icon/label paint, not control hit boxes or PDF geometry.
-No layout-driving animation, decorative loops, page reveals, or dependencies.
-Reduce Motion removes spatial movement and smooth scrolling but retains
-80ms color feedback. Theme switching remains atomic for contrast.
+Motion thesis: the selected work surface travels while the document stays
+still. The focal moment is a 260ms shared tab-selection surface, echoed by
+mode and review-tool selection. Interrupt from the current visual position.
+Supporting panels crop into place in 240ms; dialogs stay opaque while settling
+with bounded depth. The appearance picker's icon/label sequence has at most
+64ms of sibling delay; controls retain fixed targets and immediate focus.
+Colors respond in 140ms and press feedback in 100ms. Success checks draw once;
+busy feedback waits 160ms so routine tab switching does not flash a spinner.
+No layout-driving animation, decorative loops, PDF/thumbnail reveals, or new
+dependencies. Live Reduce Motion cancels travel and removes spatial/keyframe
+effects while retaining static selection and 80ms color feedback. Theme
+switching remains atomic for contrast.
 
 ## Read/write authoring extension
 
@@ -113,3 +118,22 @@ history unchanged. Lock source mutations while marks exist, route all Save
 paths through review, protect marks on exit, and retain them after failure,
 cancellation, and export. Verify exported pixels and absence of original
 objects, not merely the appearance of the on-page overlay.
+
+## Protected PDFs
+
+Reuse the focused dialog and themed input controls for local PDF passwords.
+Mask and clear submitted passwords, show actionable retries, and preserve the
+current document on cancellation. Editable protected PDFs get an informational
+notice; signed/restricted PDFs retain the read-only notice. Saves and exports
+keep existing protection; redaction review discloses required retained
+encryption parameters and legacy file identifiers.
+
+## Multi-document tabs
+
+Make the existing title-bar tab affordance real: a scrollable strip with
+independent tab selection, close controls, unsaved indicators, and an add
+action outside the scroller. Preserve per-document working/view state and
+render only the active document's canvases. Support multi-file picker/drop/
+Finder opening and independent password prompts. Closing is document-scoped;
+quitting protects unsaved inactive documents too. Preserve the incumbent
+palette, compact typography, and reduced-motion behavior.

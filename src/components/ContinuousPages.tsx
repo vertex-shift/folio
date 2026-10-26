@@ -19,6 +19,8 @@ interface Props {
   onScale(scale: number): void;
   onError(message: string): void;
   renderPage(page: number, frame: PageFrame): ReactNode;
+  initialPosition?: { page: number; fraction: number };
+  onPosition?(position: { page: number; fraction: number }): void;
 }
 
 export default function ContinuousPages(props: Props) {
@@ -78,7 +80,11 @@ export default function ContinuousPages(props: Props) {
     const frame = layout.pages[props.page];
     if (!viewport || !frame || !ready) return;
     const changedDocument = anchor.current.documentId !== props.documentId;
-    if (changedDocument || reported.current !== props.page) {
+    const saved = props.initialPosition;
+    if (changedDocument && saved && saved.page === props.page) {
+      viewport.scrollTop = Math.max(0, frame.top + saved.fraction * frame.height);
+      reported.current = props.page;
+    } else if (changedDocument || reported.current !== props.page) {
       viewport.scrollTop = Math.max(0, frame.top - 24);
       reported.current = props.page;
     } else if (previousLayout.current !== layout && anchor.current.page === props.page) {
@@ -87,6 +93,7 @@ export default function ContinuousPages(props: Props) {
     previousLayout.current = layout;
     anchor.current = { documentId: props.documentId, page: props.page,
       fraction: (viewport.scrollTop - frame.top) / frame.height };
+    callbacks.current.onPosition?.({ page: props.page, fraction: anchor.current.fraction });
     setPosition({ top: viewport.scrollTop, height: viewport.clientHeight });
   }, [props.page, props.documentId, props.container, layout, ready]);
 
@@ -109,6 +116,7 @@ export default function ContinuousPages(props: Props) {
       const frame = pages[page];
       anchor.current = { documentId: callbacks.current.documentId, page,
         fraction: (top - frame.top) / frame.height };
+      callbacks.current.onPosition?.({ page, fraction: anchor.current.fraction });
       setPosition({ top, height });
       if (reported.current !== page) {
         reported.current = page;

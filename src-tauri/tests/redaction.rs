@@ -72,7 +72,7 @@ fn source(rotation: i32, unit: f32) -> Vec<u8> {
 fn workspace(rotation: i32, unit: f32) -> Workspace {
     let mut workspace = Workspace::default();
     workspace
-        .open_bytes(source(rotation, unit), "Private original.pdf".into(), false)
+        .open_bytes(source(rotation, unit), "Private original.pdf".into())
         .unwrap();
     workspace
 }
@@ -463,7 +463,7 @@ fn rejects_invalid_regions_resolution_and_unsupported_signed_or_xfa_sources() {
         let mut bytes = Vec::new();
         pdf.save_to(&mut bytes).unwrap();
         workspace
-            .open_bytes(bytes, "unsupported.pdf".into(), true)
+            .open_bytes(bytes, "unsupported.pdf".into())
             .unwrap();
         let info = workspace.current().unwrap().info().unwrap();
         let message = workspace
@@ -492,9 +492,7 @@ fn enforces_the_actual_pixel_limit_without_silent_resolution_fallback() {
         let mut bytes = Vec::new();
         pdf.save_to(&mut bytes).unwrap();
         let mut workspace = Workspace::default();
-        let info = workspace
-            .open_bytes(bytes, "large.pdf".into(), false)
-            .unwrap();
+        let info = workspace.open_bytes(bytes, "large.pdf".into()).unwrap();
         let result = workspace.begin_redaction(info.id, info.revision, 150, &[region()]);
         assert_eq!(result.is_ok(), allowed);
         if let Ok(plan) = result {
@@ -522,9 +520,7 @@ fn enforces_the_actual_pixel_limit_without_silent_resolution_fallback() {
     let mut bytes = Vec::new();
     pdf.save_to(&mut bytes).unwrap();
     let mut workspace = Workspace::default();
-    let info = workspace
-        .open_bytes(bytes, "wide.pdf".into(), false)
-        .unwrap();
+    let info = workspace.open_bytes(bytes, "wide.pdf".into()).unwrap();
     assert!(
         workspace
             .begin_redaction(info.id, info.revision, 150, &[region()])
@@ -538,7 +534,7 @@ fn protects_original_saved_copy_and_symlink_targets_from_native_export() {
     let original = folder.path().join("original.pdf");
     std::fs::write(&original, source(0, 1.0)).unwrap();
     let mut workspace = Workspace::default();
-    let info = workspace.open_path(original.clone(), false).unwrap();
+    let info = workspace.open_path(original.clone()).unwrap();
     let saved = folder.path().join("edited.pdf");
     workspace
         .current_mut(info.id, info.revision)

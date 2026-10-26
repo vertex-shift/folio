@@ -36,6 +36,12 @@ The desktop app processes document contents locally.
   Synchronize navigation/search/bookmarks with the visible page; keep writing
   and redaction targets tied to the actual page surface. Preserve reading
   position across zoom, resizing, and same-document updates.
+- Multiple PDF tabs: new opens add documents without discarding existing work.
+  Support multi-selection and dropped/Finder batches, independent password
+  prompts, and explicit partial-failure reporting. Preserve per-tab edits,
+  history, navigation/search/zoom/tools, and pending marks. Render only the
+  active tab's canvases. Guard closing each tab and quitting with any inactive
+  unsaved work; refuse overwriting another tab's open file.
 - Authoring milestone: Letter/A4 blank PDFs; editable placed-text and pen
   annotations; duplicate/blank/imported pages; extraction by page range;
   bookmark and internal-link navigation; confirmed external web/email links.
@@ -56,13 +62,26 @@ The desktop app processes document contents locally.
   System, Light, Dark, Sepia, and High Contrast. Persist the preference locally;
   follow live device changes in System mode and match native light/dark chrome.
   Theme the workspace without changing PDF content or annotation colors.
+- Password-protected PDFs: prompt for supported standard PDF passwords in
+  native and preview opening flows. Preserve existing encryption, passwords,
+  and permissions in saves, history, extraction, and redacted exports.
+  Wrong passwords/cancellation preserve the current document. Restricted
+  user access is read-only unless the owner password is supplied. Keep
+  passwords in memory only and never export the decrypted rendering copy.
+  Encrypted redaction retains required encryption parameters and, for legacy
+  algorithms, the file identifier; disclose this exception to metadata removal.
 - User-requested modern polish and subtle animation: refine the existing
   document-first shell with coherent control shapes, cleaner surfaces,
   restrained elevation, and purposeful contextual feedback. Honor Reduce
   Motion and never animate PDF geometry or make the user wait for decoration.
+- Expanded modern motion: a gliding shared tab-selection surface, coordinated
+  mode/tool selection, masked panel reveals, opaque depth-based dialogs,
+  lightly sequenced appearance choices, and meaningful press/success feedback.
+  Keep routine movement below 300ms, support interruption and live Reduce
+  Motion, suppress fast busy flashes, and add no motion dependency.
 - Preserve the original file by default; expose unsaved changes and failures.
 - Existing digital signatures must not be invalidated silently.
-- Password-protected PDFs, paragraph reflow, arbitrary font/encoding support, existing-image editing,
+- Password creation/removal/changes, certificate-based protection, paragraph reflow, arbitrary font/encoding support, existing-image editing,
   interactive forms, OCR, Office conversion, cryptographic signing, cloud
   collaboration, and full Acrobat parity remain incomplete capabilities.
 - New annotations, imported pages, and created/extracted documents must remain

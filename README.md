@@ -88,12 +88,13 @@ the tag before rerunning the workflow.
 
 | Workflow | Implementation |
 | --- | --- |
-| Open PDFs | Native file picker, drag-and-drop, Finder PDF association; one document at a time |
+| Open PDFs | Multiple PDFs in independent tabs through the native picker, drag-and-drop, Finder association, or browser picker |
+| Protected PDFs | Password prompt for supported standard RC4/AES PDFs; preserve passwords and permissions on saved copies and exports |
 | Read | Continuous vertical scrolling, real PDF rendering, selectable/copyable text, lazy thumbnails, synchronized page navigation, zoom, fit page/width, hand panning |
 | Navigate | Document bookmarks and internal links; web/email links require confirmation before opening outside Folio |
 | Create | New blank US Letter or A4 PDFs, in portrait or landscape |
 | Edit existing text | Replace or delete a specific PDF content-stream text run; keep the original font or explicitly embed Noto Sans |
-| Redact | Mark rectangles and export a fresh image-only PDF with permanently blacked-out pixels and no original PDF objects/text layer/attachments/metadata |
+| Redact | Mark rectangles and export a fresh image-only PDF with permanently blacked-out pixels and no original document content, attachments, or descriptive metadata; retain existing encryption when protected |
 | Write | Placed, editable `/FreeText` annotations with embedded Noto Sans; supported Latin, Greek, and Cyrillic text |
 | Draw | Standard `/Ink` annotations with selectable color and stroke width |
 | Search | Case-insensitive or case-sensitive text and phrases, including across line breaks; result snippets and on-page marks |
@@ -110,6 +111,63 @@ the tag before rerunning the workflow.
 The included three-page quick-start PDF is original example content, generated
 by `scripts/prepare-assets.mjs`. It is editable, labeled as an example, and
 contains real bookmarks and links for trying the navigation tools.
+
+## Multiple PDF tabs
+
+Use **+**, **Open PDF**, or **Command+O** (**Control+O** on Windows/Linux) to
+add documents without replacing the PDFs already open. The file picker and
+drag-and-drop accept multiple PDFs; Finder and command-line opening also
+accept multiple local PDF paths. A failed file is reported separately without
+discarding successfully opened tabs. Protected files prompt for passwords
+one at a time; canceling one does not cancel the others.
+
+Each tab retains its own document bytes, edits, undo/redo, page and reading
+position, zoom, search, tools, and pending redaction marks. Only the active
+tab renders page canvases and thumbnails. Use the tab strip's arrow keys,
+Home/End, or **Control+Tab / Control+Shift+Tab** to move between documents.
+
+Close a tab with its **X** or **Command/Control+W**. Unsaved edits and pending
+marks require an explicit decision before that tab closes; other PDFs remain
+open. Closing the last tab leaves an empty workspace. Quitting checks every
+tab, including inactive ones, and lets you review unsaved documents or
+explicitly discard all of them. Saving/exporting cannot overwrite a file
+that is open in another tab.
+
+Tabs and view state are in-memory, not an autosave or restart-recovery system.
+Save copies of important work before quitting.
+
+## Password-protected PDFs
+
+Opening a supported standard-password PDF prompts for its password in the
+desktop app or browser preview. The native picker, drag-and-drop, and Finder
+opening use the same flow. Leave the password blank for an encrypted PDF with
+no opening password; use its owner password to edit restricted content.
+Wrong passwords and cancellation leave the current document and unsaved work
+unchanged. Passwords are kept only in memory for the open document, not in
+preferences, logs, or external services. The browser preview sends them only
+in request bodies to its loopback-only Rust engine.
+
+Folio preserves the existing encryption algorithm, passwords, and permission
+settings when saving, undoing/redoing, extracting pages, or exporting redacted
+copies. The original file remains unchanged by default. Decrypted bytes are
+prepared in memory for the renderer only; downloads and native saves use
+protected bytes, not that rendering copy. Signed PDFs remain read-only and
+an unchanged saved copy retains the original bytes.
+
+User-password access with restricted editing/copying permissions is
+conservatively read-only in Folio; reopen with the owner password to edit or
+export pages. Text copying is disabled when the PDF disallows it. Encrypted
+donor pages cannot be inserted into an unencrypted destination; when the
+destination is encrypted, inserted pages inherit its protection.
+
+Redacted exports still discard the original document objects and descriptive
+metadata, but retain the encryption parameters needed to keep the passwords
+working. Older RC4/AES-128 protection also requires the original file
+identifier, so an encrypted redacted export is not an unlinkability guarantee.
+Folio does not create, remove, or change passwords. Certificate-based security
+and unsupported encryption filters are rejected explicitly rather than silently
+removing protection. Errors while reading a malformed file leave the current
+document unchanged.
 
 ## Continuous scrolling
 
@@ -258,14 +316,20 @@ still changes appearance and an explicit message reports that it was not saved.
 Palette values live in `src/themes.css`; `src/styles.css` consumes semantic
 roles. Preference validation and system/native mappings live in `src/lib/themes.ts`.
 
-The interface uses shared rounded-control/elevation tokens, tonal mode
-selection, and restrained contextual motion. Panels reveal when opened or
-changed; controls provide quick hover/press feedback without moving their
-hit targets. Dialogs remain opaque during entry, and PDF canvases never
-animate. The device's **Reduce Motion** preference removes spatial effects
-and smooth search scrolling while retaining gentle color feedback. Theme
-changes switch text and surfaces atomically rather than fading through
-unreadable intermediate colors.
+The interface uses shared rounded-control/elevation tokens and a coordinated
+motion system. A selection surface glides between document tabs, workspace
+modes, and review tools. Panels crop into place, appearance choices settle
+in a short sequence, dialogs gain depth without fading their text, and success
+notifications draw their check mark. Hover/press feedback moves icon paint,
+not control targets. Fast tab switches do not flash a busy indicator.
+
+Motion never delays actions or animates PDF pages/thumbnails. The device's
+**Reduce Motion** preference cancels in-flight selection movement immediately
+and removes spatial/keyframe effects and smooth search scrolling, while
+retaining clear state cues and gentle color feedback. Theme colors switch
+atomically rather than fading through unreadable intermediate colors.
+The implementation uses CSS and the Web Animations API, with no animation
+package dependency.
 
 ## Important boundaries
 
@@ -274,8 +338,9 @@ unreadable intermediate colors.
   cryptographic signing,
   certificate validation, cloud storage, collaboration, AI assistant,
   accessibility remediation, preflight, or print-production workflows.
-- Password-protected PDFs are rejected rather than silently decrypted or
-  rewritten. Existing signatures are detected conservatively and force
+- Supported password-protected PDFs retain their existing protection; setting,
+  changing, or removing passwords and certificate-based security are not
+  supported. Existing signatures are detected conservatively and force
   read-only mode; they are **not cryptographically verified**.
 - Interactive forms are rendered but cannot yet be filled or authored.
   Deleting, duplicating, importing, or extracting pages in PDFs with form
@@ -350,7 +415,8 @@ Rust Session / lopdf: annotations, page tree, snapshots, atomic save
 ```
 
 `src-tauri/src/document.rs` owns PDF mutations and serialization.
-`workspace.rs` provides the same revision-checked operations to both
+`workspace.rs` keeps independent document sessions and provides the same
+document-ID/revision-checked operations to both
 `desktop.rs` and the development-only `bin/preview.rs`. `pages.rs` implements
 page creation/import/extraction/duplication; `writing.rs` generates standard
 annotation appearances and embedded font maps.
@@ -420,6 +486,14 @@ byte/history preservation, removal of source objects and PNG metadata, alpha
 channel disposal, rotations/crop offsets/UserUnit, save/reopen, incomplete and
 stale exports, cancellation/generation guards, signature/XFA guards, coordinate
 validation, source overwrite protection, and exact pixel limits.
+Password-protection coverage exercises RC4, AES-128, and AES-256 with user and
+owner passwords, incorrect-password retries, cancellation, stale opening
+requests, restricted permissions, encrypted history/save/reopen, encrypted
+page imports/extraction/redaction, and unchanged signed documents.
+Multi-document coverage checks independent histories and revisions, tab
+activation and guarded closing, empty-workspace behavior, partial batch-open
+failures, per-document redaction jobs, encrypted import target identity, and
+cross-tab source/saved-file overwrite protection.
 
 The blue app mark is authored in `public/folio.svg`; native icons are generated
 with `npm run tauri -- icon public/folio.svg`.

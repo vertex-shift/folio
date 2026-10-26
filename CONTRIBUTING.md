@@ -74,7 +74,7 @@ do not expose the preview bridge to a network.
 
 | Location | Purpose |
 | --- | --- |
-| `src/App.tsx`, `src/components/` | React workspace and document tools |
+| `src/App.tsx`, `src/DocumentWorkspace.tsx`, `src/components/` | Tab coordination, per-document React workspaces, and document tools |
 | `src/lib/` | PDF.js integration, navigation, rendering geometry, themes, and native/preview bridge |
 | `src-tauri/src/` | Rust document mutations, revision guards, persistence, and desktop integration |
 | `tests/` | Frontend behavior tests using Node's test runner |
@@ -114,6 +114,13 @@ discarding data. Keep revision checks, undo/redo, unsaved-change protection,
 signed-document guards, and atomic saving intact. Redaction must remove the
 underlying sensitive content, not just cover it visually; preserve the
 documented image-only export boundary.
+For protected PDFs, use synthetic passwords and verify that user and owner
+passwords still work after save/reopen and exports. Do not strip encryption,
+relax permissions, log passwords, or save the decrypted rendering copy.
+For multi-document changes, verify inactive tabs retain edits, undo history,
+reading/search state, and pending redactions. Target operations by document ID
+and revision, and test both per-tab closing and quitting with unsaved inactive
+documents. Opening another PDF must not discard the current one.
 
 For interface changes, check keyboard access, focus, narrow layouts, all five
 themes, and reduced motion. Keep PDF colors independent of workspace themes

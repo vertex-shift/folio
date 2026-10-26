@@ -1,5 +1,6 @@
 pub mod document;
 mod pages;
+mod protection;
 pub mod redaction;
 pub mod text_edit;
 pub mod workspace;

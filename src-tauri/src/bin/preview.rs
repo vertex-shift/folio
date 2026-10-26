@@ -27,7 +27,27 @@ struct EditRequest {
 struct CreateRequest {
     width: f32,
     height: f32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DocumentRequest {
+    document_id: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CloseRequest {
+    document_id: u64,
+    revision: u64,
     discard_changes: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DraftRequest {
+    document_id: u64,
+    pending: bool,
 }
 
 #[derive(Deserialize)]
@@ -59,6 +79,19 @@ struct RedactionRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RedactionJob {
     job_id: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UnlockRequest {
+    request_id: u64,
+    password: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OpenRequest {
+    request_id: u64,
 }
 
 enum Payload {
@@ -101,6 +134,25 @@ fn json_body<T: serde::de::DeserializeOwned>(request: &mut Request) -> Result<T,
         .map_err(|error| Error::Invalid(format!("The preview request is invalid: {error}")))
 }
 
+fn json(outcome: impl serde::Serialize) -> Result<Payload, Error> {
+    Ok(Payload::Json(serde_json::to_value(outcome).map_err(
+        |_| Error::Invalid("Could not serialize the opening result.".into()),
+    )?))
+}
+
+fn file_name(request: &Request) -> Result<String, Error> {
+    let name = header(request, "X-File-Name")
+        .ok_or_else(|| Error::Invalid("The PDF filename is missing.".into()))?;
+    let name = percent_encoding::percent_decode_str(&name)
+        .decode_utf8()
+        .map_err(|_| Error::Invalid("The filename is not valid UTF-8.".into()))?
+        .into_owned();
+    if name.len() > 1024 || name.trim().is_empty() {
+        return Err(Error::Invalid("The PDF filename is invalid.".into()));
+    }
+    Ok(name)
+}
+
 fn handle(
     request: &mut Request,
     workspace: &mut Workspace,
@@ -126,22 +178,42 @@ fn handle(
     }
     let route = request.url().to_owned();
     let info = match (request.method(), route.as_str()) {
-        (&Method::Get, "/bootstrap") => workspace.bootstrap()?,
-        (&Method::Post, "/demo") => {
-            workspace.open_demo(header(request, "X-Discard-Changes").as_deref() == Some("true"))?
-        }
+        (&Method::Get, "/bootstrap") => return json(workspace.snapshot()?),
+        (&Method::Post, "/demo") => workspace.open_demo()?,
         (&Method::Post, "/create") => {
             let input: CreateRequest = json_body(request)?;
-            workspace.create_document(input.width, input.height, input.discard_changes)?
+            workspace.create_document(input.width, input.height)?
+        }
+        (&Method::Post, "/activate") => {
+            let input: DocumentRequest = json_body(request)?;
+            workspace.activate(input.document_id)?
+        }
+        (&Method::Post, "/close") => {
+            let input: CloseRequest = json_body(request)?;
+            return json(workspace.close_document(
+                input.document_id,
+                input.revision,
+                input.discard_changes,
+            )?);
+        }
+        (&Method::Post, "/draft") => {
+            let input: DraftRequest = json_body(request)?;
+            workspace.set_draft(input.document_id, input.pending)?;
+            return Ok(Payload::Json(serde_json::Value::Null));
         }
         (&Method::Post, "/import") => {
             let document_id = numeric_header(request, "X-Document-Id")?;
             let revision = numeric_header(request, "X-Revision")?;
             let at = usize::try_from(numeric_header(request, "X-Insert-At")?)
                 .map_err(|_| Error::Invalid("The insertion position is invalid.".into()))?;
-            workspace
-                .current_mut(document_id, revision)?
-                .import_pages(body(request)?, at)?
+            let name = file_name(request)?;
+            return json(workspace.request_import_bytes(
+                document_id,
+                revision,
+                at,
+                body(request)?,
+                name,
+            )?);
         }
         (&Method::Post, "/extract") => {
             let input: ExtractRequest = json_body(request)?;
@@ -152,28 +224,33 @@ fn handle(
             ));
         }
         (&Method::Post, "/open") => {
-            let name = header(request, "X-File-Name")
-                .ok_or_else(|| Error::Invalid("The PDF filename is missing.".into()))?;
-            let name = percent_encoding::percent_decode_str(&name)
-                .decode_utf8()
-                .map_err(|_| Error::Invalid("The filename is not valid UTF-8.".into()))?
-                .into_owned();
-            if name.len() > 1024 || name.trim().is_empty() {
-                return Err(Error::Invalid("The PDF filename is invalid.".into()));
-            }
-            let discard = header(request, "X-Discard-Changes").as_deref() == Some("true");
-            workspace.open_bytes(body(request)?, name, discard)?
+            let name = file_name(request)?;
+            return json(workspace.request_open_bytes(body(request)?, name)?);
         }
-        (&Method::Get, "/bytes") => {
+        (&Method::Post, "/unlock") => {
+            let input: UnlockRequest = serde_json::from_slice(&body(request)?)
+                .map_err(|_| Error::Invalid("The password request is invalid.".into()))?;
+            return json(workspace.unlock_document(input.request_id, &input.password)?);
+        }
+        (&Method::Post, "/open/cancel") => {
+            let input: OpenRequest = json_body(request)?;
+            return Ok(Payload::Json(serde_json::json!(
+                workspace.cancel_open(input.request_id)
+            )));
+        }
+        (&Method::Get, "/bytes" | "/render-bytes") => {
             let id = header(request, "X-Document-Id")
                 .and_then(|value| value.parse().ok())
                 .ok_or_else(|| Error::Invalid("The document identifier is missing.".into()))?;
             let revision = header(request, "X-Revision")
                 .and_then(|value| value.parse().ok())
                 .ok_or_else(|| Error::Invalid("The document revision is missing.".into()))?;
-            return Ok(Payload::Pdf(
-                workspace.check_revision(id, revision)?.bytes().to_vec(),
-            ));
+            let session = workspace.check_revision(id, revision)?;
+            return Ok(Payload::Pdf(if route == "/render-bytes" {
+                session.render_bytes()?
+            } else {
+                session.bytes().to_vec()
+            }));
         }
         (&Method::Post, "/text-runs") => {
             let input: TextRunsRequest = json_body(request)?;

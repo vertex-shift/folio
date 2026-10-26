@@ -11,12 +11,14 @@ fn loaded(session: &Session) -> Document {
 #[test]
 fn creating_a_pdf_produces_real_blank_pages_and_unsaved_state() {
     let mut workspace = Workspace::default();
-    let info = workspace.create_document(595.0, 842.0, false).unwrap();
+    let info = workspace.create_document(595.0, 842.0).unwrap();
     assert_eq!(info.page_count, 1);
     assert!(info.dirty);
-    assert!(workspace.create_document(612.0, 792.0, false).is_err());
+    let second = workspace.create_document(612.0, 792.0).unwrap();
+    assert_ne!(second.id, info.id);
+    assert!(workspace.document(info.id).unwrap().is_dirty());
     let original = workspace.current().unwrap().bytes().to_vec();
-    assert!(workspace.create_document(f32::NAN, 842.0, true).is_err());
+    assert!(workspace.create_document(f32::NAN, 842.0).is_err());
     assert_eq!(workspace.current().unwrap().bytes(), original);
     let pdf = loaded(workspace.current().unwrap());
     assert_eq!(pdf.get_pages().len(), 1);

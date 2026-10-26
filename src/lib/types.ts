@@ -53,8 +53,30 @@ export interface DocumentInfo {
   canUndo: boolean;
   canRedo: boolean;
   readOnlyReason: string | null;
+  passwordProtected: boolean;
+  copyAllowed: boolean;
   pages: { key: string; rotation: number }[];
   annotations: AnnotationInfo[];
+}
+
+export interface PasswordChallenge {
+  status: "password_required";
+  requestId: number;
+  name: string;
+  incorrect: boolean;
+  importing: boolean;
+}
+
+export type OpenOutcome = {
+  status: "opened";
+  document: DocumentInfo;
+  importedAt: number | null;
+} | PasswordChallenge | { status: "failed"; name: string; message: string };
+
+export interface WorkspaceInfo {
+  documents: DocumentInfo[];
+  activeId: number | null;
+  opening: OpenOutcome[];
 }
 
 export interface ExistingTextRun {
