@@ -25,7 +25,7 @@ import RedactionPanel from "./components/RedactionPanel";
 import SignaturesPanel from "./features/signatures/SignaturesPanel";
 import SigningDialog from "./features/signatures/SigningDialog";
 import { signatureBridge } from "./features/signatures/bridge";
-import type { SigningIdentity } from "./features/signatures/types";
+import type { SignatureReport, SigningIdentity } from "./features/signatures/types";
 import AuthoringPanel from "./components/AuthoringPanel";
 import FormsPanel from "./components/FormsPanel";
 import DocumentPropertiesPanel from "./components/DocumentPropertiesPanel";
@@ -78,7 +78,7 @@ type Modal = { type: "shortcuts" | "about" }
   | { type: "redaction-export"; dpi: 150 | 300; acknowledged: boolean }
   | { type: "redaction-clear" }
   | { type: "redaction-leave"; action: Action }
-  | { type: "sign-copy"; documentId: number; revision: number }
+  | { type: "sign-copy"; documentId: number; revision: number; report: SignatureReport }
   | { type: "form-discard"; action?: Action }
   | { type: "static-form-copy"; documentId: number; revision: number; plan: FlattenInfo; acknowledged: boolean }
   | { type: "bookmark-create"; documentId: number; revision: number; text: string; page: string; parent: string | null; at: number; entries: BookmarkInfo[] }
@@ -264,12 +264,15 @@ export default function DocumentWorkspace(props: Props) {
   useImperativeHandle(props.ref, () => ({
     menu: (id) => actionRef.current.menu(id),
     close: () => actionRef.current.action({ type: "close" }),
-    comparisonState: () => ({ document: infoRef.current, pending: pendingDraftRef.current, busy: busyRef.current }),
+    comparisonState: () => ({ document: infoRef.current, pending: draftProjection(), busy: busyRef.current }),
     prepareComparison: async () => {
       const current = infoRef.current;
       if (!current) throw new Error("This comparison source is no longer open.");
-      await syncDraft(current.id, pendingDraftRef.current);
-      if (pendingDraftRef.current) throw new Error(`${current.name}: apply or discard pending writing, forms, metadata, authoring, redaction or gesture drafts before comparing.`);
+      await syncDraft(current.id, draftProjection());
+      if (draftProjection()) throw new Error(`${current.name}: apply or discard pending writing, forms, metadata, authoring, redaction or gesture drafts before comparing.`);
+      if (infoRef.current?.id !== current.id || infoRef.current.revision !== current.revision) {
+        throw new Error(`${current.name}: the comparison source changed. Review the current PDF again.`);
+      }
       if (busyRef.current) throw new Error(`${current.name}: finish the current action before comparing.`);
     },
   }), []);
@@ -768,7 +771,7 @@ export default function DocumentWorkspace(props: Props) {
     });
   }
 
-  function reviewSigning() {
+  function reviewSigning(report: SignatureReport) {
     const current = infoRef.current;
     if (!current || busyRef.current) return;
     if (redactionsRef.current.length || hasPendingContentEdits()) {
@@ -777,11 +780,14 @@ export default function DocumentWorkspace(props: Props) {
     }
     void run("Preparing certificate signing...", async () => {
       await syncDraft(current.id, draftProjection());
-      setModal({ type: "sign-copy", documentId: current.id, revision: current.revision });
+      if (draftProjection() || infoRef.current?.id !== report.documentId || infoRef.current.revision !== report.revision) {
+        throw new Error("The document or its drafts changed. Refresh signature checks before signing.");
+      }
+      setModal({ type: "sign-copy", documentId: current.id, revision: current.revision, report });
     });
   }
 
-  function exportSignedCopy(identity: SigningIdentity, password: string) {
+  function exportSignedCopy(identity: SigningIdentity, password: string, fieldId: string | null) {
     const requested = modal;
     void run("Signing a separate PDF copy...", async () => {
       const current = infoRef.current;
@@ -793,13 +799,14 @@ export default function DocumentWorkspace(props: Props) {
         throw new Error("Apply or discard pending edits and clear redaction marks before signing. The original has not been redacted.");
       }
       await syncDraft(current.id, draftProjection());
-      const output = await signatureBridge.export(current, identity, password);
+      if (draftProjection()) throw new Error("Apply or discard pending edits before signing.");
+      const output = await signatureBridge.export(current, identity, password, fieldId);
       if (!output) {
         setToast("Signing canceled. Your original and unsaved work are unchanged.");
         return;
       }
       setModal(null);
-      setToast("Signed copy exported. This window still shows the unsigned original; open the exported PDF to inspect it.");
+      setToast("Signed copy exported. This window still shows the unchanged source; open the exported PDF to inspect all signatures.");
     });
   }
 
@@ -1830,7 +1837,7 @@ export default function DocumentWorkspace(props: Props) {
         void run("Unlocking PDF...", async () => finishOpen(await bridge.unlock(requestId, password)));
       }} />}
 
-    {modal?.type === "sign-copy" && info && <SigningDialog info={info} busy={Boolean(busy)} error={error}
+    {modal?.type === "sign-copy" && info && <SigningDialog info={info} report={modal.report} busy={Boolean(busy)} error={error}
       onClose={() => setModal(null)} onExport={exportSignedCopy} />}
     {modal?.type === "static-form-copy" && <Dialog title="Export a separate static form copy?" error={error} busy={Boolean(busy)}
       onClose={() => setModal(null)} actions={<>
@@ -2054,7 +2061,7 @@ export default function DocumentWorkspace(props: Props) {
     {modal?.type === "about" && <Dialog title="Meet Folio." onClose={() => setModal(null)}>
       <div className="about-brand"><img src="/folio.svg" width="52" height="52" alt="" /><div><h3>A little less paperwork.</h3><p>Version {appVersion} - macOS-first MVP</p></div></div>
       <p>An independently built PDF workspace. Tauri connects this interface to a Rust document engine; PDF.js renders the pages.</p>
-      <p>Create, read, search, replace supported existing text runs, add text or drawings, redact to sanitized image-only copies, review, combine, and extract PDF pages. Open password-protected PDFs and retain their protection when saving. Inspect supported CMS signatures and sign separate unsigned, unencrypted copies with a local PKCS#12 certificate. Identity trust and revocation are not checked. Paragraph reflow, interactive forms, OCR, Office conversion, and setting or changing passwords are not included.</p>
+      <p>Create, read, search, replace supported existing text runs, add text or drawings, redact to sanitized image-only copies, review, combine, and extract PDF pages. Open password-protected PDFs and retain their protection when saving. Inspect supported CMS signatures, explicitly evaluate chains against local custom CA anchors, and export incremental signed/co-signed approval copies with a local PKCS#12 identity. Revocation and trusted time are not checked. Paragraph reflow, interactive forms, OCR, Office conversion, and setting or changing passwords are not included.</p>
       <p className="muted">Not affiliated with Adobe. No code, fonts, icons, or artwork have been extracted from Acrobat. Open-source dependencies carry their own licenses. Files stay on this device. This is an MVP, not a full Acrobat replacement.</p>
       {!native && <div className="preview-explanation"><FileText size={17} /><p><strong>You are in browser preview.</strong>The same Rust engine processes your edits through a loopback-only development bridge. Use the desktop app for native open/save dialogs.</p></div>}
     </Dialog>}

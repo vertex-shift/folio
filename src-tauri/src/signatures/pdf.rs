@@ -180,6 +180,72 @@ pub(super) fn validate_footer(bytes: &[u8], document: &Document) -> CheckResult<
     Ok(())
 }
 
+pub(super) fn revision_prev(bytes: &[u8], document: &Document) -> CheckResult<Option<usize>> {
+    let mut reader = Reader {
+        bytes,
+        position: document.xref_start,
+        remaining: 16_384,
+    };
+    if reader.word()? == b"xref" {
+        let mut entries = 0usize;
+        loop {
+            let word = reader.word()?;
+            if word == b"trailer" {
+                break;
+            }
+            let number = |value: &[u8]| {
+                std::str::from_utf8(value)
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .ok_or_else(|| {
+                        CheckError::invalid("The appended cross-reference section is malformed.")
+                    })
+            };
+            number(word)?;
+            let count = number(reader.word()?)?;
+            entries = entries
+                .checked_add(count)
+                .filter(|count| *count <= 4096)
+                .ok_or_else(|| {
+                    CheckError::invalid("The appended cross-reference section exceeds its limit.")
+                })?;
+            for _ in 0..count {
+                number(reader.word()?)?;
+                number(reader.word()?)?;
+                if !matches!(reader.word()?, b"n" | b"f") {
+                    return Err(CheckError::invalid(
+                        "An appended cross-reference entry is malformed.",
+                    ));
+                }
+            }
+        }
+    } else {
+        reader.word()?;
+        if reader.word()? != b"obj" {
+            return Err(CheckError::invalid(
+                "The appended cross-reference stream is malformed.",
+            ));
+        }
+    }
+    let Kind::Dictionary(entries) = reader.value(0)?.kind else {
+        return Err(CheckError::invalid(
+            "The appended revision has no trailer dictionary.",
+        ));
+    };
+    match entries.get(b"Prev".as_slice()) {
+        None => Ok(None),
+        Some(Value {
+            kind: Kind::Integer(value),
+            ..
+        }) => usize::try_from(*value)
+            .map(Some)
+            .map_err(|_| CheckError::invalid("The appended Prev offset is negative or too large.")),
+        _ => Err(CheckError::invalid(
+            "The appended Prev offset is not a direct integer.",
+        )),
+    }
+}
+
 fn whitespace(byte: u8) -> bool {
     matches!(byte, 0 | 9 | 10 | 12 | 13 | 32)
 }

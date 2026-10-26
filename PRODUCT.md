@@ -166,17 +166,27 @@ The desktop app processes document contents locally.
 - Existing digital signatures must not be invalidated silently.
 - Cryptographic signatures: inspect the supported detached CMS subset locally,
   with strict ByteRange/Contents/revision checks. Keep signed-byte integrity,
-  later changes, certificate dates, and unchecked identity trust distinct.
-  Export separately signed copies of unsigned, unencrypted sources using local
-  PKCS#12 identities and SHA-256/RSA or supported ECDSA. Include current working edits, preserve
-  source/history, guard all open-tab output paths, and block pending drafts.
-  Keep keys/passwords in memory only. Reject unsupported structures, encryption,
-  certification/co-signing, algorithms, and timestamp/countersignature formats.
-  Do not claim trusted chains, revocation, trusted timestamps, qualified
-  signatures, or PAdES-LTV; make no external certificate/document requests.
+  later changes, current certificate dates, explicit custom-CA chain evaluation,
+  unchecked revocation, and unchecked trusted time distinct. Export separate
+  incremental signed/co-signed approval copies of supported unencrypted sources
+  using local PKCS#12 identities and SHA-256/RSA or supported ECDSA. Select
+  existing empty signature fields by canonical logical object ID or retain the
+  invisible-new-field default. Visible widgets get persistent, honest signed
+  appearances, not a validation or trusted-time badge. Preserve every current
+  source byte as an output prefix, reverify prior and new supported CMS, include
+  unsigned working edits, preserve source/history, guard all open-tab output
+  paths, and block pending drafts. Ordinary signed-document editing stays read-only.
+  Keep keys/passwords in memory only. Reject unsupported/ambiguous structures,
+  encryption, certification/field policies, unsigned appended changes,
+  algorithms, and timestamp/countersignature formats.
+  Custom trust uses explicitly selected public root CA certificates only, in
+  memory for this run; never embedded-signer auto-trust, OS/keychain roots,
+  AATL/EUTL, or external certificate/document requests. Anchor removal invalidates
+  all tabs' cached trust. Do not claim revocation, trusted timestamps, qualified
+  signatures, or PAdES-LTV.
 - Certificate-based protection, paragraph reflow, arbitrary font/encoding support, existing-image editing,
   advanced form authoring, unsupported interactive forms, non-English OCR, Office conversion, advanced
-  signing/trust validation, cloud
+  certification/qualified signing and authoritative trust, cloud
   collaboration, and full Acrobat parity remain incomplete capabilities.
 - New annotations, imported pages, and created/extracted documents must remain
   real, interoperable PDFs after save/reopen. Unsupported forms, signed donors,

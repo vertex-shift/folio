@@ -20,6 +20,7 @@
 .signature-facts dt { color: var(--muted); }
 .signature-facts dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .signature-entry .signature-identity-warning { display: flex; align-items: flex-start; gap: 7px; padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--line); color: var(--warning-ink); font-weight: 600; }
+.signature-entry .signature-custom-anchor { color: var(--blue-ink); }
 .signature-identity-warning svg { margin-top: 3px; }
 .signature-entry .signature-subject { margin-top: 8px; color: var(--strong); }
 .signature-entry .signature-date { margin-top: 6px; font-size: 11px; color: var(--secondary); }
@@ -44,6 +45,15 @@
 .signature-password-hint svg { margin-top: 3px; }
 .signature-acknowledgment { margin-top: 20px; line-height: 1.7; align-items: flex-start; }
 .signature-acknowledgment input { margin-top: 4px; flex-shrink: 0; }
+.signature-field-picker { display: flex; flex-direction: column; gap: 8px; margin: 20px 0 10px; color: var(--secondary); font-size: 12px; }
+.signature-field-picker select { width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid var(--control-border); border-radius: var(--radius-control); background: var(--input-bg); color: var(--ink); }
+.signature-anchors { padding: 16px 20px 20px; border-top: 1px solid var(--line); font-size: 11px; line-height: 1.8; }
+.signature-anchors summary { color: var(--blue-ink); cursor: pointer; padding-block: 4px; font-weight: 600; }
+.signature-anchors summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.signature-anchors p { margin: 10px 0; color: var(--secondary); }
+.signature-anchor { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px 0; border-top: 1px solid var(--line); }
+.signature-anchor strong, .signature-anchor code { overflow-wrap: anywhere; max-width: 100%; }
+.signature-anchor code { font-size: 10px; color: var(--secondary); user-select: text; }
 @media (max-width: 899px) {
   .tools-panel.panel-signatures { width: min(320px, calc(100vw - 55px)); }
 }

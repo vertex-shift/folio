@@ -169,7 +169,7 @@ fn rsa_signed_copy_verifies_in_an_independent_cms_call_and_never_claims_identity
     let session = open(bytes);
     assert!(session.info().unwrap().read_only_reason.is_some());
     let report = session.signature_report().unwrap();
-    assert!(report.signing_blocked_reason.is_some());
+    assert!(report.signing_blocked_reason.is_none());
     assert_eq!(report.signatures.len(), 1);
     let signature = &report.signatures[0];
     assert_eq!(signature.integrity, Integrity::Intact);
@@ -433,9 +433,15 @@ fn expired_signer_content_integrity_and_current_validity_remain_separate() {
 }
 
 #[test]
-fn encrypted_signed_certified_and_existing_signature_field_inputs_are_not_rewritten() {
+fn signed_inputs_allow_only_separate_incremental_signing_and_other_unsupported_inputs_are_refused()
+{
     let session = open(signed());
-    assert!(session.signed_copy(identity(), PASSWORD).is_err());
+    let co_signed = session.signed_copy(identity(), PASSWORD).unwrap();
+    assert!(co_signed.starts_with(session.bytes()));
+    assert_eq!(
+        open(co_signed).signature_report().unwrap().signatures.len(),
+        2
+    );
     assert!(session.extract_pages(&[0]).is_err());
     let mut document = Document::load_mem(Session::blank(72.0, 72.0, 1).unwrap().bytes()).unwrap();
     let policy = document.add_object(dictionary! { "DocMDP" => Object::Null });

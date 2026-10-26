@@ -15,7 +15,27 @@ export interface SignatureCertificate {
   notAfter: string;
   validity: "valid_now" | "expired" | "not_yet_valid";
   selfSigned: boolean;
-  identityTrust: "not_checked";
+  identityTrust: "not_checked" | "untrusted" | "anchored_custom_store";
+}
+
+export interface SignatureChain {
+  status: SignatureCertificate["identityTrust"];
+  message: string;
+  anchorFingerprint: string | null;
+  chainFingerprints: string[];
+}
+
+export interface SignatureTrustStore {
+  revision: number;
+  anchors: SignatureCertificate[];
+  persistent: false;
+}
+
+export interface SignatureField {
+  id: string;
+  name: string;
+  widgets: { id: string; page: number; rect: [number, number, number, number]; visible: boolean }[];
+  blockedReason: string | null;
 }
 
 export interface SignatureInfo {
@@ -28,6 +48,10 @@ export interface SignatureInfo {
   signedBytes: number | null;
   currentBytes: number;
   certificate: SignatureCertificate | null;
+  chain: SignatureChain;
+  claimedSigningTime: string | null;
+  revocation: "not_checked";
+  trustedTime: "not_checked";
 }
 
 export interface SignatureReport {
@@ -36,6 +60,8 @@ export interface SignatureReport {
   signatures: SignatureInfo[];
   signingBlockedReason: string | null;
   warnings: string[];
+  emptyFields: SignatureField[];
+  trustStore: SignatureTrustStore;
 }
 
 export function signatureSummary(signature: SignatureInfo): {
@@ -58,7 +84,31 @@ export function certificateValidityLabel(validity: SignatureCertificate["validit
 
 export function validateIdentityFile(file: Pick<File, "name" | "size">): void {
   if (!/\.(p12|pfx)$/i.test(file.name)) throw new Error("Choose a .p12 or .pfx PKCS#12 signing identity.");
-  if (file.size <= 0 || file.size > 4 * 1024 * 1024) throw new Error("Choose a nonempty signing identity of at most 4 MiB.");
+  if (!Number.isSafeInteger(file.size) || file.size <= 0 || file.size > 4 * 1024 * 1024) throw new Error("Choose a nonempty signing identity of at most 4 MiB.");
+}
+
+export function validateAnchorFile(file: Pick<File, "name" | "size">): void {
+  if (!/\.(pem|der|cer|crt)$/i.test(file.name)) throw new Error("Choose a public .pem, .der, .cer, or .crt root CA certificate, not a private key.");
+  if (!Number.isSafeInteger(file.size) || file.size <= 0 || file.size > 64 * 1024) {
+    throw new Error("Choose one nonempty public CA certificate of at most 64 KiB.");
+  }
+}
+
+export function signingField(report: SignatureReport, fieldId: string | null): SignatureField | null {
+  if (report.signingBlockedReason) throw new Error(report.signingBlockedReason);
+  if (fieldId === null) return null;
+  const field = report.emptyFields.find((field) => field.id === fieldId);
+  if (!field) throw new Error("That signature field no longer exists. Refresh and select a current empty field.");
+  if (field.blockedReason) throw new Error(field.blockedReason);
+  return field;
+}
+
+export function chainLabel(chain: SignatureChain): string {
+  return {
+    not_checked: "Certificate-chain trust not checked",
+    untrusted: "No valid chain to your custom CA store",
+    anchored_custom_store: "Chain anchored in your custom CA store",
+  }[chain.status];
 }
 
 export function signedCopyName(name: string): string {

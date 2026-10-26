@@ -230,9 +230,10 @@ as well. An empty workspace still offers opening and document creation.
 
 Digital signatures extends the existing tools panel and utility rail without
 adding a workspace mode. Its scrollable inspection list separates signed-byte
-integrity, earlier-revision coverage, and certificate dates from an always
-explicit unchecked-identity warning. Green means intact bytes only, never a
-trusted signer. Unsupported and later-change states use the warning palette;
+integrity, earlier-revision coverage, and certificate dates from explicit
+custom-chain, revocation, and trusted-time results. Green means intact bytes
+only, never a trusted signer. Custom-anchor success is a text conclusion in
+the document-blue palette, not an authoritative identity badge. Unsupported and later-change states use the warning palette;
 failed integrity checks use the error palette. Certificate details disclose
 subject/issuer, current date bounds, serial, algorithms, and a selectable
 SHA-256 fingerprint for manual comparison.
@@ -240,12 +241,22 @@ SHA-256 fingerprint for manual comparison.
 Signed-copy export uses the protected dialog for local identity selection,
 masked password entry, and explicit review acknowledgment. Clear submitted
 passwords and keep errors actionable without losing the chosen identity.
-Explain invisible CMS signing, included unsaved edits, unchanged originals,
-unsupported input types, and absent chain/revocation/timestamp assurance.
-Pending writing/redaction blocks export rather than signing an unapplied
-original. The exported file is separate; success must not imply that the
+Explain the default invisible approval field, selected empty field/widget
+identity and page location, persistent visible appearance versus mathematical
+validation, unverified local time, included unsaved unsigned edits, and unchanged
+sources. Co-signing names earlier-revision coverage and the exact-prefix append
+policy without enabling general signed-file editing. All pending drafts/redactions
+block export rather than signing an unapplied original.
+The exported file is separate; success must not imply that the
 working tab is signed or saved. Reuse all themes, focus, responsive overlays,
 existing panel/dialog motion, and reduced-motion behavior.
+
+Custom CA management is a disclosure inside this panel, not a new workspace
+mode or global-trust setting. Explain explicit public-root selection, bounded
+input, memory-only lifetime, shared tabs, and removal beside the controls.
+Never imply AATL/EUTL, OS/keychain, revocation, or trusted timestamp assurance.
+Clear all panels' cached custom-chain conclusions on store changes, including
+inactive tabs and stale async responses.
 
 PDF page typography is rendered from the file itself. The generated example
 PDF uses standard PDF fonts; it is not the interface's typography source.

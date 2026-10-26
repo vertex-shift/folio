@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Revision {
     document_id: u64,
     revision: u64,
@@ -154,6 +154,25 @@ struct SignRequest {
     revision: u64,
     identity: Vec<u8>,
     password: String,
+    field_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AnchorRequest {
+    document_id: u64,
+    revision: u64,
+    trust_revision: u64,
+    certificate: Vec<u8>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RemoveAnchorRequest {
+    document_id: u64,
+    revision: u64,
+    trust_revision: u64,
+    fingerprint: String,
 }
 
 #[derive(Deserialize)]
@@ -233,6 +252,29 @@ fn body(request: &mut Request) -> Result<Vec<u8>, Error> {
 fn json_body<T: serde::de::DeserializeOwned>(request: &mut Request) -> Result<T, Error> {
     serde_json::from_slice(&body(request)?)
         .map_err(|error| Error::Invalid(format!("The preview request is invalid: {error}")))
+}
+
+fn signature_body<T: serde::de::DeserializeOwned>(
+    request: &mut Request,
+    limit: usize,
+) -> Result<T, Error> {
+    if request.body_length().is_some_and(|length| length > limit) {
+        return Err(Error::Invalid(
+            "The signature request exceeds its size limit.".into(),
+        ));
+    }
+    let mut bytes = zeroize::Zeroizing::new(Vec::new());
+    request
+        .as_reader()
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err(Error::Invalid(
+            "The signature request exceeds its size limit.".into(),
+        ));
+    }
+    serde_json::from_slice(&bytes)
+        .map_err(|_| Error::Invalid("The signature request is malformed.".into()))
 }
 
 fn json(outcome: impl serde::Serialize) -> Result<Payload, Error> {
@@ -525,38 +567,39 @@ fn handle(
         }
         (&Method::Post, "/signatures/inspect") => {
             let input: Revision = json_body(request)?;
-            return json(
-                workspace
-                    .check_revision(input.document_id, input.revision)?
-                    .signature_report()?,
-            );
+            return json(workspace.signature_report(input.document_id, input.revision)?);
+        }
+        (&Method::Post, "/signatures/anchors/add") => {
+            let input: AnchorRequest =
+                signature_body(request, folio_core::signatures::MAX_ANCHOR_BYTES * 4 + 8192)?;
+            let certificate = zeroize::Zeroizing::new(input.certificate);
+            return json(workspace.add_signature_anchor(
+                input.document_id,
+                input.revision,
+                input.trust_revision,
+                &certificate,
+            )?);
+        }
+        (&Method::Post, "/signatures/anchors/remove") => {
+            let input: RemoveAnchorRequest = signature_body(request, 8192)?;
+            return json(workspace.remove_signature_anchor(
+                input.document_id,
+                input.revision,
+                input.trust_revision,
+                &input.fingerprint,
+            )?);
         }
         (&Method::Post, "/signatures/export") => {
             let limit = folio_core::signatures::MAX_IDENTITY_BYTES * 4 + 8192;
-            if request.body_length().is_some_and(|length| length > limit) {
-                return Err(Error::Invalid(
-                    "The signing request exceeds its size limit.".into(),
-                ));
-            }
-            let mut body = zeroize::Zeroizing::new(Vec::new());
-            request
-                .as_reader()
-                .take(limit as u64 + 1)
-                .read_to_end(&mut body)?;
-            if body.len() > limit {
-                return Err(Error::Invalid(
-                    "The signing request exceeds its size limit.".into(),
-                ));
-            }
-            let input: SignRequest = serde_json::from_slice(&body)
-                .map_err(|_| Error::Invalid("The signing request is malformed.".into()))?;
+            let input: SignRequest = signature_body(request, limit)?;
             let identity = zeroize::Zeroizing::new(input.identity);
             let password = zeroize::Zeroizing::new(input.password);
-            return Ok(Payload::Pdf(workspace.signed_copy(
+            return Ok(Payload::Pdf(workspace.signed_copy_in_field(
                 input.document_id,
                 input.revision,
                 &identity,
                 &password,
+                input.field_id.as_deref(),
             )?));
         }
         (&Method::Post, "/forms") => {

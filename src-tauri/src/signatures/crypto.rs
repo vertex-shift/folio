@@ -32,7 +32,8 @@ pub(super) struct CmsDetails {
     pub digest: String,
     pub algorithm: String,
     pub certificate: CertificateInfo,
-    signer: X509,
+    pub signer: X509,
+    pub embedded: Vec<X509>,
 }
 
 pub(super) struct Identity {
@@ -62,7 +63,9 @@ fn digest_name(oid: ObjectIdentifier) -> CheckResult<&'static str> {
     }
 }
 
-fn validate_key(key: &openssl::pkey::PKeyRef<openssl::pkey::Public>) -> CheckResult<&'static str> {
+pub(super) fn validate_key(
+    key: &openssl::pkey::PKeyRef<openssl::pkey::Public>,
+) -> CheckResult<&'static str> {
     match key.id() {
         Id::RSA if key.bits() >= 2048 && key.bits() <= 8192 => Ok("RSA"),
         Id::EC => {
@@ -129,7 +132,7 @@ pub(super) fn certificate_info(cert: &X509) -> CheckResult<CertificateInfo> {
     })
 }
 
-fn validate_key_usage(certificate: &Certificate) -> CheckResult<()> {
+pub(super) fn validate_key_usage(certificate: &Certificate) -> CheckResult<()> {
     if let Some((_, usage)) = certificate
         .tbs_certificate
         .get::<KeyUsage>()
@@ -301,6 +304,7 @@ pub(super) fn cms_details(der: &[u8]) -> CheckResult<CmsDetails> {
         ));
     }
     let mut matching = Vec::new();
+    let mut embedded = Vec::new();
     for choice in certificates.0.iter() {
         if let CertificateChoices::Certificate(certificate) = choice {
             let matches = match &signer.sid {
@@ -316,6 +320,11 @@ pub(super) fn cms_details(der: &[u8]) -> CheckResult<CmsDetails> {
             };
             if matches {
                 matching.push(certificate);
+            } else {
+                embedded.push(
+                    X509::from_der(&certificate.to_der().map_err(der_error)?)
+                        .map_err(crypto_error)?,
+                );
             }
         } else {
             return Err(CheckError::unsupported(
@@ -370,6 +379,7 @@ pub(super) fn cms_details(der: &[u8]) -> CheckResult<CmsDetails> {
         algorithm: algorithm.into(),
         certificate: certificate_info(&cert)?,
         signer: cert,
+        embedded,
     })
 }
 
@@ -427,11 +437,16 @@ pub(super) fn identity(bytes: &[u8], password: &str) -> CheckResult<Identity> {
     let parsed_cert =
         Certificate::from_der(&certificate.to_der().map_err(crypto_error)?).map_err(der_error)?;
     validate_key_usage(&parsed_cert)?;
+    super::trust::document_purpose(&certificate, true)?;
     Ok(Identity {
         key,
         certificate,
         chain: parsed.ca,
     })
+}
+
+pub(super) fn identity_info(identity: &Identity) -> CheckResult<CertificateInfo> {
+    certificate_info(&identity.certificate)
 }
 
 pub(super) fn sign(identity: &Identity, data: &[u8]) -> CheckResult<Vec<u8>> {

@@ -1,13 +1,22 @@
 mod crypto;
+mod fields;
+mod incremental;
 mod pdf;
+mod trust;
 
-use std::{collections::HashSet, io::Read, path::Path};
+use std::{io::Read, path::Path};
 
-use lopdf::{Dictionary, Document, Object, ObjectId, StringFormat, dictionary};
+use lopdf::{Dictionary, Document, Object, ObjectId};
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use crate::document::{MAX_DOCUMENT_BYTES, Result, invalid};
+use crate::document::{Result, invalid};
+
+pub use fields::{SignatureFieldInfo, SignatureWidgetInfo};
+pub use trust::{
+    ChainEvaluation, MAX_ANCHOR_BYTES, MAX_TRUST_ANCHORS, TrustStore, TrustStoreInfo,
+    read_anchor_file,
+};
 
 pub const MAX_IDENTITY_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CMS_BYTES: usize = 256 * 1024;
@@ -64,6 +73,10 @@ pub struct SignatureInfo {
     pub signed_bytes: Option<usize>,
     pub current_bytes: usize,
     pub certificate: Option<CertificateInfo>,
+    pub chain: ChainEvaluation,
+    pub claimed_signing_time: Option<String>,
+    pub revocation: &'static str,
+    pub trusted_time: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,6 +87,8 @@ pub struct SignatureReport {
     pub signatures: Vec<SignatureInfo>,
     pub signing_blocked_reason: Option<String>,
     pub warnings: Vec<String>,
+    pub empty_fields: Vec<SignatureFieldInfo>,
+    pub trust_store: TrustStoreInfo,
 }
 
 #[derive(Debug)]
@@ -194,15 +209,15 @@ pub(crate) fn has_signatures(document: &Document) -> bool {
     false
 }
 
-pub(crate) fn ensure_signable(document: &Document) -> Result<()> {
+fn signing_fields(document: &Document) -> Result<fields::Fields> {
     if document.was_encrypted() || document.is_encrypted() || document.trailer.has(b"Encrypt") {
         return Err(invalid(
             "Signing encrypted PDFs is not supported. Folio will not remove or weaken their password protection.",
         ));
     }
-    if has_signatures(document) {
+    if document.catalog()?.has(b"Perms") {
         return Err(invalid(
-            "This PDF already contains a signature or certification policy. Adding signatures or certifying PDFs is not supported; existing signatures will not be rewritten.",
+            "Certification/DocMDP and usage-rights policies are not implemented. This PDF will not be signed.",
         ));
     }
     if document.xref_recovery.is_some() {
@@ -210,31 +225,123 @@ pub(crate) fn ensure_signable(document: &Document) -> Result<()> {
             "Signing PDFs that required cross-reference repair is not supported.",
         ));
     }
-    if document.trailer.has(b"Prev") || document.trailer.has(b"XRefStm") {
-        return Err(invalid(
-            "Signing incremental or hybrid-reference PDFs is not supported in this first signing workflow.",
-        ));
+    if document.trailer.has(b"XRefStm") {
+        return Err(invalid("Signing hybrid-reference PDFs is not supported."));
     }
-    for object in document.objects.values() {
-        walk(object, None, 0, &mut |_, dictionary| {
-            if dictionary.get(b"FT").and_then(Object::as_name).ok() == Some(b"Sig") {
+    let fields = fields::read(document)?;
+    for (id, object) in &document.objects {
+        walk(object, Some(*id), 0, &mut |id, dictionary| {
+            if dictionary.get(b"FT").and_then(Object::as_name).ok() == Some(b"Sig")
+                && id.is_none_or(|id| !fields.visited.contains(&id))
+            {
                 return Err(CheckError::unsupported(
-                    "Existing signature fields, including empty fields, are not supported for signed-copy export.",
+                    "Existing signature fields must be indirect, unambiguous members of AcroForm Fields; orphan or embedded fields are not supported.",
                 ));
             }
             Ok(())
         })?;
     }
     if let Ok(form) = document.catalog()?.get(b"AcroForm") {
-        let form = document.dereference(form)?.1.as_dict()?;
-        if form.has(b"XFA") {
-            return Err(invalid("Signing XFA forms is not supported."));
+        if matches!(form, Object::Null) {
+            return Ok(fields);
         }
-        if let Ok(fields) = form.get(b"Fields") {
-            document.dereference(fields)?.1.as_array()?;
+        let form = document.dereference(form)?.1.as_dict()?;
+        if let Ok(flags) = form.get(b"SigFlags")
+            && !(0..=3).contains(&document.dereference(flags)?.1.as_i64()?)
+        {
+            return Err(invalid("The form has unsupported signature flags."));
         }
     }
+    Ok(fields)
+}
+
+fn signing_checks(
+    document: &Document,
+    bytes: &[u8],
+    signatures: &[SignatureInfo],
+) -> Result<fields::Fields> {
+    let fields = signing_fields(document)?;
+    pdf::validate_footer(bytes, document)?;
+    if signatures.len() >= MAX_SIGNATURES {
+        return Err(invalid("This PDF has reached the 64-signature limit."));
+    }
+    if signatures.is_empty() && has_signatures(document) {
+        return Err(invalid(
+            "Unrecognized or ambiguous signature markers prevent signing this PDF.",
+        ));
+    }
+    if signatures
+        .iter()
+        .any(|signature| signature.integrity != Integrity::Intact)
+    {
+        return Err(invalid(
+            "Every existing signature must pass the supported structural and CMS integrity checks before adding an approval signature.",
+        ));
+    }
+    if !signatures.is_empty()
+        && signatures
+            .iter()
+            .filter(|signature| signature.coverage == Coverage::WholeDocument)
+            .count()
+            != 1
+    {
+        return Err(invalid(
+            "The latest signature must cover the entire current file. Unsigned appended bytes or revisions must not be approved by co-signing.",
+        ));
+    }
+    let mut ends = std::collections::HashSet::new();
+    for signature in signatures {
+        if !ends.insert(signature.signed_bytes) {
+            return Err(invalid(
+                "Multiple signatures claim the same PDF revision; approval signing is ambiguous.",
+            ));
+        }
+        if fields
+            .fields
+            .iter()
+            .filter(|field| {
+                field
+                    .signature
+                    .is_some_and(|id| fields::key(id) == signature.id)
+            })
+            .count()
+            != 1
+        {
+            return Err(invalid(
+                "Each existing signature must remain bound to exactly one logical signature field.",
+            ));
+        }
+    }
+    if fields
+        .fields
+        .iter()
+        .filter(|field| field.signature.is_some())
+        .count()
+        != signatures.len()
+    {
+        return Err(invalid(
+            "The signature fields and supported signature dictionaries do not match.",
+        ));
+    }
+    Ok(fields)
+}
+
+pub(crate) fn ensure_signable(document: &Document, bytes: &[u8]) -> Result<()> {
+    let document = signing_source(document, bytes)?;
+    let signatures = inspect_signatures(&document, bytes, &TrustStore::default())?;
+    signing_checks(&document, bytes, &signatures)?;
     Ok(())
+}
+
+fn signing_source(document: &Document, bytes: &[u8]) -> Result<Document> {
+    if document.was_encrypted() || document.is_encrypted() || document.trailer.has(b"Encrypt") {
+        return Err(invalid(
+            "Signing encrypted PDFs is not supported. Protection is left intact.",
+        ));
+    }
+    // A Session's mutation document can carry the previous serialization's xref offsets.
+    // Incremental output must be based on the exact current working bytes instead.
+    Ok(crate::protection::load(bytes, None)?.document)
 }
 
 pub(crate) fn inspect(
@@ -243,13 +350,62 @@ pub(crate) fn inspect(
     document_id: u64,
     revision: u64,
 ) -> Result<SignatureReport> {
-    let candidates = candidates(document)?;
-    let warnings = if candidates.is_empty() && has_signatures(document) {
+    inspect_with_trust(
+        document,
+        bytes,
+        document_id,
+        revision,
+        &TrustStore::default(),
+    )
+}
+
+pub(crate) fn inspect_with_trust(
+    document: &Document,
+    bytes: &[u8],
+    document_id: u64,
+    revision: u64,
+    trust: &TrustStore,
+) -> Result<SignatureReport> {
+    if !(document.was_encrypted() || document.is_encrypted() || document.trailer.has(b"Encrypt")) {
+        let source = signing_source(document, bytes)?;
+        return inspect_loaded(&source, bytes, document_id, revision, trust);
+    }
+    inspect_loaded(document, bytes, document_id, revision, trust)
+}
+
+fn inspect_loaded(
+    document: &Document,
+    bytes: &[u8],
+    document_id: u64,
+    revision: u64,
+    trust: &TrustStore,
+) -> Result<SignatureReport> {
+    let signatures = inspect_signatures(document, bytes, trust)?;
+    let warnings = if signatures.is_empty() && has_signatures(document) {
         vec!["Signature fields or certification markers are present, but no supported signature dictionary was found. This is not an unsigned-document assurance.".into()]
     } else {
         Vec::new()
     };
-    let signatures = candidates.iter().enumerate().map(|(index, candidate)| {
+    let checks = signing_checks(document, bytes, &signatures);
+    Ok(SignatureReport {
+        document_id,
+        revision,
+        signatures,
+        signing_blocked_reason: checks.as_ref().err().map(ToString::to_string),
+        warnings,
+        empty_fields: checks
+            .map(|fields| fields.empty_fields())
+            .unwrap_or_default(),
+        trust_store: trust.info()?,
+    })
+}
+
+fn inspect_signatures(
+    document: &Document,
+    bytes: &[u8],
+    trust: &TrustStore,
+) -> Result<Vec<SignatureInfo>> {
+    Ok(candidates(document)?.iter().enumerate().map(|(index, candidate)| {
         let mut info = SignatureInfo {
             id: candidate.id.map_or_else(
                 || format!("direct-{}", index + 1),
@@ -263,12 +419,18 @@ pub(crate) fn inspect(
             signed_bytes: None,
             current_bytes: bytes.len(),
             certificate: None,
+            chain: ChainEvaluation::not_checked(),
+            claimed_signing_time: candidate.dictionary.get(b"M").ok()
+                .filter(|value| value.as_str().is_ok_and(|value| value.len() <= 256))
+                .and_then(|value| lopdf::decode_text_string(value).ok()),
+            revocation: "not_checked",
+            trusted_time: "not_checked",
         };
-        match inspect_one(document, bytes, candidate, &mut info) {
+        match inspect_one(document, bytes, candidate, &mut info, trust) {
             Ok(()) => {
                 info.integrity = Integrity::Intact;
                 info.message = if info.coverage == Coverage::WholeDocument {
-                    "The CMS signature and signed bytes are cryptographically intact. Identity trust has not been checked."
+                    "The CMS signature and signed bytes are cryptographically intact. Certificate-chain trust is a separate check."
                 } else {
                     "The signed revision is cryptographically intact, but later bytes are NOT covered. Do not treat the current document as fully signed."
                 }.into();
@@ -279,16 +441,7 @@ pub(crate) fn inspect(
             }
         }
         info
-    }).collect();
-    Ok(SignatureReport {
-        document_id,
-        revision,
-        signatures,
-        signing_blocked_reason: ensure_signable(document)
-            .err()
-            .map(|error| error.to_string()),
-        warnings,
-    })
+    }).collect())
 }
 
 fn inspect_one(
@@ -296,6 +449,7 @@ fn inspect_one(
     bytes: &[u8],
     candidate: &Candidate<'_>,
     info: &mut SignatureInfo,
+    trust: &TrustStore,
 ) -> CheckResult<()> {
     if document.was_encrypted() || document.is_encrypted() || document.trailer.has(b"Encrypt") {
         return Err(CheckError::unsupported(
@@ -358,9 +512,15 @@ fn inspect_one(
             "The current signature object does not belong to the claimed signed revision.",
         ));
     }
-    if !signature_field_references(&signed_document, id)? {
+    let original_field = signature_field(&signed_document, id)?;
+    if original_field.is_none() {
         return Err(CheckError::invalid(
             "The signature is not bound to a signature field in the signed revision.",
+        ));
+    }
+    if signature_field(document, id)? != original_field {
+        return Err(CheckError::invalid(
+            "The signature is no longer bound to the same unique logical signature field in the current document.",
         ));
     }
     let pdf::Kind::Hex(contents) = &raw.get(b"Contents")?.kind else {
@@ -369,199 +529,57 @@ fn inspect_one(
         ));
     };
     let der = crypto::cms_der(contents)?;
-    let details = crypto::cms_details(der)?;
+    let mut details = crypto::cms_details(der)?;
     info.digest = Some(details.digest.clone());
     info.algorithm = Some(details.algorithm.clone());
     let mut data = Vec::with_capacity(first_length + second_length);
     data.extend_from_slice(&bytes[..first_length]);
     data.extend_from_slice(&bytes[second_start..signed_end]);
     let verified = crypto::verify(der, &data, &details);
+    info.chain = trust.evaluate(&details.signer, &details.embedded);
+    details.certificate.identity_trust = info.chain.status;
     info.certificate = Some(details.certificate);
     verified
 }
 
-fn signature_field_references(document: &Document, signature: ObjectId) -> CheckResult<bool> {
-    fn visit(
-        document: &Document,
-        value: &Object,
-        inherited_signature: bool,
-        signature: ObjectId,
-        depth: usize,
-        visited: &mut HashSet<ObjectId>,
-    ) -> CheckResult<bool> {
-        if depth > 64 {
-            return Err(CheckError::invalid(
-                "The signature field tree is excessively deep.",
-            ));
-        }
-        let (id, object) = document
-            .dereference(value)
-            .map_err(|_| CheckError::invalid("A signature field reference is malformed."))?;
-        if let Some(id) = id
-            && !visited.insert(id)
-        {
-            return Err(CheckError::invalid(
-                "The signature field tree contains a cycle or duplicate field.",
-            ));
-        }
-        let field = object
-            .as_dict()
-            .map_err(|_| CheckError::invalid("A signature field is not a dictionary."))?;
-        let is_signature = match field.get(b"FT") {
-            Ok(value) => {
-                value
-                    .as_name()
-                    .map_err(|_| CheckError::invalid("The signature field type is malformed."))?
-                    == b"Sig"
-            }
-            Err(_) => inherited_signature,
-        };
-        if is_signature && field.get(b"V").and_then(Object::as_reference).ok() == Some(signature) {
-            return Ok(true);
-        }
-        if let Ok(children) = field.get(b"Kids") {
-            for child in document
-                .dereference(children)
-                .and_then(|(_, value)| value.as_array())
-                .map_err(|_| CheckError::invalid("The signature field children are malformed."))?
-            {
-                if visit(document, child, is_signature, signature, depth + 1, visited)? {
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
+fn signature_field(document: &Document, signature: ObjectId) -> CheckResult<Option<ObjectId>> {
+    let fields =
+        fields::read(document).map_err(|error| CheckError::unsupported(error.to_string()))?;
+    let mut matching = fields
+        .fields
+        .iter()
+        .filter(|field| field.signature == Some(signature));
+    let first = matching.next().map(|field| field.id);
+    if matching.next().is_some() {
+        return Err(CheckError::invalid(
+            "A signature is ambiguously bound to multiple logical fields.",
+        ));
     }
-    let catalog = document
-        .catalog()
-        .map_err(|_| CheckError::invalid("The signed revision has no catalog."))?;
-    let form = catalog
-        .get(b"AcroForm")
-        .and_then(|value| document.dereference(value))
-        .and_then(|(_, value)| value.as_dict())
-        .map_err(|_| CheckError::invalid("The signed revision has no readable AcroForm."))?;
-    let fields = form
-        .get(b"Fields")
-        .and_then(|value| document.dereference(value))
-        .and_then(|(_, value)| value.as_array())
-        .map_err(|_| {
-            CheckError::invalid("The signed revision has no readable signature fields.")
-        })?;
-    let mut visited = HashSet::new();
-    for field in fields {
-        if visit(document, field, false, signature, 0, &mut visited)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    Ok(first)
 }
 
-pub(crate) fn signed_copy(document: &Document, pfx: &[u8], password: &str) -> Result<Vec<u8>> {
-    ensure_signable(document)?;
+pub(crate) fn signed_copy(
+    document: &Document,
+    bytes: &[u8],
+    pfx: &[u8],
+    password: &str,
+    field_id: Option<&str>,
+) -> Result<Vec<u8>> {
+    let document = signing_source(document, bytes)?;
     if pfx.is_empty() || pfx.len() > MAX_IDENTITY_BYTES {
         return Err(invalid(
             "Choose a nonempty PKCS#12/PFX identity of at most 4 MiB.",
         ));
     }
-    let identity = crypto::identity(pfx, password)?;
-    let mut output = document.clone();
-    let signature = output.add_object(dictionary! {
-        "Type" => "Sig",
-        "Filter" => "Adobe.PPKLite",
-        "SubFilter" => "adbe.pkcs7.detached",
-        "ByteRange" => vec![
-            Object::Integer(0),
-            Object::Integer(9_999_999_999),
-            Object::Integer(9_999_999_999),
-            Object::Integer(9_999_999_999),
-        ],
-        "Contents" => Object::String(vec![0; RESERVED_CMS_BYTES], StringFormat::Hexadecimal),
-    });
-    let first_page = output
-        .get_pages()
-        .values()
-        .next()
-        .copied()
-        .ok_or_else(|| invalid("The PDF has no page for its invisible signature field."))?;
-    let field = output.add_object(dictionary! {
-        "Type" => "Annot",
-        "Subtype" => "Widget",
-        "FT" => "Sig",
-        "T" => Object::string_literal(format!("FolioSignature{}", signature.0)),
-        "V" => signature,
-        "P" => first_page,
-        "Rect" => vec![0.into(), 0.into(), 0.into(), 0.into()],
-        "F" => 132,
-    });
-    let mut annotations = match output.get_dictionary(first_page)?.get(b"Annots") {
-        Ok(value) => output.dereference(value)?.1.as_array()?.clone(),
-        Err(_) => Vec::new(),
-    };
-    annotations.push(field.into());
-    output
-        .get_dictionary_mut(first_page)?
-        .set("Annots", annotations);
-    let mut form = match output.catalog()?.get(b"AcroForm") {
-        Ok(value) => output.dereference(value)?.1.as_dict()?.clone(),
-        Err(_) => Dictionary::new(),
-    };
-    let mut fields = match form.get(b"Fields") {
-        Ok(value) => output.dereference(value)?.1.as_array()?.clone(),
-        Err(_) => Vec::new(),
-    };
-    fields.push(field.into());
-    form.set("Fields", fields);
-    form.set("SigFlags", 3);
-    let form_id = output.add_object(form);
-    output.catalog_mut()?.set("AcroForm", form_id);
-    let mut bytes = Vec::new();
-    output.save_to(&mut bytes)?;
-    if bytes.len() > MAX_DOCUMENT_BYTES {
-        return Err(invalid("The signed copy exceeds the 128 MiB PDF limit."));
-    }
-    let loaded = crate::protection::load(&bytes, None)?.document;
-    let raw = pdf::signature_object(&bytes, &loaded, signature)?;
-    let contents = raw.get(b"Contents")?.span.clone();
-    let byte_range = raw.get(b"ByteRange")?.span.clone();
-    let replacement = format!(
-        "[0 {} {} {}]",
-        contents.start,
-        contents.end,
-        bytes.len() - contents.end
-    );
-    if replacement.len() > byte_range.len() || contents.len() != RESERVED_CMS_BYTES * 2 + 2 {
+    let signatures = inspect_signatures(&document, bytes, &TrustStore::default())?;
+    let fields = signing_checks(&document, bytes, &signatures)?;
+    if field_id.is_none() && fields.fields.len() >= MAX_SIGNATURES {
         return Err(invalid(
-            "The PDF writer produced incompatible signature placeholder bounds.",
+            "The 64-signature-field limit was reached. Select a supported existing empty field instead.",
         ));
     }
-    bytes[byte_range.clone()].fill(b' ');
-    bytes[byte_range.start..byte_range.start + replacement.len()]
-        .copy_from_slice(replacement.as_bytes());
-    let mut data = Vec::with_capacity(bytes.len() - contents.len());
-    data.extend_from_slice(&bytes[..contents.start]);
-    data.extend_from_slice(&bytes[contents.end..]);
-    let cms = crypto::sign(&identity, &data)?;
-    if cms.len() > RESERVED_CMS_BYTES {
-        return Err(invalid(
-            "The certificate chain/signature exceeds the 32 KiB signing reservation. No file was exported.",
-        ));
-    }
-    const HEX: &[u8] = b"0123456789ABCDEF";
-    for (index, byte) in cms.iter().enumerate() {
-        bytes[contents.start + 1 + index * 2] = HEX[(byte >> 4) as usize];
-        bytes[contents.start + 2 + index * 2] = HEX[(byte & 15) as usize];
-    }
-    let final_document = crate::protection::load(&bytes, None)?.document;
-    let report = inspect(&final_document, &bytes, 0, 0)?;
-    if report.signatures.len() != 1
-        || report.signatures[0].integrity != Integrity::Intact
-        || report.signatures[0].coverage != Coverage::WholeDocument
-    {
-        return Err(invalid(
-            "The newly signed PDF did not pass its final structural and cryptographic verification. No file was exported.",
-        ));
-    }
-    Ok(bytes)
+    let selected = field_id.map(|id| fields.selected(id)).transpose()?;
+    incremental::signed_copy(&document, bytes, pfx, password, selected)
 }
 
 pub fn read_identity_file(path: &Path) -> Result<Zeroizing<Vec<u8>>> {

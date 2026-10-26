@@ -96,7 +96,7 @@ the tag before rerunning the workflow.
 | Open PDFs | Multiple PDFs in independent tabs through the native picker, drag-and-drop, Finder association, or browser picker |
 | Protected PDFs | Password prompt for supported standard RC4/AES PDFs; preserve passwords and permissions on PDF copies and PDF exports |
 | Compare PDFs | Two open working snapshots; page-index embedded-text, rendered-pixel and geometry differences; before/after or overlay review and a separate JSON report |
-| Digital signatures | Local detached-CMS integrity inspection and certificate details; sign separate copies of unsigned, unencrypted sources with a local PKCS#12 identity; identity trust is not checked |
+| Digital signatures | Detached-CMS integrity inspection, explicit custom-CA chain checks, and separate incremental signed/co-signed copies with local PKCS#12 identities, including selected empty signature fields |
 | Read | Continuous vertical scrolling, real PDF rendering, selectable/copyable text, lazy thumbnails, synchronized page navigation, zoom, fit page/width, hand panning |
 | Navigate | Create, rename, nest, reorder, and delete real PDF bookmarks; internal links; confirmed external web/email links |
 | Document properties | Inspect/edit title, author, subject, and keywords; synchronize supported existing XMP with classic Info metadata |
@@ -262,13 +262,14 @@ Choose **Digital signatures** in All tools or the right utility rail. Inspection
 checks supported detached CMS signatures against the PDF's original byte spans,
 without rewriting it. Each result separates **signed-byte integrity**,
 **whole-file versus earlier-revision coverage**, **current certificate dates**,
-and **identity trust not checked**. Certificate subject, issuer, serial number,
+and **custom certificate-chain evaluation**, **revocation not checked**, and
+**trusted time not checked**. Certificate subject, issuer, serial number,
 SHA-256 fingerprint, date bounds, and signature/digest algorithms are available
 in the details disclosure.
 
-**Intact bytes do not mean a trusted signer.** No system/root trust store or
-certificate-chain validation is used. Self-signed and unknown certificates are
-never shown as trusted. Certificate dates use this computer's current time,
+**Intact bytes do not mean a trusted signer.** Without explicitly added custom
+CA anchors, identity trust remains **not checked**, including for embedded
+roots and self-signed signers. Certificate dates use this computer's current time,
 not an authenticated historical signing time. Folio makes no revocation,
 trusted-timestamp, qualified-signature, certification-policy, or PAdES-LTV
 assurance and makes no TSA, OCSP, or other external certificate requests.
@@ -286,16 +287,72 @@ identity buffers and Rust password buffers are zeroized on drop.
 
 New signatures use SHA-256 and a currently valid RSA 2048-8192-bit or NIST
 P-256/P-384/P-521 ECDSA certificate, with a matching private key and appropriate
-key usage when that extension is present. This is an invisible standard
-signature field with detached `adbe.pkcs7.detached` CMS, not an annotation or
-drawn signature image. **Current unsaved PDF edits are included.** Export does
-not mark the working document saved, clear its history, or replace the unsigned
-original shown in the window. Open the exported copy to inspect it; signed
+document-signing usage. The default remains a new invisible approval field
+with detached `adbe.pkcs7.detached` CMS, not a drawn signature image.
+**Current unsaved PDF edits are included.** Export does not mark the working
+document saved, clear its history, or replace the source shown in the window.
+Open the exported copy to inspect it; signed
 PDFs remain read-only for ordinary editing, extraction, and page import.
 
-Pending writing and redaction marks block signing. Redaction overlays are
+In **Signature location**, optionally select an existing empty signature field
+by its name, page, and logical object ID (for example `50:0`, not its widget ID).
+Both merged field/widgets and separate indirect `/Kids` widgets are supported.
+Signing sets that field's `/V`, retains its identity and geometry, and replaces
+its visible widgets' unsigned placeholders with persistent embedded-font
+appearances. These show a certificate fingerprint and a clearly **unverified
+local time**, not a trusted timestamp or a validation badge. Invisible selected
+widgets remain invisible. Other fields, attachments, and appearances are retained.
+Blank signature slots alone do not make an unsigned document read-only.
+
+For a supported already-signed source, use **Export co-signed copy** to append
+another approval signature, either in a selected blank slot or a new invisible
+field. All signature exports use lopdf's `IncrementalDocument`: every current
+source byte is an exact prefix of the output. Prior signature objects and
+revision coverage are retained; all previous supported CMS signatures and the
+new whole-file signature are reverified after reopening before any file is
+written. Earlier signatures cover their own revisions, not the newly added
+approval. The latest existing signature must cover the entire source file:
+unsigned appended bytes/revisions, invalid or unsupported signatures, and
+ambiguous bindings are refused, not legitimized by co-signing.
+
+Pending writing, forms, metadata, page-authoring/image/gesture drafts, and
+redaction marks block signing in both the UI and document engine. Redaction overlays are
 not removed content: first export and inspect the redacted PDF, then open
 that separate copy and sign it.
+
+### Explicit local custom CA anchors
+
+Expand **Custom CA store** and choose **Add public root CA** to explicitly load
+one public `.pem`, `.der`, `.cer`, or `.crt` certificate, at most **64 KiB**.
+The store accepts at most **32 self-signed root CA certificates**, requiring
+critical CA basic constraints, certificate-signing key usage, a supported strong
+key and SHA-2 certificate signature. Private keys, PKCS#12 identities, leaf
+certificates, non-root intermediates, PEM bundles, and trailing DER data are
+rejected. Intermediates must come from the CMS certificate set, not a download.
+
+Anchors are **public certificates in memory for this app run only**, shared
+across tabs. Nothing is persisted to preferences or disk. Add/remove actions
+use a separate store revision; removal immediately invalidates cached conclusions
+in active and inactive panels, including late inspection responses. Removing
+all anchors returns reports to `not_checked` without changing any PDF revision.
+
+OpenSSL verifies chain signatures, paths, current dates, critical extensions,
+CA constraints, and key usages with strict verification, authentication level 2,
+and verification depth 16. PDF signing has no built-in OpenSSL purpose: Folio
+does not impose TLS/email semantics, but explicitly requires leaf signing usage,
+a non-CA leaf, and absent or document-signing/any-purpose EKU on the chosen
+path. Document-signing EKU is `1.3.6.1.5.5.7.3.36`; other restricted purposes
+(including TLS-, email-, code-, or timestamp-only certificates) are refused.
+Chain certificates use supported RSA/ECDSA keys and SHA-256/384/512 RSA PKCS#1
+or ECDSA certificate signatures; RSA-PSS/EdDSA certificate chains are outside
+this subset. Expired/future CA certificates can be loaded for inspection, but
+cannot produce a valid current-date chain.
+
+Success is labeled **Chain anchored in your custom CA store**, **not Adobe
+AATL/EUTL or OS trust**. No system/keychain roots, embedded signer auto-trust,
+certificate discovery, AIA downloads, OCSP/CRL checks, TSA, qualified-signature,
+or LTV claims are made. A valid chain never overrides failed integrity,
+unsigned later bytes, current-date failure, or absent trusted time.
 
 The explicit supported subset is:
 
@@ -306,10 +363,14 @@ The explicit supported subset is:
   `ETSI.CAdES.detached` content-integrity checks with SHA-256/384/512 and
   RSA PKCS#1 v1.5 or supported ECDSA keys. This is not a claim of CAdES/PAdES
   profile conformance.
-- Export: unsigned, unencrypted PDFs without existing signature fields, XFA,
-  certification policies, incremental/hybrid cross-references, or structural
-  repairs. A normal AcroForm can retain its existing non-signature fields.
-  No co-signing, certification, encrypted signing, or changes to prior signatures.
+- Export: unencrypted, unrepaired PDFs with ordinary table or stream
+  cross-references, including supported incremental sources and AcroForms.
+  Supported approvals may be appended to unsigned or fully covered signed
+  sources. Hybrid references, XFA, certification/DocMDP/FieldMDP, signature
+  field locks and seed-value policies, direct/orphan/shared field structures,
+  actions on a selected slot, and ambiguous signatures are refused.
+  There is no encrypted signing, certification, policy-approved editing,
+  or general mutation bypass for signed files.
 - Unsupported verification includes encryption, compressed/direct signature
   dictionaries, repaired cross-references, DocMDP/FieldMDP transforms,
   multiple CMS signers, attached CMS content, unsigned CMS attributes
@@ -320,11 +381,20 @@ The explicit supported subset is:
   padding, and failed cryptographic checks cannot produce an intact result.
 - Limits: 64 signatures per inspection, 256 KiB per CMS Contents value,
   64 embedded certificates, and a 32 KiB CMS reservation for new signatures.
-  An oversized chain is rejected before any export is written.
+  Signing supports at most 64 signature fields, 16 widgets per logical field,
+  and form trees within 4,096 nodes / 32 levels. A visible selected widget must
+  fit the visible page and measure at least 72 x 32 physical points when
+  displayed, at most 14,400 points per side; zero-width/zero-height invisible
+  widgets are supported. Independent widget `/MK` rotation, hidden/read-only/
+  locked widgets, and malformed geometry are refused. An oversized chain or
+  output above 128 MiB is rejected before any export is written.
 
 The implementation uses RustCrypto `cms`/`der`/`x509-cert` for structural
 checks and the Rust `openssl` bindings with vendored OpenSSL 3 for PKCS#12
-and CMS cryptography. No external executable or test private key is shipped.
+and CMS/path cryptography, with lopdf's existing incremental writer rather
+than a parallel PDF or cryptographic engine. No new dependency was added;
+existing OpenSSL and RustCrypto license/attribution sections are retained.
+No external executable or test private key is shipped.
 This feature is unrelated to macOS application signing or notarization.
 
 ## Filling existing PDF forms
@@ -980,13 +1050,13 @@ package dependency.
 
 - **Not full Acrobat parity.** Run-level source-text replacement is supported,
   but not paragraph reflow, existing-image editing, non-English OCR, Office conversion, PDF creation from arbitrary inputs,
-  trusted certificate-chain validation, cloud storage, collaboration, AI assistant,
+  automatic AATL/EUTL/OS trust, cloud storage, collaboration, AI assistant,
   accessibility remediation, preflight, or print-production workflows.
 - Ordinary saves of supported password-protected PDFs retain their protection;
   explicit protection changes are separate, owner-authorized copy exports.
   Certificate-based security is not supported. Existing signatures remain read-only; the Digital signatures
-  panel verifies the supported CMS subset above, not identity trust or all
-  signature formats.
+  panel verifies the supported CMS subset and optional local custom-CA chains
+  above, not all signature formats or authoritative signer identity.
 - Supported AcroForms can be filled and authored within the explicit subset
   above. XFA, calculations, scripts/actions, field-type conversion and
   signature-field filling through the Forms panel are not supported.
@@ -1000,7 +1070,8 @@ package dependency.
   Link targets that are unresolved,
   malformed, use embedded credentials, or are not HTTP, HTTPS, or mailto
   are reported rather than executed.
-- Edits use a full PDF rewrite, not an incremental update. Work on copies.
+- Ordinary edits use a full PDF rewrite; only separate signature-copy exports
+  use the narrow append-only incremental workflow. Work on copies.
   Complex portfolios, tagged-PDF structure, uncommon annotations, and advanced
   page-label/destination semantics need broader compatibility work.
 - Maximum input/edited file size: **128 MiB**. Search displays the first
@@ -1196,6 +1267,37 @@ Multi-document coverage checks independent histories and revisions, tab
 activation and guarded closing, empty-workspace behavior, partial batch-open
 failures, per-document redaction jobs, encrypted import target identity, and
 cross-tab source/saved-file overwrite protection.
+
+Signature regressions generate synthetic identities at runtime, never commit
+private keys, and check successive approval exports, exact original-byte
+prefixes, selected field/widget identity, persistent appearances, independent
+CMS verification, weak/expired/future/missing/wrong-purpose chains, explicit
+anchor removal across tabs, exact limits, draft/stale/cancel guards, and source
+history preservation. Run the independent OpenSSL CLI check explicitly (the
+application itself needs no external executable):
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml --no-default-features \
+  --test signature_parity successive_pdfs_verify_every_cms_with_independent_openssl_cli \
+  -- --ignored --exact
+```
+
+The real browser signing workflow uses local-only synthetic files, loopback
+ports 1430/19158 when free (free alternatives otherwise), and its own short-lived
+helpers. It never opens or restarts a running native Folio app:
+
+```sh
+npx playwright install chromium --only-shell
+CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 \
+  CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=target/signatures npm run test:signatures
+```
+
+The browser test requires an `openssl` executable for runtime-only test identity
+generation. `FOLIO_SIGNATURE_BROWSER` can select a compatible headless Chromium
+binary. Set `FOLIO_SIGNATURE_ARTIFACTS` to an output directory to retain synthetic
+PDFs, screenshots, and JSON evidence; test identities/private keys are always
+kept in a temporary directory and removed at completion, not copied there.
+
 Document-utility coverage checks Unicode metadata/XMP consistency, preserved
 unrelated RDF/Info/name-tree properties, real bookmark destinations and group
 history, unrecognized-action preservation, attachment decompression limits,

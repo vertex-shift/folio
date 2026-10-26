@@ -313,10 +313,7 @@ async fn inspect_signatures(
     revision: u64,
 ) -> std::result::Result<crate::signatures::SignatureReport, String> {
     with_state(app, move |state| {
-        state
-            .workspace
-            .check_revision(document_id, revision)?
-            .signature_report()
+        state.workspace.signature_report(document_id, revision)
     })
     .await
 }
@@ -364,6 +361,7 @@ async fn export_signed_copy(
     revision: u64,
     identity_path: String,
     password: String,
+    field_id: Option<String>,
 ) -> std::result::Result<Option<String>, String> {
     let password = zeroize::Zeroizing::new(password);
     let name = with_state(app.clone(), move |state| {
@@ -388,10 +386,69 @@ async fn export_signed_copy(
     with_state(app, move |state| {
         state.workspace.check_signing(document_id, revision)?;
         let identity = crate::signatures::read_identity_file(std::path::Path::new(&identity_path))?;
+        state.workspace.export_signed_copy_in_field(
+            document_id,
+            revision,
+            &identity,
+            &password,
+            &path,
+            field_id.as_deref(),
+        )?;
+        Ok(Some(path.to_string_lossy().into_owned()))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn choose_signature_anchor(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+    trust_revision: u64,
+) -> std::result::Result<Option<crate::signatures::TrustStoreInfo>, String> {
+    with_state(app.clone(), move |state| {
+        state.workspace.check_revision(document_id, revision)?;
+        if state.workspace.signature_trust_store()?.revision != trust_revision {
+            return Err(crate::document::invalid(
+                "The custom CA store changed. Refresh signature checks.",
+            ));
+        }
+        Ok(())
+    })
+    .await?;
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .set_title("Add a public root CA to your custom signature store (this run only)")
+        .add_filter("Public CA certificate", &["pem", "der", "cer", "crt"])
+        .pick_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    with_state(app, move |state| {
+        state.workspace.check_revision(document_id, revision)?;
+        let bytes = crate::signatures::read_anchor_file(file.path())?;
+        Ok(Some(state.workspace.add_signature_anchor(
+            document_id,
+            revision,
+            trust_revision,
+            &bytes,
+        )?))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn remove_signature_anchor(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+    trust_revision: u64,
+    fingerprint: String,
+) -> std::result::Result<crate::signatures::TrustStoreInfo, String> {
+    with_state(app, move |state| {
         state
             .workspace
-            .export_signed_copy(document_id, revision, &identity, &password, &path)?;
-        Ok(Some(path.to_string_lossy().into_owned()))
+            .remove_signature_anchor(document_id, revision, trust_revision, &fingerprint)
     })
     .await
 }
@@ -857,6 +914,8 @@ pub fn run() {
             inspect_signatures,
             choose_signing_identity,
             export_signed_copy,
+            choose_signature_anchor,
+            remove_signature_anchor,
             form_fields,
             fill_form_fields,
             form_commands::form_designer,

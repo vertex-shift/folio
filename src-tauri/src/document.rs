@@ -313,23 +313,58 @@ impl Session {
     }
 
     pub fn signature_report(&self) -> Result<crate::signatures::SignatureReport> {
-        let mut report =
-            crate::signatures::inspect(&self.document, &self.bytes, self.id, self.revision)?;
+        self.signature_report_with_trust(&crate::signatures::TrustStore::default())
+    }
+
+    pub fn signature_report_with_trust(
+        &self,
+        trust: &crate::signatures::TrustStore,
+    ) -> Result<crate::signatures::SignatureReport> {
+        let mut report = crate::signatures::inspect_with_trust(
+            &self.document,
+            &self.bytes,
+            self.id,
+            self.revision,
+            trust,
+        )?;
         if report.signing_blocked_reason.is_none() {
-            report.signing_blocked_reason =
-                self.ensure_writable().err().map(|error| error.to_string());
+            report.signing_blocked_reason = self
+                .ensure_signing_permissions()
+                .err()
+                .map(|error| error.to_string());
         }
         Ok(report)
     }
 
     pub fn ensure_signable(&self) -> Result<()> {
-        crate::signatures::ensure_signable(&self.document)?;
-        self.ensure_writable()
+        self.ensure_signing_permissions()?;
+        crate::signatures::ensure_signable(&self.document, &self.bytes)
+    }
+
+    fn ensure_signing_permissions(&self) -> Result<()> {
+        if !self.permissions.modify_allowed || !self.permissions.fill_forms_allowed {
+            return Err(invalid(
+                "This PDF does not grant the permissions required for signature export.",
+            ));
+        }
+        if !self.signed {
+            self.ensure_writable()?;
+        }
+        Ok(())
     }
 
     pub fn signed_copy(&self, identity: &[u8], password: &str) -> Result<Vec<u8>> {
-        self.ensure_signable()?;
-        crate::signatures::signed_copy(&self.document, identity, password)
+        self.signed_copy_in_field(identity, password, None)
+    }
+
+    pub fn signed_copy_in_field(
+        &self,
+        identity: &[u8],
+        password: &str,
+        field_id: Option<&str>,
+    ) -> Result<Vec<u8>> {
+        self.ensure_signing_permissions()?;
+        crate::signatures::signed_copy(&self.document, &self.bytes, identity, password, field_id)
     }
 
     pub fn render_bytes(&self) -> Result<Vec<u8>> {

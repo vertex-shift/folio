@@ -24,6 +24,7 @@ pub struct Workspace {
     authoring_images: crate::authoring::ImageStaging,
     pub(crate) outputs: crate::output::OutputJobs,
     pub(crate) comparisons: crate::comparison::ComparisonJobs,
+    signature_trust: crate::signatures::TrustStore,
 }
 
 #[derive(Debug, Serialize)]
@@ -293,8 +294,19 @@ impl Workspace {
         identity: &[u8],
         password: &str,
     ) -> Result<Vec<u8>> {
+        self.signed_copy_in_field(id, revision, identity, password, None)
+    }
+
+    pub fn signed_copy_in_field(
+        &self,
+        id: u64,
+        revision: u64,
+        identity: &[u8],
+        password: &str,
+        field_id: Option<&str>,
+    ) -> Result<Vec<u8>> {
         self.check_signing(id, revision)?
-            .signed_copy(identity, password)
+            .signed_copy_in_field(identity, password, field_id)
     }
 
     pub fn export_signed_copy(
@@ -305,14 +317,61 @@ impl Workspace {
         password: &str,
         path: &Path,
     ) -> Result<()> {
+        self.export_signed_copy_in_field(id, revision, identity, password, path, None)
+    }
+
+    pub fn export_signed_copy_in_field(
+        &self,
+        id: u64,
+        revision: u64,
+        identity: &[u8],
+        password: &str,
+        path: &Path,
+        field_id: Option<&str>,
+    ) -> Result<()> {
         self.ensure_output_available(id, path)?;
         self.check_signing(id, revision)?
             .ensure_separate_output(path)?;
-        let bytes = self.signed_copy(id, revision, identity, password)?;
+        let bytes = self.signed_copy_in_field(id, revision, identity, password, field_id)?;
         self.ensure_output_available(id, path)?;
         self.check_signing(id, revision)?
             .ensure_separate_output(path)?;
         crate::document::atomic_write(path, &bytes)
+    }
+
+    pub fn signature_report(
+        &self,
+        id: u64,
+        revision: u64,
+    ) -> Result<crate::signatures::SignatureReport> {
+        self.check_revision(id, revision)?
+            .signature_report_with_trust(&self.signature_trust)
+    }
+
+    pub fn signature_trust_store(&self) -> Result<crate::signatures::TrustStoreInfo> {
+        self.signature_trust.info()
+    }
+
+    pub fn add_signature_anchor(
+        &mut self,
+        id: u64,
+        revision: u64,
+        trust_revision: u64,
+        certificate: &[u8],
+    ) -> Result<crate::signatures::TrustStoreInfo> {
+        self.check_revision(id, revision)?;
+        self.signature_trust.add(trust_revision, certificate)
+    }
+
+    pub fn remove_signature_anchor(
+        &mut self,
+        id: u64,
+        revision: u64,
+        trust_revision: u64,
+        fingerprint: &str,
+    ) -> Result<crate::signatures::TrustStoreInfo> {
+        self.check_revision(id, revision)?;
+        self.signature_trust.remove(trust_revision, fingerprint)
     }
 
     pub fn request_open_paths(&mut self, paths: Vec<PathBuf>) -> Vec<OpenOutcome> {
