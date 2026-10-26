@@ -1542,7 +1542,29 @@ draft/edit/undo invalidation and no-clobber output. Run the targeted checks:
 ```sh
 node --test tests/conversion.test.ts tests/output.test.ts tests/draftProtection.test.ts
 cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --test conversion --test output
+npm run test:conversion
 ```
+
+The conversion browser check uses original synthetic local files and the real
+preview engine. It independently reopens PDFs in PDF.js/pdf-lib and DOCX in
+**python-docx 1.2.0**, including an editable-text save/reopen round trip. That
+reader and the OpenSSL CLI used to generate/independently verify a runtime test
+signer are **development-only validators**, not application prerequisites.
+Use an isolated Python environment via `FOLIO_CONVERSION_PYTHON`, or an
+isolated reader install via `FOLIO_CONVERSION_PYTHONPATH`; the test never installs
+packages or repairs shared browser caches. `FOLIO_CONVERSION_BROWSER` selects
+an existing compatible Playwright Chromium executable.
+
+`FOLIO_CONVERSION_ARTIFACTS` retains generated PDFs/DOCX, exact-text expectations,
+screenshots and JSON evidence. Optional `FOLIO_CONVERSION_ACCEPTANCE_FIXTURES`
+uses the named original synthetic acceptance corpus instead of generating it.
+Helpers use free loopback ports (prefer UI 1434 / engine 19162), an isolated
+`target/conversion-build`, bounded sequential conversions, and stop only their
+own processes. Native Folio instances and existing release bundles are not
+launched, stopped or rewritten. `FOLIO_CONVERSION_SKIP_VISUAL=1` runs functional
+checks without another screenshot round; `FOLIO_CONVERSION_SKIP_BUILD=1` uses
+the already-built preview engine.
+
 Additional authoring coverage checks new-document dirty state, embedded text
 appearances, Unicode normalization and supported scripts, overflow rejection,
 rotated text matrices, independent annotation copies, imported links and

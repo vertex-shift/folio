@@ -31,12 +31,15 @@ export interface CreationPlan {
   inputs: CreationInput[];
 }
 
-export interface CreationStatus {
+export interface ReadyCreationStatus {
   jobId: number;
-  phase: "preparing" | "ready";
-  pageCount: number | null;
-  byteLength: number | null;
+  phase: "ready";
+  pageCount: number;
+  byteLength: number;
 }
+
+export type CreationStatus = ReadyCreationStatus
+  | { jobId: number; phase: "preparing"; pageCount: null; byteLength: null };
 
 export function creationSettings(size: keyof typeof PAGE_SIZES, landscape: boolean, margin: string, fontSize: string): CreationSettings {
   const page = PAGE_SIZES[size];
@@ -95,13 +98,19 @@ export function waitForCreation(
   jobId: number,
   status: (jobId: number) => Promise<CreationStatus>,
   signal: AbortSignal,
-): Promise<CreationStatus> {
+): Promise<ReadyCreationStatus> {
   return (async () => {
     for (;;) {
       signal.throwIfAborted();
       const result = await status(jobId);
       signal.throwIfAborted();
-      if (result.phase === "ready") return result;
+      if (result.phase === "ready") {
+        if (!Number.isSafeInteger(result.pageCount) || result.pageCount < 1 || result.pageCount > MAX_CREATION_PAGES
+          || !Number.isSafeInteger(result.byteLength) || result.byteLength < 1 || result.byteLength > 128 * 1024 * 1024) {
+          throw new Error("The creation engine returned an invalid ready PDF size or page count. No document was opened.");
+        }
+        return result;
+      }
       await new Promise<void>((resolve, reject) => {
         const abort = () => { clearTimeout(timeout); reject(signal.reason); };
         const timeout = setTimeout(() => {

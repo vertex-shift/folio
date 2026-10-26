@@ -609,3 +609,195 @@ fn docx_empty_invalid_xml_text_limits_stale_drafts_undo_and_no_clobber_are_guard
         .unwrap();
     assert!(workspace.output_bytes(plan.job_id).is_err());
 }
+
+#[test]
+fn exact_creation_file_and_text_batch_limits_are_inclusive_and_never_truncate() {
+    let mut workspace = Workspace::default();
+    let plan = workspace.begin_creation(CreationKind::Text).unwrap();
+    for index in 0..50 {
+        workspace
+            .stage_creation_file(plan.job_id, format!("File-{index}.txt"), b"x".to_vec())
+            .unwrap();
+    }
+    assert_eq!(
+        workspace.creation_plan(plan.job_id).unwrap().inputs.len(),
+        50
+    );
+    assert!(
+        workspace
+            .stage_creation_file(plan.job_id, "Extra.txt".into(), b"x".to_vec())
+            .is_err()
+    );
+    assert!(workspace.creation_plan(plan.job_id).is_err());
+    let plan = workspace.begin_creation(CreationKind::Text).unwrap();
+    for index in 0..4 {
+        workspace
+            .stage_creation_file(
+                plan.job_id,
+                format!("File-{index}.txt"),
+                vec![b'x'; MAX_TEXT_FILE_BYTES],
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        workspace.creation_plan(plan.job_id).unwrap().inputs.len(),
+        4
+    );
+    assert!(
+        workspace
+            .stage_creation_file(plan.job_id, "Extra.txt".into(), b"x".to_vec())
+            .is_err()
+    );
+    assert!(!workspace.has_unsaved_changes());
+}
+
+#[test]
+fn exact_docx_page_and_utf8_text_budgets_are_inclusive_and_do_not_accept_extra_bytes() {
+    let mut workspace = source(fixtures::synthetic_pdf(201, false), None);
+    let request = docx_request(&workspace, (0..200).collect());
+    let plan = workspace.begin_output(request).unwrap();
+    workspace.cancel_output(plan.job_id);
+    assert!(
+        workspace
+            .begin_output(docx_request(&workspace, (0..201).collect()))
+            .is_err()
+    );
+    for pages in [vec![0, 0], vec![201], vec![]] {
+        assert!(
+            workspace
+                .begin_output(docx_request(&workspace, pages))
+                .is_err()
+        );
+    }
+    let page = vec![b'x'; MAX_DOCX_PAGE_TEXT_BYTES];
+    let plan = workspace
+        .begin_output(docx_request(&workspace, (0..32).collect()))
+        .unwrap();
+    for index in 0..32 {
+        workspace
+            .stage_output_page(plan.job_id, index, page.clone())
+            .unwrap();
+    }
+    let docx = workspace.output_bytes(plan.job_id).unwrap();
+    assert!(docx.len() > folio_core::conversion::MAX_DOCX_TEXT_BYTES);
+    assert_eq!(parts(&docx).len(), 3);
+    workspace.cancel_output(plan.job_id);
+    let plan = workspace
+        .begin_output(docx_request(&workspace, (0..33).collect()))
+        .unwrap();
+    for index in 0..32 {
+        workspace
+            .stage_output_page(plan.job_id, index, page.clone())
+            .unwrap();
+    }
+    assert!(
+        workspace
+            .stage_output_page(plan.job_id, 32, b"x".to_vec())
+            .is_err()
+    );
+    assert!(workspace.output_bytes(plan.job_id).is_err());
+}
+
+#[test]
+fn source_image_staging_redaction_and_explicit_cancel_permanently_invalidate_docx_jobs() {
+    let mut workspace = source(fixtures::synthetic_pdf(1, false), None);
+    let info = workspace.current().unwrap().info().unwrap();
+    let plan = workspace
+        .begin_output(docx_request(&workspace, vec![0]))
+        .unwrap();
+    workspace
+        .stage_output_page(plan.job_id, 0, b"Text".to_vec())
+        .unwrap();
+    let image = workspace
+        .stage_authoring_image(info.id, info.revision, &png())
+        .unwrap();
+    assert!(workspace.output_bytes(plan.job_id).is_err());
+    assert!(
+        workspace
+            .begin_output(docx_request(&workspace, vec![0]))
+            .is_err()
+    );
+    workspace
+        .cancel_authoring_image(info.id, image.asset_id)
+        .unwrap();
+    assert!(workspace.output_bytes(plan.job_id).is_err());
+    let plan = workspace
+        .begin_output(docx_request(&workspace, vec![0]))
+        .unwrap();
+    workspace
+        .stage_output_page(plan.job_id, 0, b"Text".to_vec())
+        .unwrap();
+    let redaction = workspace
+        .begin_redaction(
+            info.id,
+            info.revision,
+            150,
+            &[folio_core::redaction::Region {
+                page: 0,
+                rect: [40.0, 40.0, 80.0, 80.0],
+            }],
+        )
+        .unwrap();
+    assert!(workspace.output_bytes(plan.job_id).is_err());
+    assert!(
+        workspace
+            .begin_output(docx_request(&workspace, vec![0]))
+            .is_err()
+    );
+    workspace.cancel_redaction(redaction.job_id);
+    assert!(workspace.output_bytes(plan.job_id).is_err());
+    let plan = workspace
+        .begin_output(docx_request(&workspace, vec![0]))
+        .unwrap();
+    assert!(workspace.cancel_output(plan.job_id));
+    assert!(workspace.output_render_bytes(plan.job_id).is_err());
+    assert!(!workspace.has_unsaved_changes());
+}
+
+#[test]
+fn docx_native_post_dialog_checks_all_newly_opened_source_and_saved_paths_even_when_missing() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut workspace = source(fixtures::synthetic_pdf(1, false), None);
+    let plan = workspace
+        .begin_output(docx_request(&workspace, vec![0]))
+        .unwrap();
+    workspace
+        .stage_output_page(plan.job_id, 0, b"Copied text".to_vec())
+        .unwrap();
+    let source_path = directory.path().join("Opened.docx");
+    std::fs::write(&source_path, fixtures::synthetic_pdf(1, false)).unwrap();
+    let other = workspace.open_path(source_path.clone()).unwrap();
+    let saved_path = directory.path().join("Saved.docx");
+    workspace
+        .current_mut(other.id, other.revision)
+        .unwrap()
+        .save_as(&saved_path)
+        .unwrap();
+    std::fs::remove_file(&source_path).unwrap();
+    std::fs::remove_file(&saved_path).unwrap();
+    assert!(
+        workspace
+            .write_output_copy(plan.job_id, &source_path)
+            .is_err()
+    );
+    assert!(
+        workspace
+            .write_output_copy(plan.job_id, &saved_path)
+            .is_err()
+    );
+    assert!(!source_path.exists() && !saved_path.exists());
+    let output = directory.path().join("Separate.docx");
+    workspace.write_output_copy(plan.job_id, &output).unwrap();
+    assert!(std::fs::read(&output).unwrap().starts_with(b"PK"));
+    assert!(
+        workspace
+            .document(plan.document_id)
+            .unwrap()
+            .saved_path
+            .is_none()
+    );
+    assert_eq!(
+        workspace.document(plan.document_id).unwrap().revision(),
+        plan.revision
+    );
+}

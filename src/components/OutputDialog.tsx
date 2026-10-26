@@ -49,8 +49,22 @@ export default function OutputDialog(props: Props) {
   const job = useRef<OutputPlan | null>(null);
   const print = useRef<PreparedPrintSurface | null>(null);
   const controller = useRef<AbortController | null>(null);
+  const primaryAction = useRef<HTMLButtonElement>(null);
+  const cancelAction = useRef<HTMLButtonElement>(null);
+  const feedback = useRef<HTMLDivElement>(null);
   const latest = useRef(props);
   latest.current = props;
+
+  useEffect(() => {
+    if (props.mode !== "docx") return;
+    if (phase === "preparing") cancelAction.current?.focus();
+    else if (!props.busy && (phase === "settings" || phase === "docx-ready" || phase === "cleanup")) primaryAction.current?.focus();
+  }, [props.mode, phase, props.busy]);
+
+  useEffect(() => {
+    const body = feedback.current?.closest<HTMLElement>(".dialog-body");
+    if (props.mode === "docx" && body) body.scrollTop = 0;
+  }, [props.mode, phase, props.error]);
 
   useEffect(() => {
     if (!props.mode || job.current) return;
@@ -173,13 +187,14 @@ export default function OutputDialog(props: Props) {
           abort.signal.throwIfAborted();
           check(plan);
           if (snapshot.numPages !== info.pageCount) throw new Error("The renderer and output snapshot disagree on the page count. Reopen this PDF.");
+          const stage = (jobId: number, index: number, bytes: Uint8Array) => outputBridge.stage(jobId, index, bytes, abort.signal);
           if (kind === "docx") {
-            setDocxSummary(await extractDocxPages(snapshot, plan, outputBridge.stage, setProgress, abort.signal, () => check(plan)));
+            setDocxSummary(await extractDocxPages(snapshot, plan, stage, setProgress, abort.signal, () => check(plan)));
           } else if (kind === "text") {
-            await renderOutputText(snapshot, plan, outputBridge.stage, setProgress, abort.signal, () => check(plan));
+            await renderOutputText(snapshot, plan, stage, setProgress, abort.signal, () => check(plan));
           } else {
             if (kind === "print") print.current = new PreparedPrintSurface();
-            await renderOutputImages(snapshot, plan, outputBridge.stage, setProgress, abort.signal,
+            await renderOutputImages(snapshot, plan, stage, setProgress, abort.signal,
               () => check(plan), kind === "print" ? (image) => print.current!.append(image) : undefined);
           }
         } finally {
@@ -250,10 +265,17 @@ export default function OutputDialog(props: Props) {
     : mode === "docx" ? "Export Word document content" : "Export images or text";
   const locked = props.busy || prepared || phase === "cleanup";
   const selection = allPages ? `All ${info.pageCount} pages` : `Selected pages: ${range}`;
+  const progressIndicator = preparing && <div className="output-progress" role="status" aria-live="polite"><span><LoaderCircle className="spin" size={15} />
+    {canceling ? "Canceling without saving a copy..."
+      : mode === "optimize" ? "Measuring safe compression and unused-object cleanup..."
+        : progress?.page ? `${mode === "docx" || format === "text" && mode === "export" ? "Reading text from" : "Rendering"} selected page ${progress.page} of ${progress.count}...`
+          : "Loading an isolated document snapshot..."}</span>
+    {mode !== "optimize" && <progress value={progress?.page ?? 0} max={progress?.count || 1} aria-label="Output preparation progress" />}
+  </div>;
 
-  return <Dialog className="output-dialog" title={title} busy={locked} error={props.error} onClose={close}
+  return <Dialog className="output-dialog" title={title} busy={locked} error={mode === "docx" ? null : props.error} onClose={close}
     actions={preparing
-      ? <button className="button secondary" disabled={canceling} onClick={() => {
+      ? <button ref={cancelAction} className="button secondary" disabled={canceling} onClick={() => {
         controller.current?.abort(); setCanceling(true);
       }}>{canceling ? "Canceling..." : "Cancel preparation"}</button>
       : phase === "saving"
@@ -266,11 +288,11 @@ export default function OutputDialog(props: Props) {
               <button className="button primary" disabled={props.busy} onClick={savePreparedCopy}><FileDown size={15} />{report?.reduced ? "Save optimized copy" : "Save unchanged copy"}</button></>
             : phase === "docx-ready"
               ? <><button className="button secondary" disabled={props.busy} onClick={close}>Cancel</button>
-                <button className="button primary" disabled={props.busy} onClick={savePreparedCopy}><FileDown size={15} />Save DOCX copy</button></>
+                <button ref={primaryAction} className="button primary" disabled={props.busy} onClick={savePreparedCopy}><FileDown size={15} />Save DOCX copy</button></>
             : phase === "cleanup"
-              ? <button className="button secondary" disabled={props.busy} onClick={close}>Retry cleanup &amp; close</button>
+              ? <button ref={primaryAction} className="button secondary" disabled={props.busy} onClick={close}>Retry cleanup &amp; close</button>
               : <><button className="button secondary" disabled={props.busy} onClick={close}>Cancel</button>
-                <button className="button primary" disabled={props.busy || unencrypted && !acknowledged || !allPages && mode !== "optimize" && !range.trim()}
+                <button ref={primaryAction} className="button primary" disabled={props.busy || unencrypted && !acknowledged || !allPages && mode !== "optimize" && !range.trim()}
                   onClick={prepare}>{mode === "print" ? <Printer size={15} /> : <FileDown size={15} />}
                   {mode === "print" ? "Prepare print" : mode === "optimize" ? "Measure optimization" : mode === "docx" ? "Prepare DOCX" : "Export copy"}</button></>}>
     <div className="output-settings">
@@ -285,6 +307,15 @@ export default function OutputDialog(props: Props) {
           ? "Prepare every selected page, including pages not on screen, then open the platform print dialog. Only the page images are printed."
           : mode === "docx" ? "Convert actual extracted PDF text into an editable Word document (.docx), in your selected page order. The source PDF is never rewritten."
           : "Export actual PDF page pixels or selectable page text without changing the working document."}</p>
+        {mode === "docx" && <div ref={feedback}>
+          {props.error && <p className="inline-error" role="alert">{props.error}</p>}
+          {progressIndicator}
+          {phase === "docx-ready" && docxSummary && <div className="output-result" role="status">
+            <h3>Editable document text is ready</h3>
+            <p className="output-selection">{selection}. {docxSummary.pagesWithText} pages contain editable text; {formatBytes(docxSummary.byteLength)} of Unicode text.</p>
+            <p>Selected pages are separated by explicit page breaks. This is a separate, unencrypted DOCX, not a layout-preserving copy of the PDF.</p>
+          </div>}
+        </div>}
         {phase === "settings" && <>
           {mode === "export" && <label className="setting-field">Format<select data-autofocus value={format} disabled={props.busy} onChange={(event) => {
             const value = event.target.value;
@@ -327,7 +358,7 @@ export default function OutputDialog(props: Props) {
             256 KiB text per page and 8 MiB total text. Empty scans and unsupported XML characters are refused, not replaced or silently omitted.</p>
           {unencrypted && <div className="output-disclosure"><strong>The DOCX is unencrypted.</strong>
             <p>It retains no PDF passwords, permissions or cryptographic signatures.</p>
-            <label className="checkbox-setting"><input type="checkbox" disabled={props.busy} checked={acknowledged}
+            <label className="checkbox-setting"><input type="checkbox" disabled={props.busy || phase !== "settings"} checked={acknowledged}
               onChange={(event) => setAcknowledged(event.target.checked)} />I understand and want to export unencrypted document content.</label>
           </div>}
         </> : <>
@@ -342,18 +373,7 @@ export default function OutputDialog(props: Props) {
           </div>}
         </>}
       </>}
-      {preparing && <div className="output-progress" role="status" aria-live="polite"><span><LoaderCircle className="spin" size={15} />
-        {canceling ? "Canceling without saving a copy..."
-          : mode === "optimize" ? "Measuring safe compression and unused-object cleanup..."
-            : progress?.page ? `${mode === "docx" || format === "text" && mode === "export" ? "Reading text from" : "Rendering"} selected page ${progress.page} of ${progress.count}...`
-              : "Loading an isolated document snapshot..."}</span>
-        {mode !== "optimize" && <progress value={progress?.page ?? 0} max={progress?.count || 1} aria-label="Output preparation progress" />}
-      </div>}
-      {phase === "docx-ready" && docxSummary && <div className="output-result" role="status">
-        <h3>Editable document text is ready</h3>
-        <p className="output-selection">{selection}. {docxSummary.pagesWithText} pages contain editable text; {formatBytes(docxSummary.byteLength)} of Unicode text.</p>
-        <p>Selected pages are separated by explicit page breaks. This is a separate, unencrypted DOCX, not a layout-preserving copy of the PDF.</p>
-      </div>}
+      {mode !== "docx" && progressIndicator}
       {phase === "print-ready" && <div className="output-result" role="status">
         <h3>{printRequested ? "Print dialog requested" : "Print snapshot ready"}</h3>
         <p className="output-selection">{selection} at {dpi} DPI.</p>

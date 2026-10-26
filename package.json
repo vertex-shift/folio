@@ -20,7 +20,8 @@
     "desktop": "tauri dev",
     "bundle": "tauri build --bundles app",
     "preview:backend": "cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --features preview --bin folio-preview",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --no-default-features"
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --no-default-features",
+    "test:conversion": "node tests/conversion.e2e.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.2",

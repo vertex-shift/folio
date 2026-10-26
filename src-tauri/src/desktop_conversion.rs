@@ -53,6 +53,11 @@ pub(super) async fn choose_creation_files(
                     .ok_or_else(|| invalid("The selected file has no filename."))?
                     .to_string_lossy()
                     .into_owned();
+                if !std::fs::metadata(path)?.is_file() {
+                    return Err(invalid(
+                        "Choose a regular local file, not a folder or special file.",
+                    ));
+                }
                 let mut input = std::fs::File::open(path)?;
                 let metadata = input.metadata()?;
                 let limit = current.kind.file_limit();

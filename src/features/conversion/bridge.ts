@@ -19,12 +19,20 @@ export const conversionBridge = {
       body: file,
     });
   },
-  prepare(jobId: number, settings: CreationSettings, order: number[]): Promise<CreationStatus> {
+  async prepare(jobId: number, settings: CreationSettings, order: number[], signal: AbortSignal): Promise<CreationStatus> {
+    signal.throwIfAborted();
     const input = { jobId, settings, order };
-    return native ? invoke("prepare_creation", input) : previewJson("/creation/prepare", post(input));
+    const result = native ? await invoke<CreationStatus>("prepare_creation", input)
+      : await previewJson<CreationStatus>("/creation/prepare", { ...post(input), signal });
+    signal.throwIfAborted();
+    return result;
   },
-  status(jobId: number): Promise<CreationStatus> {
-    return native ? invoke("creation_status", { jobId }) : previewJson("/creation/status", post({ jobId }));
+  async status(jobId: number, signal: AbortSignal): Promise<CreationStatus> {
+    signal.throwIfAborted();
+    const result = native ? await invoke<CreationStatus>("creation_status", { jobId })
+      : await previewJson<CreationStatus>("/creation/status", { ...post({ jobId }), signal });
+    signal.throwIfAborted();
+    return result;
   },
   commit(jobId: number): Promise<DocumentInfo> {
     return native ? invoke("commit_creation", { jobId }) : previewJson("/creation/commit", post({ jobId }));

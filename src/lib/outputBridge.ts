@@ -19,10 +19,12 @@ export const outputBridge = {
     const response = await previewResponse("/output/render-bytes", { ...post({ jobId }), signal });
     return new Uint8Array(await response.arrayBuffer());
   },
-  async stage(jobId: number, index: number, bytes: Uint8Array): Promise<void> {
+  async stage(jobId: number, index: number, bytes: Uint8Array, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     const headers = { "X-Folio-Job-Id": String(jobId), "X-Folio-Output-Index": String(index) };
-    if (native) return invoke("stage_document_output", new Uint8Array(bytes), { headers });
-    await previewJson("/output/page", { method: "POST", headers, body: new Uint8Array(bytes) });
+    if (native) await invoke("stage_document_output", new Uint8Array(bytes), { headers });
+    else await previewJson("/output/page", { method: "POST", headers, body: new Uint8Array(bytes), signal });
+    signal?.throwIfAborted();
   },
   optimize(jobId: number): Promise<OptimizationReport> {
     return native ? invoke("prepare_optimized_output", { jobId })

@@ -66,7 +66,8 @@ test("creation waits for the complete result, and abort releases polling without
   let calls = 0;
   const ready = await waitForCreation(7, async (jobId) => {
     calls++;
-    return { jobId, phase: calls === 2 ? "ready" : "preparing", pageCount: calls === 2 ? 3 : null, byteLength: calls === 2 ? 1024 : null };
+    if (calls === 2) return { jobId, phase: "ready", pageCount: 3, byteLength: 1024 };
+    return { jobId, phase: "preparing", pageCount: null, byteLength: null };
   }, new AbortController().signal);
   assert.equal(calls, 2);
   assert.equal(ready.pageCount, 3);
@@ -79,4 +80,11 @@ test("creation waits for the complete result, and abort releases polling without
   }, abort.signal);
   await assert.rejects(waiting, (error: unknown) => error instanceof DOMException && error.name === "AbortError");
   assert.equal(canceledCalls, 1);
+});
+
+test("creation never treats invalid ready sizes or page counts as a usable PDF", async () => {
+  for (const [pageCount, byteLength] of [[0, 100], [501, 100], [NaN, 100], [1, 0], [1, 128 * 1024 * 1024 + 1]]) {
+    await assert.rejects(waitForCreation(9, async (jobId) => ({ jobId, phase: "ready", pageCount, byteLength }),
+      new AbortController().signal), /invalid ready PDF/);
+  }
 });

@@ -263,6 +263,10 @@ canceled feedback in one scrollable body. Header/footer actions stay visible
 at desktop and compact sizes. Reuse semantic theme/focus/status tokens and
 the existing reduced-motion dialog behavior. Preparation and opening are
 distinct: Open new PDF creates a new tab, not a source mutation.
+Place loading/errors and the completed PDF's page/size/layout summary at the
+top of the body; do not hide readiness below the file/layout controls.
+Keyboard-scrollable dialog bodies use the semantic focus color, including
+High Contrast's amber outline, rather than the browser's default blue.
 
 Export Word text uses the existing separate-output dialog and All tools/
 native File menu. Name it Word document content, with a prominent
@@ -271,6 +275,10 @@ source acknowledgment, cancelable progress, ready text summary and Save DOCX
 copy footer. Empty scans and unsupported text are actionable errors, never
 success-shaped empty exports. Conversion settings must not become document
 drafts or silently clear any existing draft.
+Keep DOCX progress, errors and ready text summaries near the beginning of the
+dialog, while the limitations and protection boundary remain visible and
+readable. Move focus to the current primary/cancel action as preparation
+changes state, without moving the source document.
 
 ## PDF digital signatures
 

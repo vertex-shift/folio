@@ -1,6 +1,8 @@
-.conversion-dialog { display: flex; flex-direction: column; width: 540px; overflow: hidden; }
+.conversion-dialog { display: flex; flex-direction: column; overflow: hidden; }
 .conversion-dialog .dialog-header, .conversion-dialog .dialog-actions { flex-shrink: 0; }
 .conversion-dialog .dialog-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.conversion-dialog .dialog-body:focus-visible, .output-dialog .dialog-body:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.creation-feedback > p { margin-top: 14px; }
 .conversion-dialog .dialog-actions .button { font-size: 12px; }
 .creation-empty { margin: 18px 0; padding: 20px 16px; border: 1px dashed var(--control-border); border-radius: var(--radius-control); text-align: center; background: var(--panel); }
 .creation-empty > svg { color: var(--muted); }
