@@ -1052,7 +1052,11 @@ fn leaf_current_validity_and_document_purpose_never_become_historical_or_timesta
         assert!(
             blank
                 .signed_copy(
-                    &pfx(&chain.key, &chain.leaf, &[chain.intermediate.clone()]),
+                    &pfx(
+                        &chain.key,
+                        &chain.leaf,
+                        std::slice::from_ref(&chain.intermediate),
+                    ),
                     PASSWORD
                 )
                 .is_err()
