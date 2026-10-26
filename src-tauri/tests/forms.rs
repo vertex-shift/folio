@@ -9,7 +9,9 @@ use folio_core::{
     workspace::Workspace,
 };
 use lopdf::{
-    Document, LoadOptions, Object, ObjectId, Stream, decode_text_string, dictionary,
+    Document, LoadOptions, Object, ObjectId, Stream,
+    content::Content,
+    decode_text_string, dictionary,
     encryption::{
         EncryptionState, EncryptionVersion, Permissions,
         crypt_filters::{Aes128CryptFilter, Aes256CryptFilter, CryptFilter},
@@ -300,6 +302,166 @@ fn normal_stream(document: &Document, widget: ObjectId) -> &Stream {
         .1
         .as_stream()
         .unwrap()
+}
+
+fn assert_single_line_ink_fits(document: &Document, widget: ObjectId, text: &str, size: f32) {
+    let stream = normal_stream(document, widget);
+    let content = Content::decode(&stream.get_plain_content().unwrap()).unwrap();
+    let font = content
+        .operations
+        .iter()
+        .find(|operation| operation.operator == "Tf")
+        .unwrap();
+    assert_eq!(font.operands[1].as_float().unwrap(), size);
+    let matrix = content
+        .operations
+        .iter()
+        .find(|operation| operation.operator == "Tm")
+        .unwrap();
+    let x = matrix.operands[4].as_float().unwrap();
+    let y = matrix.operands[5].as_float().unwrap();
+    let clip_at = content
+        .operations
+        .iter()
+        .position(|operation| operation.operator == "W")
+        .unwrap();
+    let clip = &content.operations[clip_at - 1].operands;
+    let left = clip[0].as_float().unwrap();
+    let bottom = clip[1].as_float().unwrap();
+    let right = left + clip[2].as_float().unwrap();
+    let top = bottom + clip[3].as_float().unwrap();
+    let face =
+        ttf_parser::Face::parse(include_bytes!("../resources/fonts/NotoSans-Regular.ttf"), 0)
+            .unwrap();
+    let scale = size / f32::from(face.units_per_em());
+    let mut pen = x;
+    for character in text.chars() {
+        let glyph = face.glyph_index(character).unwrap();
+        if let Some(bounds) = face.glyph_bounding_box(glyph) {
+            assert!(pen + f32::from(bounds.x_min) * scale >= left - 0.0001);
+            assert!(pen + f32::from(bounds.x_max) * scale <= right + 0.0001);
+            assert!(y + f32::from(bounds.y_min) * scale >= bottom - 0.0001);
+            assert!(y + f32::from(bounds.y_max) * scale <= top + 0.0001);
+        }
+        pen += f32::from(face.glyph_hor_advance(glyph).unwrap()) * scale;
+    }
+}
+
+#[test]
+fn fixed_da_combo_and_comb_appearances_keep_their_size_and_every_glyph_inside_the_clip() {
+    let mut source = fixture();
+    let combo = source.fields["country"];
+    let comb = source.fields["comb"];
+    let combo_dictionary = source.document.get_dictionary_mut(combo).unwrap();
+    combo_dictionary.set("DA", Object::string_literal("/Helv 26 Tf 0 g"));
+    combo_dictionary.set("Rect", numbers(&[45.0, 305.0, 286.0, 338.0]));
+    let comb_dictionary = source.document.get_dictionary_mut(comb).unwrap();
+    comb_dictionary.set("DA", Object::string_literal("/Helv 27 Tf 0 g"));
+    comb_dictionary.set("Rect", numbers(&[45.0, 160.0, 326.0, 195.0]));
+    let mut session = session(source);
+    let changes = vec![
+        change(
+            &session,
+            "country",
+            FieldValue::Choice {
+                indices: vec![0],
+                custom: None,
+            },
+        ),
+        text_change(&session, "comb", "gj12"),
+    ];
+    session.fill_form_fields(changes).unwrap();
+    let output = Document::load_mem(session.bytes()).unwrap();
+    assert_single_line_ink_fits(&output, combo, "United States", 26.0);
+    let content =
+        Content::decode(&normal_stream(&output, comb).get_plain_content().unwrap()).unwrap();
+    let font = content
+        .operations
+        .iter()
+        .find(|operation| operation.operator == "Tf")
+        .unwrap();
+    assert_eq!(font.operands[1].as_float().unwrap(), 27.0);
+    let matrices = content
+        .operations
+        .iter()
+        .filter(|operation| operation.operator == "Tm")
+        .collect::<Vec<_>>();
+    assert_eq!(matrices.len(), 4);
+    let face =
+        ttf_parser::Face::parse(include_bytes!("../resources/fonts/NotoSans-Regular.ttf"), 0)
+            .unwrap();
+    let unit = 27.0 / f32::from(face.units_per_em());
+    for (index, (character, matrix)) in "gj12".chars().zip(matrices).enumerate() {
+        let x = matrix.operands[4].as_float().unwrap();
+        let y = matrix.operands[5].as_float().unwrap();
+        let bounds = face
+            .glyph_bounding_box(face.glyph_index(character).unwrap())
+            .unwrap();
+        assert!(x + f32::from(bounds.x_min) * unit >= 3.0 + index as f32 * 68.75 - 0.0001);
+        assert!(x + f32::from(bounds.x_max) * unit <= 3.0 + (index + 1) as f32 * 68.75 + 0.0001);
+        assert!(y + f32::from(bounds.y_min) * unit >= 3.0 - 0.0001);
+        assert!(y + f32::from(bounds.y_max) * unit <= 32.0 + 0.0001);
+    }
+}
+
+#[test]
+fn fixed_da_single_line_fields_fit_actual_glyph_ink_without_resizing_or_clipping() {
+    for (size, width, height) in [(27.0, 281.0, 35.0), (28.0, 251.0, 36.0)] {
+        for alignment in [0, 1, 2] {
+            let mut source = fixture();
+            let id = source.fields["person.name"];
+            let widgets = source.widgets["person.name"].clone();
+            source
+                .document
+                .get_dictionary_mut(id)
+                .unwrap()
+                .extend(&dictionary! {
+                    "DA" => Object::string_literal(format!("/Helv {size} Tf 0 g")),
+                    "Q" => alignment, "Ff" => 0,
+                });
+            for widget in &widgets {
+                source.document.get_dictionary_mut(*widget).unwrap().set(
+                    "Rect",
+                    numbers(&[45.0, 700.0, 45.0 + width, 700.0 + height]),
+                );
+            }
+            let mut session = session(source);
+            for text in ["A", "gj", "jA", "Å", "Ωж", ""] {
+                let change = text_change(&session, "person.name", text);
+                session.fill_form_fields(vec![change]).unwrap();
+                let output = Document::load_mem(session.bytes()).unwrap();
+                for widget in &widgets {
+                    assert_single_line_ink_fits(&output, *widget, text, size);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn batch_appearance_errors_identify_the_field_without_its_value_and_remain_atomic() {
+    let mut source = fixture();
+    source
+        .document
+        .get_dictionary_mut(source.fields["person.name"])
+        .unwrap()
+        .set("DA", Object::string_literal("/Helv 72 Tf 0 g"));
+    let mut session = session(source);
+    let original = session.bytes().to_vec();
+    for value in [
+        "private-value-must-not-appear",
+        "private-漢-value-must-not-appear",
+    ] {
+        let changes = vec![
+            text_change(&session, "person.notes", "A valid earlier change"),
+            text_change(&session, "person.name", value),
+        ];
+        let error = session.fill_form_fields(changes).unwrap_err().to_string();
+        assert!(error.contains("Full name") && error.contains("person.name"));
+        assert!(!error.contains(value) && !error.contains('漢') && !error.contains("U+"));
+        assert_eq!(session.bytes(), original);
+        assert_eq!(session.info().unwrap().revision, 0);
+    }
 }
 
 #[test]

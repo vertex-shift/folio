@@ -17,17 +17,7 @@ fn font_glyphs(face: &ttf_parser::Face<'_>, text: &str) -> Result<BTreeMap<char,
     let unit = 1000.0 / f32::from(face.units_per_em());
     let mut glyphs = BTreeMap::new();
     for character in text.chars().filter(|character| *character != '\n') {
-        let code = character as u32;
-        if character.is_control()
-            || !matches!(code, 0x20..=0x24f | 0x370..=0x52f | 0x2000..=0x206f | 0x20a0..=0x20cf)
-        {
-            return Err(invalid(format!(
-                "The embedded Noto Sans font supports Latin, Greek, and Cyrillic text (unsupported U+{code:04X})."
-            )));
-        }
-        let glyph = face
-            .glyph_index(character)
-            .ok_or_else(|| invalid(format!("The bundled font does not contain U+{code:04X}.")))?;
+        let glyph = embedded_text_glyph(face, character)?;
         glyphs.entry(character).or_insert((
             glyph.0,
             f32::from(face.glyph_hor_advance(glyph).unwrap_or(face.units_per_em())) * unit,
@@ -216,6 +206,22 @@ fn text_appearance(
         },
         Content { operations }.encode()?,
     )))
+}
+
+pub(crate) fn embedded_text_glyph(
+    face: &ttf_parser::Face<'_>,
+    character: char,
+) -> Result<ttf_parser::GlyphId> {
+    let code = character as u32;
+    if character.is_control()
+        || !matches!(code, 0x20..=0x24f | 0x370..=0x52f | 0x2000..=0x206f | 0x20a0..=0x20cf)
+    {
+        return Err(invalid(format!(
+            "The embedded Noto Sans font supports Latin, Greek, and Cyrillic text (unsupported U+{code:04X})."
+        )));
+    }
+    face.glyph_index(character)
+        .ok_or_else(|| invalid(format!("The bundled font does not contain U+{code:04X}.")))
 }
 
 pub(crate) fn embed_text_font(

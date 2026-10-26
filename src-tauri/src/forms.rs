@@ -7,7 +7,7 @@ use lopdf::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::document::{Result, invalid, numbers, page_bounds};
+use crate::document::{Error, Result, invalid, numbers, page_bounds};
 
 const MAX_NODES: usize = 4096;
 const MAX_FIELDS: usize = 1024;
@@ -1267,6 +1267,28 @@ fn font_resource_name(document: &Document, font: ObjectId) -> Result<String> {
     ))
 }
 
+fn field_error(field: &Field, error: impl std::fmt::Display) -> Error {
+    let metadata = |value: &str| {
+        let mut value = value.chars().filter(|character| !character.is_control());
+        let mut label = value.by_ref().take(200).collect::<String>();
+        if value.next().is_some() {
+            label.push_str("...");
+        }
+        label
+    };
+    let label = metadata(&field.info.label);
+    let name = if field.info.name.is_empty() {
+        field.info.id.clone()
+    } else {
+        metadata(&field.info.name)
+    };
+    invalid(if label == name {
+        format!("Field \"{name}\": {error}")
+    } else {
+        format!("Field \"{label}\" ({name}): {error}")
+    })
+}
+
 pub(crate) fn fill(document: &mut Document, changes: Vec<FieldChange>) -> Result<()> {
     if changes.is_empty() || changes.len() > MAX_FIELDS {
         return Err(invalid(
@@ -1287,29 +1309,35 @@ pub(crate) fn fill(document: &mut Document, changes: Vec<FieldChange>) -> Result
         }
         let field = form.fields.iter().find(|field| field.info.id == change.id)
             .ok_or_else(|| invalid("This form field is no longer in the document. Reload the form before applying."))?;
-        let value = validate_value(field, &change.value)?;
+        let value =
+            validate_value(field, &change.value).map_err(|error| field_error(field, error))?;
         widget_count += field.widgets.len();
         if widget_count > 1024 {
             return Err(invalid("Apply at most 1,024 widget appearances at a time."));
         }
+        let mut field_text = String::new();
         match &value {
             FieldValue::Text { text } => {
                 if field.info.password {
-                    font_text.push_str(&"*".repeat(text.chars().count()));
+                    field_text.push_str(&"*".repeat(text.chars().count()));
                 } else {
-                    font_text.push_str(text);
+                    field_text.push_str(text);
                 }
             }
             FieldValue::Choice { custom, .. } => {
                 for option in &field.info.options {
-                    font_text.push_str(&option.label);
+                    field_text.push_str(&option.label);
                 }
                 if let Some(custom) = custom {
-                    font_text.push_str(custom);
+                    field_text.push_str(custom);
                 }
             }
             _ => {}
         }
+        if matches!(field.info.kind, FieldKind::Text | FieldKind::Choice) {
+            font_metrics(&field_text).map_err(|error| field_error(field, error))?;
+        }
+        font_text.push_str(&field_text);
         if font_text.len() > MAX_TEXT_BYTES {
             return Err(invalid(
                 "The changed fields exceed the 1 MiB appearance text limit.",
@@ -1332,6 +1360,18 @@ pub(crate) fn fill(document: &mut Document, changes: Vec<FieldChange>) -> Result
         .as_ref()
         .map(|(id, _)| font_resource_name(document, *id))
         .transpose()?;
+    let appearance_font = if let (Some((id, encoded)), Some(name)) = (&font, &resource_name) {
+        let (face, glyphs) = font_metrics(&font_text)?;
+        Some(AppearanceFont {
+            id: *id,
+            name,
+            encoded,
+            face,
+            glyphs,
+        })
+    } else {
+        None
+    };
     let mut appearance_bytes = 0;
     for (field, value) in selected {
         match &value {
@@ -1406,21 +1446,15 @@ pub(crate) fn fill(document: &mut Document, changes: Vec<FieldChange>) -> Result
                 }
             }
         }
-        if let (Some((font, encoded)), Some(resource_name)) = (&font, &resource_name)
+        if let Some(font) = &appearance_font
             && matches!(field.info.kind, FieldKind::Text | FieldKind::Choice)
         {
             for widget in &field.widgets {
-                let style = style(document, *widget, &field.attributes)?;
-                let appearance = appearance(
-                    document,
-                    field,
-                    &value,
-                    &style,
-                    *font,
-                    resource_name,
-                    encoded,
-                    &mut appearance_bytes,
-                )?;
+                let style = style(document, *widget, &field.attributes)
+                    .map_err(|error| field_error(field, error))?;
+                let appearance =
+                    appearance(document, field, &value, &style, font, &mut appearance_bytes)
+                        .map_err(|error| field_error(field, error))?;
                 document
                     .get_dictionary_mut(*widget)?
                     .set("AP", dictionary! { "N" => appearance });
@@ -1429,8 +1463,8 @@ pub(crate) fn fill(document: &mut Document, changes: Vec<FieldChange>) -> Result
             document.get_dictionary_mut(field.id)?.set(
                 "DA",
                 Object::string_literal(format!(
-                    "/{resource_name} {} Tf {} {} {} rg",
-                    style.size, style.color[0], style.color[1], style.color[2],
+                    "/{} {} Tf {} {} {} rg",
+                    font.name, style.size, style.color[0], style.color[1], style.color[2],
                 )),
             );
         }
@@ -1438,7 +1472,7 @@ pub(crate) fn fill(document: &mut Document, changes: Vec<FieldChange>) -> Result
     let mut acroform = resolve(document, document.catalog()?.get(b"AcroForm")?)?
         .as_dict()?
         .clone();
-    if let (Some((font, _)), Some(name)) = (font, resource_name) {
+    if let (Some((font, _)), Some(name)) = (&font, &resource_name) {
         let mut resources = optional(document, &acroform, b"DR")?
             .map(Object::as_dict)
             .transpose()?
@@ -1449,7 +1483,7 @@ pub(crate) fn fill(document: &mut Document, changes: Vec<FieldChange>) -> Result
             .transpose()?
             .cloned()
             .unwrap_or_default();
-        fonts.set(name.as_bytes(), font);
+        fonts.set(name.as_bytes(), *font);
         resources.set("Font", fonts);
         acroform.set("DR", resources);
     }
@@ -1478,21 +1512,90 @@ pub(crate) fn fill(document: &mut Document, changes: Vec<FieldChange>) -> Result
     Err(invalid("The AcroForm reference is cyclic."))
 }
 
-fn font_metrics(text: &str) -> Result<(ttf_parser::Face<'static>, BTreeMap<char, f32>)> {
+#[derive(Clone, Copy)]
+struct GlyphMetrics {
+    advance: f32,
+    bounds: Option<[f32; 4]>,
+}
+
+struct AppearanceFont<'a> {
+    id: ObjectId,
+    name: &'a str,
+    encoded: &'a BTreeMap<char, u16>,
+    face: ttf_parser::Face<'static>,
+    glyphs: BTreeMap<char, GlyphMetrics>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct LineMetrics {
+    advance: f32,
+    left: f32,
+    right: f32,
+    bottom: f32,
+    top: f32,
+    has_ink: bool,
+}
+
+impl LineMetrics {
+    fn push(&mut self, glyph: GlyphMetrics, size: f32) {
+        if let Some(bounds) = glyph.bounds {
+            self.left = self.left.min(self.advance + bounds[0] * size);
+            self.right = self.right.max(self.advance + bounds[2] * size);
+            if self.has_ink {
+                self.bottom = self.bottom.min(bounds[1] * size);
+                self.top = self.top.max(bounds[3] * size);
+            } else {
+                self.bottom = bounds[1] * size;
+                self.top = bounds[3] * size;
+                self.has_ink = true;
+            }
+        }
+        self.advance += glyph.advance * size;
+        self.right = self.right.max(self.advance);
+    }
+
+    fn width(&self) -> f32 {
+        self.right - self.left
+    }
+    fn height(&self) -> f32 {
+        self.top - self.bottom
+    }
+}
+
+fn line_metrics(text: &str, glyphs: &BTreeMap<char, GlyphMetrics>, size: f32) -> LineMetrics {
+    let mut metrics = LineMetrics::default();
+    for character in text.chars() {
+        metrics.push(glyphs[&character], size);
+    }
+    metrics
+}
+
+fn font_metrics(text: &str) -> Result<(ttf_parser::Face<'static>, BTreeMap<char, GlyphMetrics>)> {
     let face = ttf_parser::Face::parse(FONT, 0)
         .map_err(|_| invalid("The bundled form font is unavailable."))?;
-    let mut advances = BTreeMap::new();
+    let mut glyphs = BTreeMap::new();
+    let unit = 1.0 / f32::from(face.units_per_em());
     for character in text.chars().filter(|character| *character != '\n') {
-        let glyph = face.glyph_index(character).ok_or_else(|| {
-            invalid("A form display value needs a glyph unavailable in the embedded font.")
-        })?;
-        advances.insert(
+        let glyph = crate::writing::embedded_text_glyph(&face, character).map_err(|_| invalid(
+            "The form display text cannot be embedded. Use precomposed Latin, Greek, or Cyrillic characters supported by Noto Sans.",
+        ))?;
+        glyphs.insert(
             character,
-            f32::from(face.glyph_hor_advance(glyph).unwrap_or(face.units_per_em()))
-                / f32::from(face.units_per_em()),
+            GlyphMetrics {
+                advance: f32::from(face.glyph_hor_advance(glyph).unwrap_or(face.units_per_em()))
+                    * unit,
+                bounds: face.glyph_bounding_box(glyph).map(|bounds| {
+                    [
+                        f32::from(bounds.x_min) * unit,
+                        f32::from(bounds.y_min) * unit,
+                        f32::from(bounds.x_max) * unit,
+                        f32::from(bounds.y_max) * unit,
+                    ]
+                }),
+            },
         );
     }
-    Ok((face, advances))
+    Ok((face, glyphs))
 }
 
 fn appearance(
@@ -1500,9 +1603,7 @@ fn appearance(
     field: &Field,
     value: &FieldValue,
     style: &Style,
-    font: ObjectId,
-    font_name: &str,
-    encoded: &BTreeMap<char, u16>,
+    font: &AppearanceFont<'_>,
     appearance_bytes: &mut usize,
 ) -> Result<ObjectId> {
     let display = match value {
@@ -1528,12 +1629,7 @@ fn appearance(
             ));
         }
     };
-    let (face, advances) = font_metrics(&display)?;
-    let measure = |line: &str, size: f32| {
-        line.chars()
-            .map(|character| advances[&character] * size)
-            .sum::<f32>()
-    };
+    let glyphs = &font.glyphs;
     let padding = (style.border_width + 2.0).max(2.0);
     let available_width = style.width - padding * 2.0 - if field.info.combo { 12.0 } else { 0.0 };
     let available_height = style.height - padding * 2.0;
@@ -1542,22 +1638,27 @@ fn appearance(
             "This form widget has no usable area inside its border.",
         ));
     }
-    let ascent = f32::from(face.ascender()) / f32::from(face.units_per_em());
-    let descent = -f32::from(face.descender()) / f32::from(face.units_per_em());
+    let ascent = f32::from(font.face.ascender()) / f32::from(font.face.units_per_em());
+    let descent = -f32::from(font.face.descender()) / f32::from(font.face.units_per_em());
     let list = field.info.kind == FieldKind::Choice && !field.info.combo;
+    // Global font metrics include scripts absent from this field. Fit a single
+    // line's painted glyph bounds without shrinking its fixed DA font size.
+    let single_line = !field.info.multiline && !list;
     let wrap = |size: f32| {
         let mut lines = vec![];
         for paragraph in display.split('\n') {
             let mut line = String::new();
-            let mut used = 0.0;
+            let mut metrics = LineMetrics::default();
             for character in paragraph.chars() {
-                let width = advances[&character] * size;
-                if field.info.multiline && !line.is_empty() && used + width > available_width {
+                let glyph = glyphs[&character];
+                let mut candidate = metrics;
+                candidate.push(glyph, size);
+                if field.info.multiline && !line.is_empty() && candidate.width() > available_width {
                     lines.push(std::mem::take(&mut line));
-                    used = 0.0;
+                    metrics = LineMetrics::default();
                 }
                 line.push(character);
-                used += width;
+                metrics.push(glyph, size);
             }
             lines.push(line);
         }
@@ -1573,16 +1674,21 @@ fn appearance(
         let line_height = size * (ascent + descent).max(1.2);
         let fits = if field.info.comb {
             let cell = available_width / field.info.max_length as f32;
-            display
-                .chars()
-                .all(|character| advances[&character] * size <= cell)
-                && line_height <= available_height
+            display.chars().all(|character| {
+                let mut metrics = LineMetrics::default();
+                metrics.push(glyphs[&character], size);
+                metrics.width() <= cell + 0.01
+            }) && line_metrics(&display, glyphs, size).height() <= available_height + 0.01
         } else {
             lines
                 .iter()
-                .all(|line| measure(line, size) <= available_width + 0.01)
-                && (list && line_height <= available_height
-                    || !list && lines.len() as f32 * line_height <= available_height + 0.01)
+                .all(|line| line_metrics(line, glyphs, size).width() <= available_width + 0.01)
+                && if single_line {
+                    line_metrics(&display, glyphs, size).height() <= available_height + 0.01
+                } else {
+                    list && line_height <= available_height
+                        || !list && lines.len() as f32 * line_height <= available_height + 0.01
+                }
         };
         if fits {
             break;
@@ -1666,8 +1772,9 @@ fn appearance(
         lines.len()
     };
     for (row, line) in lines.iter().enumerate().skip(top).take(visible) {
-        let y = if !field.info.multiline && !list {
-            padding + (available_height - (ascent + descent) * size) / 2.0 + descent * size
+        let metrics = line_metrics(line, glyphs, size);
+        let y = if single_line {
+            padding + (available_height - metrics.height()) / 2.0 - metrics.bottom
         } else {
             style.height - padding - ascent * size - (row - top) as f32 * line_height
         };
@@ -1690,7 +1797,7 @@ fn appearance(
         operations.push(Operation::new("BT", vec![]));
         operations.push(Operation::new(
             "Tf",
-            vec![Object::Name(font_name.as_bytes().to_vec()), size.into()],
+            vec![Object::Name(font.name.as_bytes().to_vec()), size.into()],
         ));
         operations.push(Operation::new(
             "rg",
@@ -1699,7 +1806,9 @@ fn appearance(
         if field.info.comb {
             let cell = available_width / field.info.max_length as f32;
             for (index, character) in line.chars().enumerate() {
-                let x = padding + index as f32 * cell + (cell - advances[&character] * size) / 2.0;
+                let mut glyph = LineMetrics::default();
+                glyph.push(glyphs[&character], size);
+                let x = padding + index as f32 * cell + (cell - glyph.width()) / 2.0 - glyph.left;
                 operations.push(Operation::new(
                     "Tm",
                     vec![1.into(), 0.into(), 0.into(), 1.into(), x.into(), y.into()],
@@ -1707,14 +1816,14 @@ fn appearance(
                 operations.push(Operation::new(
                     "Tj",
                     vec![Object::String(
-                        encoded[&character].to_be_bytes().to_vec(),
+                        font.encoded[&character].to_be_bytes().to_vec(),
                         StringFormat::Hexadecimal,
                     )],
                 ));
             }
         } else {
-            let remaining = available_width - measure(line, size);
-            let x = padding
+            let remaining = available_width - metrics.width();
+            let x = padding - metrics.left
                 + match style.align {
                     1 => remaining / 2.0,
                     2 => remaining,
@@ -1728,7 +1837,7 @@ fn appearance(
                 "Tj",
                 vec![Object::String(
                     line.chars()
-                        .flat_map(|character| encoded[&character].to_be_bytes())
+                        .flat_map(|character| font.encoded[&character].to_be_bytes())
                         .collect(),
                     StringFormat::Hexadecimal,
                 )],
@@ -1753,7 +1862,7 @@ fn appearance(
         dictionary! {
             "Type" => "XObject", "Subtype" => "Form",
             "BBox" => numbers(&[0.0, 0.0, style.width, style.height]), "Matrix" => numbers(&style.matrix),
-            "Resources" => dictionary! { "Font" => dictionary! { font_name.as_bytes() => font } },
+            "Resources" => dictionary! { "Font" => dictionary! { font.name.as_bytes() => font.id } },
         },
         content,
     )))
