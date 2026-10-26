@@ -502,7 +502,7 @@ pub fn output_path(mut path: PathBuf, plan: &OutputPlan) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn write_new_copy(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_new_copy(path: &Path, bytes: &[u8]) -> Result<()> {
     if std::fs::symlink_metadata(path).is_ok() {
         return Err(invalid(
             "This output never replaces existing files or folders. Choose a new filename.",

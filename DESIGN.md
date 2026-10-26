@@ -435,6 +435,32 @@ with amber in High Contrast; controls on a PDF retain a blue focus indicator
 that is visible against white paper. Palette changes switch text and surfaces
 atomically, without interpolating through low-contrast intermediate colors.
 
+## Document comparison
+
+Extend the existing document-first workspace with a persistent comparison
+surface below the unchanged tab bar, not a modal or a new shell. A compact
+settings/indexed-page sidebar sits beside the document well; Return to PDFs and
+the tab strip preserve access to normal document work. Inherit system type,
+semantic theme tokens, outlined controls, keyboard focus and all five themes.
+Use the existing 20px dialog heading step for the comparison title and summary.
+
+Before/After selectors name open tabs and unsaved state. Explicit page-index
+matching, DPI/tolerance, pending-input errors, cancellation and stale results
+must remain readable. Never say identical: no observed differences is limited
+to compared page text, pixels and geometry. Added/removed labels describe
+unmatched indexes, not inferred middle insertions or moved pages.
+
+Show real white-paper previews side by side or as a top-left-aligned opacity
+overlay. The fixed magenta changed-pixel mask (`#be1464`, RGB 190/20/100) is
+comparison markup on white paper, not a theme accent or a PDF mutation; label
+it explicitly and allow it to be hidden. The missing-page placeholder likewise
+uses fixed slate `#4a5c77` on white paper, not a theme-dependent light foreground.
+Text insertion/deletion uses themed success/danger foreground/background pairs
+plus underline/strike so color is not the only signal. Never animate PDF pixels,
+mask geometry, paper size or opacity changes. Protected-source report export
+uses an explicit unencrypted-content acknowledgment; no implied document trust
+or whole-file verification.
+
 ## Motion
 
 **Thesis:** the selected work surface travels; the document remains still.

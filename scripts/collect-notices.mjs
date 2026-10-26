@@ -17,6 +17,7 @@ export function collectNotices(root) {
     ["lucide-react", "LICENSE"], ["@tauri-apps/api", "LICENSE-MIT"],
     ["@tauri-apps/plugin-opener", "LICENSE.spdx"],
     ["pdfjs-dist", "LICENSE"],
+    ["diff", "LICENSE"],
     ["tesseract.js", "LICENSE.md"], ["tesseract.js-core", "LICENSE"],
     ["bmp-js", "LICENSE"], ["idb-keyval", "LICENCE"], ["is-url", "LICENSE-MIT"],
     ["regenerator-runtime", "LICENSE"], ["wasm-feature-detect", "LICENSE"], ["zlibjs", "LICENSE"],

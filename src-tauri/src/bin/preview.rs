@@ -173,6 +173,26 @@ struct ProtectionRequest {
     protection: folio_core::protection::CopyProtection,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ComparisonId {
+    comparison_id: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ComparisonSnapshot {
+    comparison_id: u64,
+    side: folio_core::comparison::Side,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ComparisonExport {
+    comparison_id: u64,
+    allow_unencrypted: bool,
+}
+
 enum Payload {
     Json(serde_json::Value),
     Pdf(Vec<u8>),
@@ -285,6 +305,40 @@ fn handle(
         (&Method::Post, "/output/begin") => {
             let input: folio_core::output::OutputRequest = json_body(request)?;
             return json(workspace.begin_output(input)?);
+        }
+        (&Method::Post, "/comparison/begin") => {
+            let input: folio_core::comparison::Request = json_body(request)?;
+            return json(workspace.begin_comparison(input)?);
+        }
+        (&Method::Post, "/comparison/check") => {
+            let input: ComparisonId = json_body(request)?;
+            return json(workspace.check_comparison(input.comparison_id)?);
+        }
+        (&Method::Post, "/comparison/render-bytes") => {
+            let input: ComparisonSnapshot = json_body(request)?;
+            return Ok(Payload::Pdf(workspace.comparison_render_bytes(input.comparison_id, input.side)?));
+        }
+        (&Method::Post, "/comparison/finish") => {
+            let id = numeric_header(request, "X-Folio-Comparison-Id")?;
+            let limit = folio_core::comparison::MAX_REPORT_BYTES;
+            if request.body_length().is_some_and(|length| length > limit) {
+                return Err(Error::Invalid("Comparison results exceed 4 MiB.".into()));
+            }
+            let mut bytes = Vec::new();
+            request.as_reader().take(limit as u64 + 1).read_to_end(&mut bytes)?;
+            if bytes.len() > limit { return Err(Error::Invalid("Comparison results exceed 4 MiB.".into())); }
+            let pages = serde_json::from_slice(&bytes)
+                .map_err(|error| Error::Invalid(format!("The comparison result is invalid: {error}")))?;
+            workspace.finish_comparison(id, pages)?;
+            return json(());
+        }
+        (&Method::Post, "/comparison/report") => {
+            let input: ComparisonExport = json_body(request)?;
+            return Ok(Payload::Output(workspace.comparison_report(input.comparison_id, input.allow_unencrypted)?, "application/json"));
+        }
+        (&Method::Post, "/comparison/cancel") => {
+            let input: ComparisonId = json_body(request)?;
+            return json(workspace.cancel_comparison(input.comparison_id));
         }
         (&Method::Post, "/output/render-bytes") => {
             let input: RedactionJob = json_body(request)?;

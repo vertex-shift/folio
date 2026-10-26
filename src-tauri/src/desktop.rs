@@ -29,6 +29,9 @@ mod output_commands;
 #[path = "forms/desktop.rs"]
 mod form_commands;
 
+#[path = "desktop_comparison.rs"]
+mod comparison_commands;
+
 async fn with_state<T: Send + 'static>(
     app: AppHandle,
     action: impl FnOnce(&mut DesktopState) -> Result<T> + Send + 'static,
@@ -884,6 +887,12 @@ pub fn run() {
             output_commands::save_document_output,
             output_commands::print_document_output,
             output_commands::cancel_document_output,
+            comparison_commands::begin_comparison,
+            comparison_commands::check_comparison,
+            comparison_commands::comparison_render_bytes,
+            comparison_commands::finish_comparison,
+            comparison_commands::save_comparison_report,
+            comparison_commands::cancel_comparison,
         ])
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();

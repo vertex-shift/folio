@@ -9,7 +9,7 @@ import {
   ShieldCheck, Trash2, Undo2, X, FileKey2,
   Bookmark, FilePlus2, FileInput, FileOutput, Pencil, Type, SquarePen, ExternalLink, Eraser, ImagePlus, Hash, Stamp, Crop,
   Info, Paperclip,
-  Printer, FileDown, Minimize2,
+  Printer, FileDown, Minimize2, Files,
 } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { version as appVersion } from "../package.json";
@@ -55,6 +55,7 @@ import type { DocumentInfo, Edit, ExistingTextRun, Mode, OpenOutcome, Panel, Pas
 import "./authoring.css";
 import "./document-utilities.css";
 import type { OutputAction } from "./lib/output";
+import type { SourceState } from "./features/comparison/model";
 
 type Action = { type: "open" | "example" | "close" }
   | { type: "create"; width: number; height: number };
@@ -111,6 +112,8 @@ function typingTarget(target: EventTarget | null): boolean {
 export interface DocumentControls {
   menu(id: string): void;
   close(): void;
+  comparisonState(): SourceState;
+  prepareComparison(): Promise<void>;
 }
 
 export interface DocumentActivity {
@@ -126,6 +129,7 @@ interface Props {
   blocked: boolean;
   startWriting?: boolean;
   onOpen(): void;
+  onCompare(): void;
   onOpened(document: DocumentInfo): void;
   onCreated(document: DocumentInfo): void;
   onInfo(document: DocumentInfo): void;
@@ -247,6 +251,14 @@ export default function DocumentWorkspace(props: Props) {
   useImperativeHandle(props.ref, () => ({
     menu: (id) => actionRef.current.menu(id),
     close: () => actionRef.current.action({ type: "close" }),
+    comparisonState: () => ({ document: infoRef.current, pending: pendingDraftRef.current, busy: busyRef.current }),
+    prepareComparison: async () => {
+      const current = infoRef.current;
+      if (!current) throw new Error("This comparison source is no longer open.");
+      await syncDraft(current.id, pendingDraftRef.current);
+      if (pendingDraftRef.current) throw new Error(`${current.name}: apply or discard pending writing, forms, metadata, authoring, redaction or gesture drafts before comparing.`);
+      if (busyRef.current) throw new Error(`${current.name}: finish the current action before comparing.`);
+    },
   }), []);
 
   useEffect(() => {
@@ -1235,6 +1247,9 @@ export default function DocumentWorkspace(props: Props) {
             </button>
             <button disabled={disabled} onClick={() => showPanel("signatures")}>
               <span className="tool-icon teal"><FileKey2 size={19} /></span><span>Digital signatures</span><ChevronRight size={14} className="list-arrow" />
+            </button>
+            <button disabled={disabled} onClick={props.onCompare}>
+              <span className="tool-icon blue"><Files size={19} /></span><span>Compare PDFs</span><ChevronRight size={14} className="list-arrow" />
             </button>
             <button disabled={editDisabled || info?.copyAllowed === false} onClick={showOcr}>
               <span className="tool-icon blue"><ScanLine size={19} /></span><span>Recognize scanned text</span><ChevronRight size={14} className="list-arrow" />

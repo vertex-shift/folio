@@ -119,6 +119,20 @@ The desktop app processes document contents locally.
   Honor print/high-quality-print/copy permissions independently of editing,
   including owner access. Explicitly disclose unencrypted protected-source
   image/text exports. Preserve print resources until the dialog/job is finished.
+- Document comparison: compare two open, copy-permitted working snapshots,
+  including unsaved applied edits, without source/history/navigation changes.
+  Keep selection/settings/results at workspace level. Match by page index,
+  expose real extracted-text spans, rendered RGB pixel counts/masks at explicit
+  DPI/tolerance, geometry changes and unmatched trailing pages, with readable
+  before/after and overlay views. Guard both inputs' identity/revision and all
+  pending drafts; invalidate on edits/undo, drafts and closing. Permit signed
+  read-only comparison when copy/extraction is allowed. Bound pages, pixels,
+  text/tokens/spans, preview/report bytes and concurrency; support cancellation
+  and complete renderer/worker/canvas/URL cleanup. Separate JSON report export
+  explicitly warns that protected-source extracted content is unencrypted.
+  Never equate matching compared content with identical documents: metadata,
+  hidden objects, attachments and signatures/trust are outside this method.
+  No semantic/reflow, moved-page matching, OCR or cloud processing is implied.
 - Lossless optimization: measure safe unfiltered-stream compression and
   unreachable-object cleanup, then save a separate protected PDF copy.
   Report actual before/after bytes and no-reduction outcomes; never rewrite

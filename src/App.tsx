@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CircleHelp, FolderOpen, LoaderCircle, Plus, ShieldCheck, X } from "lucide-react";
+import { CircleHelp, Files, FolderOpen, LoaderCircle, Plus, ShieldCheck, X } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import DocumentWorkspace from "./DocumentWorkspace";
@@ -13,6 +13,9 @@ import { bridge, native, runtimeIssue } from "./lib/bridge";
 import { errorMessage } from "./lib/geometry";
 import { adjacentTab, unsavedTabs } from "./lib/tabs";
 import type { DocumentInfo, OpenOutcome, PasswordChallenge, WorkspaceInfo } from "./lib/types";
+import ComparisonWorkspace from "./features/comparison/ComparisonWorkspace";
+import type { ComparisonControls } from "./features/comparison/ComparisonWorkspace";
+import type { SourceState } from "./features/comparison/model";
 
 export default function App() {
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
@@ -28,6 +31,12 @@ export default function App() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [quit, setQuit] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [comparisonRunning, setComparisonRunning] = useState(false);
+  const [comparisonExporting, setComparisonExporting] = useState(false);
+  const comparison = useRef<ComparisonControls>(null);
+  const comparisonOpenRef = useRef(comparisonOpen);
+  comparisonOpenRef.current = comparisonOpen;
   const controls = useRef(new Map<number, DocumentControls>());
   const fileInput = useRef<HTMLInputElement>(null);
   const documentsRef = useRef(documents);
@@ -40,7 +49,7 @@ export default function App() {
   const pending = new Set(documents.filter((document) => activities[document.id]?.pendingDraft).map((document) => document.id));
   const busy = loading || working || documents.some((document) => activities[document.id]?.busy)
     || !documents.length && Boolean(activities[0]?.busy);
-  const blocked = busy || passwords.length > 0 || quit
+  const blocked = busy || comparisonExporting || passwords.length > 0 || quit
     || Boolean(activities[activeId ?? 0]?.modal);
   blockedRef.current = blocked;
   const unsaved = unsavedTabs(documents, pending);
@@ -56,10 +65,13 @@ export default function App() {
   });
 
   const onInfo = useCallback((info: DocumentInfo) => {
+    const previous = documentsRef.current.find((document) => document.id === info.id);
+    if (previous && previous.revision !== info.revision) comparison.current?.invalidate(info.id);
     setDocuments((current) => current.map((item) => item.id === info.id ? info : item));
   }, []);
 
   const onActivity = useCallback((id: number, activity: DocumentActivity | null) => {
+    if (activity?.pendingDraft) comparison.current?.invalidate(id);
     setActivities((current) => {
       const old = current[id];
       if (activity && old?.busy === activity.busy && old.pendingDraft === activity.pendingDraft && old.modal === activity.modal && old.outputPending === activity.outputPending) return current;
@@ -82,6 +94,16 @@ export default function App() {
   }, [onOpened]);
 
   const reportError = useCallback((message: string) => setError(message), []);
+  const onComparisonActivity = useCallback((running: boolean, exporting: boolean) => {
+    setComparisonRunning(running); setComparisonExporting(exporting);
+  }, []);
+  const comparisonState = useCallback((id: number): SourceState => controls.current.get(id)?.comparisonState()
+    ?? { document: null, pending: false, busy: false }, []);
+  const prepareComparison = useCallback(async (id: number) => {
+    const control = controls.current.get(id);
+    if (!control) throw new Error("The selected comparison source is no longer open.");
+    await control.prepareComparison();
+  }, []);
 
   useEffect(() => {
     if (!working) { setShowWorking(false); return; }
@@ -152,7 +174,9 @@ export default function App() {
   }
 
   function select(id: number) {
-    if (blockedRef.current || activeRef.current === id) return;
+    if (blockedRef.current) return;
+    if (comparisonOpenRef.current) setComparisonOpen(false);
+    if (activeRef.current === id) return;
     void run(async () => {
       const document = await bridge.activate(id);
       onInfo(document);
@@ -162,6 +186,7 @@ export default function App() {
 
   async function closeDocument(info: DocumentInfo, discardChanges: boolean) {
     const snapshot = await bridge.closeDocument(info, discardChanges);
+    comparison.current?.invalidate(info.id);
     setDocuments(snapshot.documents);
     setActiveId(snapshot.activeId);
     setWritingTabs((current) => {
@@ -173,6 +198,7 @@ export default function App() {
 
   function requestClose(id: number) {
     if (blockedRef.current) return;
+    setComparisonOpen(false);
     void run(async () => {
       const info = documentsRef.current.find((document) => document.id === id);
       if (!info) throw new Error("The selected PDF tab is unavailable.");
@@ -203,6 +229,7 @@ export default function App() {
       return;
     }
     if (blockedRef.current) return;
+    setComparisonOpen(false);
     const control = controls.current.get(activeRef.current ?? 0);
     if (!control) { setError("The PDF workspace is not ready yet."); return; }
     control.menu(id);
@@ -210,7 +237,7 @@ export default function App() {
 
   events.current = {
     open, paths: openPaths, menu, quit: requestQuit, select, close: requestClose, hasUnsaved: unsaved.length > 0,
-    guardUnload: unsaved.length > 0 || busy || Object.values(activities).some((activity) => activity.outputPending),
+    guardUnload: unsaved.length > 0 || busy || comparisonRunning || comparisonExporting || Object.values(activities).some((activity) => activity.outputPending),
   };
 
   useEffect(() => {
@@ -284,6 +311,7 @@ export default function App() {
 
   const workspaceProps = {
     blocked, onOpen: open, onOpened, onCreated, onInfo,
+    onCompare: () => setComparisonOpen(true),
     onClose: (info: DocumentInfo) => closeDocument(info, true), onActivity,
   };
 
@@ -312,6 +340,7 @@ export default function App() {
       <DocumentTabs documents={documents} activeId={activeId} pending={pending} disabled={blocked}
         onSelect={select} onClose={requestClose} />
       <IconButton label="Open PDFs in new tabs" className="new-document" disabled={blocked} onClick={open}><Plus size={18} /></IconButton>
+      <IconButton label="Compare open PDFs" disabled={blocked} onClick={() => setComparisonOpen((current) => !current)}><Files size={18} /></IconButton>
       <div className="titlebar-space" data-tauri-drag-region={native || undefined} />
       <span className="runtime-label"><ShieldCheck size={13} />{runtimeIssue ? "Runtime unavailable" : native ? "Local files" : "Browser preview"}</span>
       <AppearancePicker onError={reportError} />
@@ -319,10 +348,13 @@ export default function App() {
     </header>
     {loading ? <div className="workspace-empty"><LoaderCircle className="spin" size={26} /><p>Opening workspace...</p></div>
       : documents.length ? documents.map((document) => <DocumentWorkspace key={document.id} document={document}
-        active={activeId === document.id} startWriting={writingTabs.has(document.id)} {...workspaceProps}
+        active={activeId === document.id && !comparisonOpen} startWriting={writingTabs.has(document.id)} {...workspaceProps}
         ref={(control) => { if (control) controls.current.set(document.id, control); else controls.current.delete(document.id); }} />)
-        : <DocumentWorkspace document={null} active {...workspaceProps}
+        : <DocumentWorkspace document={null} active={!comparisonOpen} {...workspaceProps}
           ref={(control) => { if (control) controls.current.set(0, control); else controls.current.delete(0); }} />}
+    <ComparisonWorkspace ref={comparison} documents={documents} activeId={activeId} open={comparisonOpen}
+      blocked={blocked && !comparisonExporting} current={comparisonState} prepare={prepareComparison}
+      onOpen={open} onClose={() => setComparisonOpen(false)} onActivity={onComparisonActivity} onResourceError={reportError} />
     {showWorking && <div className="tab-action-status" role="status"><LoaderCircle size={14} className="spin" />Preparing document tabs...</div>}
     {error && <div className="notification error-notification workspace-error" role="alert">
       <span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss workspace error" onClick={() => setError(null)}><X size={16} /></IconButton>

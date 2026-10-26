@@ -95,6 +95,7 @@ the tag before rerunning the workflow.
 | --- | --- |
 | Open PDFs | Multiple PDFs in independent tabs through the native picker, drag-and-drop, Finder association, or browser picker |
 | Protected PDFs | Password prompt for supported standard RC4/AES PDFs; preserve passwords and permissions on PDF copies and PDF exports |
+| Compare PDFs | Two open working snapshots; page-index embedded-text, rendered-pixel and geometry differences; before/after or overlay review and a separate JSON report |
 | Digital signatures | Local detached-CMS integrity inspection and certificate details; sign separate copies of unsigned, unencrypted sources with a local PKCS#12 identity; identity trust is not checked |
 | Read | Continuous vertical scrolling, real PDF rendering, selectable/copyable text, lazy thumbnails, synchronized page navigation, zoom, fit page/width, hand panning |
 | Navigate | Create, rename, nest, reorder, and delete real PDF bookmarks; internal links; confirmed external web/email links |
@@ -159,6 +160,61 @@ Ordinary saves, PDF downloads, and page extraction also check pending edits in
 the document engine, not only in the interface. Apply or discard those drafts
 first. Pending redactions require the dedicated **Export redacted copy**
 workflow; viewing the current document remains available.
+
+## Comparing two open PDFs
+
+Choose **Compare PDFs** in All tools or the title-bar comparison button. Select
+the **Before PDF** and **After PDF** tabs, including applied but unsaved edits,
+then choose **Compare working PDFs**. With only one PDF open, **Open another
+PDF** adds the second without replacing the first. Comparison never changes
+either document's bytes, dirty state, undo/redo, selected page or reading position.
+Selections, settings and results remain at workspace level when returning to
+document tabs or other tools.
+
+Matching is strictly **page 1 to page 1**, not semantic/reflow or moved-page
+analysis. A middle insertion shifts subsequent pairings; only unmatched trailing
+indexes are labeled added/removed. Each indexed page reports exact embedded-text
+token changes in PDF.js extraction order, visible RGB pixel changes, and
+MediaBox/effective CropBox/rotation/UserUnit differences. Text is not OCR or
+inferred paragraph order; invisible/off-crop text returned by extraction can
+also appear in the text comparison. Annotation and form appearances contribute
+only where rendered, including small appearance-only changes.
+
+Review side by side or with an adjustable overlay and changed-pixel mask.
+Rendering is local, on white, at an explicit **72, 96 or 150 DPI**; pixels
+are top-left aligned without scaling differently sized pages to fit. An RGB
+channel must differ by **more than** the selected 0-64/255 tolerance to count.
+Geometry is checked separately without a pixel tolerance. Previews fit within
+1,200 px; actual pixel comparison uses the full selected resolution.
+
+**No observed differences does not mean identical PDFs.** Metadata, bookmarks,
+attachments, hidden objects, signature changes/validity/trust and other
+unexamined document structure are not compared. This is not a whole-file
+equivalence check. Unsupported renderer/core geometry disagreements and
+over-budget work are rejected rather than reported as matches.
+
+Both PDFs must allow copy/extraction; owner-password access is honored.
+Signed/read-only documents remain eligible for permitted comparison, without
+enabling edits. Apply or discard pending writing, forms, metadata, authoring,
+redaction and live-gesture drafts on **both** inputs first. A source mutation,
+new draft or closed tab invalidates the comparison, even if Undo later restores
+the old revision. Source IDs/revisions and draft/copy guards are rechecked
+around asynchronous snapshots, completion, and export. Canceling discards partial
+results and releases isolated PDF.js renderers, workers and canvases.
+
+**Export JSON report** writes a separate, bounded, unencrypted report containing
+per-page text spans, pixel counts/bounds, geometry and method limitations, not
+page images or a complete object diff. Protected inputs require an explicit
+unencrypted-content acknowledgment: reports retain no PDF passwords, permissions
+or signatures. Native export never overwrites existing files or any open PDF.
+
+One comparison is retained at a time. Limits are 100 pages and 64 MiB per
+source snapshot; 8 megapixels/8,192 px per dimension per aligned page pair,
+100 megapixels total; 256 KiB/20,000 tokens per page side and 40,000 extraction
+items per page; 2 MiB extracted text, 100,000 tokens and 4,000 spans overall;
+32 MiB previews and a 4 MiB JSON report. Processing is sequential. Complex text
+diffs have bounded edit/time budgets; no content, changes, pages or quality are
+silently truncated or downgraded.
 
 ## Password-protected PDFs
 
@@ -1074,6 +1130,24 @@ npm run build
 npm run test:rust
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
 ```
+
+Focused comparison checks:
+
+```sh
+node --test tests/comparison.test.ts
+cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --test comparison
+npm run test:comparison
+```
+
+The comparison browser check uses original generated PDFs and independent actual
+PDF.js rendering for text, rectangle-color-only, small AcroForm-appearance,
+crop/rotation/UserUnit and added/removed-page differences. It also checks
+file-only metadata/attachment changes without an identity claim, cancellation,
+stale/undo-resurrected sources, report shape, source/history/reading-position
+preservation, themes, and worker/canvas/blob-URL cleanup. Set
+`FOLIO_COMPARISON_ARTIFACTS` to an output directory to retain synthetic fixtures,
+screenshots and JSON evidence. Helpers bind loopback-only ports (prefer 1428/
+19156, otherwise free alternatives) and stop only their own processes.
 
 Tests cover appearance preference validation, persistence errors, system/native
 theme mappings, standard and rotated selection coordinates, phrase search,

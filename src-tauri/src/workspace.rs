@@ -23,6 +23,7 @@ pub struct Workspace {
     drafts: HashSet<u64>,
     authoring_images: crate::authoring::ImageStaging,
     pub(crate) outputs: crate::output::OutputJobs,
+    pub(crate) comparisons: crate::comparison::ComparisonJobs,
 }
 
 #[derive(Debug, Serialize)]
@@ -137,6 +138,7 @@ impl Workspace {
             return Err(Error::Invalid("This PDF has unsaved changes or pending marks. Save or explicitly discard them before closing the tab.".into()));
         }
         self.sessions.remove(&id);
+        self.comparisons.invalidate(id);
         self.drafts.remove(&id);
         self.authoring_images.clear(id);
         self.redactions.retain(|_, job| job.plan.document_id != id);
@@ -160,6 +162,7 @@ impl Workspace {
     pub fn set_draft(&mut self, id: u64, pending: bool) -> Result<()> {
         self.document(id)?;
         if pending {
+            self.comparisons.invalidate(id);
             self.drafts.insert(id);
             self.ocrs.retain(|_, job| job.plan.document_id != id);
         } else {
@@ -182,6 +185,7 @@ impl Workspace {
         bytes: &[u8],
     ) -> Result<crate::authoring::ImageAsset> {
         self.check_revision(id, revision)?.ensure_writable()?;
+        self.comparisons.invalidate(id);
         self.authoring_images.stage(id, revision, bytes)
     }
 
@@ -193,6 +197,7 @@ impl Workspace {
         placement: crate::authoring::ImagePlacement,
     ) -> Result<DocumentInfo> {
         self.check_revision(id, revision)?.ensure_writable()?;
+        self.comparisons.invalidate(id);
         let image = self.authoring_images.get(id, revision, asset_id)?;
         let session = self
             .sessions
@@ -216,6 +221,10 @@ impl Workspace {
             ));
         }
         Ok(session)
+    }
+
+    pub(crate) fn has_redaction_job(&self, id: u64) -> bool {
+        self.redactions.values().any(|job| job.plan.document_id == id)
     }
 
     pub fn ensure_output_available(&self, id: u64, path: &Path) -> Result<()> {
@@ -490,6 +499,7 @@ impl Workspace {
             ));
         }
         self.ocrs.retain(|_, job| job.plan.document_id != id);
+        self.comparisons.invalidate(id);
         Ok(session)
     }
 
@@ -530,6 +540,7 @@ impl Workspace {
         let plan = self
             .check_revision(id, revision)?
             .redaction_plan(job_id, dpi, regions)?;
+        self.comparisons.invalidate(id);
         self.next_redaction_id = job_id;
         self.redactions.retain(|_, job| job.plan.document_id != id);
         self.redactions.insert(job_id, Job::new(plan.clone()));

@@ -1,6 +1,7 @@
 pub mod attachments;
 pub mod authoring;
 mod authoring_image;
+pub mod comparison;
 pub mod document;
 pub mod forms;
 pub mod metadata;
