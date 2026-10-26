@@ -456,6 +456,29 @@ impl Session {
         self.commit_change(|next| crate::forms::fill(next, changes))
     }
 
+    pub fn form_designer(&self) -> Result<crate::forms::designer::DesignerInfo> {
+        let reason = self.ensure_management_writable().err().map(|error| error.to_string());
+        crate::forms::designer::inspect(&self.document, reason.is_none(), reason.as_deref())
+    }
+
+    pub fn design_form_fields(
+        &mut self,
+        changes: Vec<crate::forms::designer::Change>,
+    ) -> Result<DocumentInfo> {
+        self.ensure_management_writable()?;
+        self.mutate(|next| crate::forms::designer::apply(next, changes))
+    }
+
+    pub fn flattened_form_info(&self) -> Result<crate::forms::flatten::FlattenInfo> {
+        self.ensure_writable()?;
+        crate::forms::flatten::inspect(&self.document)
+    }
+
+    pub fn flattened_form_copy(&self) -> Result<Vec<u8>> {
+        self.ensure_writable()?;
+        crate::forms::flatten::copy(&self.document)
+    }
+
     pub fn metadata(&self) -> Result<crate::metadata::MetadataInfo> {
         crate::metadata::inspect(&self.document)
     }

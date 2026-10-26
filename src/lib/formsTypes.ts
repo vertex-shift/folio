@@ -12,6 +12,7 @@ export interface FormOption {
 }
 
 export interface FormWidget {
+  id: string;
   page: number;
   rect: PdfRect;
 }

@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::document::{Error, Result, invalid, numbers, page_bounds};
 
+pub mod designer;
+pub mod flatten;
+
 const MAX_NODES: usize = 4096;
 const MAX_FIELDS: usize = 1024;
 const MAX_OPTIONS: usize = 4096;
@@ -61,6 +64,7 @@ pub struct FormOption {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FormWidget {
+    pub id: String,
     pub page: usize,
     pub rect: [f32; 4],
 }
@@ -97,6 +101,7 @@ pub struct FormInfo {
     pub warnings: Vec<String>,
 }
 
+#[derive(Clone)]
 struct Field {
     id: ObjectId,
     info: FormField,
@@ -417,7 +422,11 @@ impl Reader<'_> {
                         disable(&mut info, "A widget's page reference is inconsistent.");
                     }
                     match widget_rect(self.document, annotation, page_id) {
-                        Ok(rect) => info.widgets.push(FormWidget { page, rect }),
+                        Ok(rect) => info.widgets.push(FormWidget {
+                            id: key(*widget),
+                            page,
+                            rect,
+                        }),
                         Err(_) => disable(
                             &mut info,
                             "A widget has unsupported or invalid page geometry.",
@@ -511,21 +520,31 @@ impl Reader<'_> {
                 info.value = Some(self.choice_value(&attributes, &info)?);
             }
             FieldKind::Checkbox | FieldKind::Radio => {
-                let mut states = BTreeMap::<Vec<u8>, String>::new();
+                let mut states = BTreeMap::<Vec<u8>, (String, String)>::new();
                 let button_exports = optional(self.document, &attributes, b"Opt")?
                     .map(Object::as_array)
                     .transpose()?;
                 for (index, widget) in widgets.iter().enumerate() {
                     match button_state(self.document, *widget) {
                         Ok(on) => {
-                            let label = button_exports
+                            let export = button_exports
                                 .and_then(|values| values.get(index))
                                 .map(|value| text(self.document, value, &mut self.text_bytes))
                                 .transpose()?
                                 .unwrap_or(state_label(&on, &mut self.text_bytes)?);
-                            if let Some(previous) = states.insert(on, label.clone())
+                            let label = self
+                                .document
+                                .get_dictionary(*widget)?
+                                .get(b"Contents")
+                                .ok()
+                                .map(|value| text(self.document, value, &mut self.text_bytes))
+                                .transpose()?
+                                .filter(|label| !label.trim().is_empty())
+                                .unwrap_or_else(|| export.clone());
+                            if let Some(previous) =
+                                states.insert(on, (label.clone(), export.clone()))
                                 && kind == FieldKind::Radio
-                                && (flags & (1 << 25) == 0 || previous != label)
+                                && (flags & (1 << 25) == 0 || previous != (label, export))
                             {
                                 disable(
                                     &mut info,
@@ -545,11 +564,11 @@ impl Reader<'_> {
                         "Repeated checkbox widgets must share the same export/on-state.",
                     );
                 }
-                for (state, label) in &states {
+                for (state, (label, export)) in &states {
                     info.options.push(FormOption {
                         id: state_key(state),
                         label: label.clone(),
-                        export_value: label.clone(),
+                        export_value: export.clone(),
                     });
                 }
                 let value = optional(self.document, &attributes, b"V")?
@@ -1290,6 +1309,12 @@ fn field_error(field: &Field, error: impl std::fmt::Display) -> Error {
 }
 
 pub(crate) fn fill(document: &mut Document, changes: Vec<FieldChange>) -> Result<()> {
+    write_values(document, changes, true)
+}
+
+// Authoring and static-copy generation may preserve empty required/read-only
+// values. Their callers validate structure and require general editing access.
+fn write_values(document: &mut Document, changes: Vec<FieldChange>, filling: bool) -> Result<()> {
     if changes.is_empty() || changes.len() > MAX_FIELDS {
         return Err(invalid(
             "Apply between 1 and 1,024 form field changes at a time.",
@@ -1309,8 +1334,16 @@ pub(crate) fn fill(document: &mut Document, changes: Vec<FieldChange>) -> Result
         }
         let field = form.fields.iter().find(|field| field.info.id == change.id)
             .ok_or_else(|| invalid("This form field is no longer in the document. Reload the form before applying."))?;
-        let value =
-            validate_value(field, &change.value).map_err(|error| field_error(field, error))?;
+        let value = if filling {
+            validate_value(field, &change.value)
+        } else {
+            let mut stored = field.clone();
+            stored.info.read_only = false;
+            stored.info.required = false;
+            stored.info.no_toggle_to_off = false;
+            validate_value(&stored, &change.value)
+        }
+        .map_err(|error| field_error(field, error))?;
         widget_count += field.widgets.len();
         if widget_count > 1024 {
             return Err(invalid("Apply at most 1,024 widget appearances at a time."));

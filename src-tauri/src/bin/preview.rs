@@ -76,6 +76,14 @@ struct FormFillRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FormDesignRequest {
+    document_id: u64,
+    revision: u64,
+    changes: Vec<folio_core::forms::designer::Change>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ImageRequest {
     document_id: u64,
     revision: u64,
@@ -341,6 +349,22 @@ fn handle(
                     .ensure_export_ready(input.document_id, input.revision)?
                     .extract_pages(&input.pages)?,
             ));
+        }
+        (&Method::Post, "/forms/designer") => {
+            let input: Revision = json_body(request)?;
+            return json(workspace.check_revision(input.document_id, input.revision)?.form_designer()?);
+        }
+        (&Method::Post, "/forms/design") => {
+            let input: FormDesignRequest = json_body(request)?;
+            workspace.current_mut(input.document_id, input.revision)?.design_form_fields(input.changes)?
+        }
+        (&Method::Post, "/forms/flatten/inspect") => {
+            let input: Revision = json_body(request)?;
+            return json(workspace.check_form_flattening(input.document_id, input.revision)?.flattened_form_info()?);
+        }
+        (&Method::Post, "/forms/flatten") => {
+            let input: Revision = json_body(request)?;
+            return Ok(Payload::Pdf(workspace.flattened_form_copy(input.document_id, input.revision)?));
         }
         (&Method::Post, "/metadata") => {
             let input: Revision = json_body(request)?;

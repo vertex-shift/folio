@@ -26,6 +26,9 @@ type SharedState = Mutex<DesktopState>;
 #[path = "desktop_output.rs"]
 mod output_commands;
 
+#[path = "forms/desktop.rs"]
+mod form_commands;
+
 async fn with_state<T: Send + 'static>(
     app: AppHandle,
     action: impl FnOnce(&mut DesktopState) -> Result<T> + Send + 'static,
@@ -853,6 +856,10 @@ pub fn run() {
             export_signed_copy,
             form_fields,
             fill_form_fields,
+            form_commands::form_designer,
+            form_commands::design_form_fields,
+            form_commands::inspect_flattened_form_copy,
+            form_commands::export_flattened_form_copy,
             stage_authoring_image,
             insert_authoring_image,
             cancel_authoring_image,

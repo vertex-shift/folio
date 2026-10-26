@@ -8,7 +8,7 @@ function textField(overrides: Partial<FormField> = {}): FormField {
     id: "12:0", name: "person.name", label: "Full name", kind: "text",
     readOnly: false, reason: null, required: false, multiline: false, password: false,
     comb: false, maxLength: 40, multiple: false, combo: false, editableChoice: false, noToggleToOff: false,
-    options: [], value: { type: "text", text: "Original" }, widgets: [{ page: 0, rect: [10, 10, 100, 40] }],
+    options: [], value: { type: "text", text: "Original" }, widgets: [{ id: "13:0", page: 0, rect: [10, 10, 100, 40] }],
     ...overrides,
   };
 }
