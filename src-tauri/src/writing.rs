@@ -13,7 +13,47 @@ use crate::document::{
 
 const FONT: &[u8] = include_bytes!("../resources/fonts/NotoSans-Regular.ttf");
 
-fn validate_color(color: [f32; 3]) -> Result<()> {
+fn font_glyphs(face: &ttf_parser::Face<'_>, text: &str) -> Result<BTreeMap<char, (u16, f32)>> {
+    let unit = 1000.0 / f32::from(face.units_per_em());
+    let mut glyphs = BTreeMap::new();
+    for character in text.chars().filter(|character| *character != '\n') {
+        let code = character as u32;
+        if character.is_control()
+            || !matches!(code, 0x20..=0x24f | 0x370..=0x52f | 0x2000..=0x206f | 0x20a0..=0x20cf)
+        {
+            return Err(invalid(format!(
+                "The embedded Noto Sans font supports Latin, Greek, and Cyrillic text (unsupported U+{code:04X})."
+            )));
+        }
+        let glyph = face
+            .glyph_index(character)
+            .ok_or_else(|| invalid(format!("The bundled font does not contain U+{code:04X}.")))?;
+        glyphs.entry(character).or_insert((
+            glyph.0,
+            f32::from(face.glyph_hor_advance(glyph).unwrap_or(face.units_per_em())) * unit,
+        ));
+    }
+    Ok(glyphs)
+}
+
+pub(crate) fn line_metrics(text: &str, size: f32) -> Result<(f32, f32, f32)> {
+    if text.contains('\n') {
+        return Err(invalid("Text stamps require a single line."));
+    }
+    let face = ttf_parser::Face::parse(FONT, 0)
+        .map_err(|error| invalid(format!("The bundled text font is invalid: {error}")))?;
+    let glyphs = font_glyphs(&face, text)?;
+    let scale = size / f32::from(face.units_per_em());
+    Ok((
+        text.chars()
+            .map(|character| glyphs[&character].1 * size / 1000.0)
+            .sum(),
+        f32::from(face.ascender()) * scale,
+        f32::from(face.descender()).abs() * scale,
+    ))
+}
+
+pub(crate) fn validate_color(color: [f32; 3]) -> Result<()> {
     if color
         .iter()
         .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
@@ -103,24 +143,7 @@ fn text_appearance(
     let face = ttf_parser::Face::parse(FONT, 0)
         .map_err(|error| invalid(format!("The bundled text font is invalid: {error}")))?;
     let unit = 1000.0 / f32::from(face.units_per_em());
-    let mut glyphs = BTreeMap::new();
-    for character in text.chars().filter(|character| *character != '\n') {
-        let code = character as u32;
-        if character.is_control()
-            || !matches!(code, 0x20..=0x24f | 0x370..=0x52f | 0x2000..=0x206f | 0x20a0..=0x20cf)
-        {
-            return Err(invalid(format!(
-                "The text tool currently supports Latin, Greek, and Cyrillic text (unsupported U+{code:04X}). Sticky notes support other scripts."
-            )));
-        }
-        let glyph = face
-            .glyph_index(character)
-            .ok_or_else(|| invalid(format!("The bundled font does not contain U+{code:04X}.")))?;
-        glyphs.entry(character).or_insert((
-            glyph.0,
-            f32::from(face.glyph_hor_advance(glyph).unwrap_or(face.units_per_em())) * unit,
-        ));
-    }
+    let glyphs = font_glyphs(&face, text)?;
     let width = rect[2] - rect[0];
     let height = rect[3] - rect[1];
     let (local_width, local_height, matrix) = match rotation.rem_euclid(360) {
@@ -202,24 +225,7 @@ pub(crate) fn embed_text_font(
     let face = ttf_parser::Face::parse(FONT, 0)
         .map_err(|error| invalid(format!("The bundled text font is invalid: {error}")))?;
     let unit = 1000.0 / f32::from(face.units_per_em());
-    let mut glyphs = BTreeMap::new();
-    for character in text.chars().filter(|character| *character != '\n') {
-        let code = character as u32;
-        if character.is_control()
-            || !matches!(code, 0x20..=0x24f | 0x370..=0x52f | 0x2000..=0x206f | 0x20a0..=0x20cf)
-        {
-            return Err(invalid(format!(
-                "The embedded Noto Sans font supports Latin, Greek, and Cyrillic text (unsupported U+{code:04X})."
-            )));
-        }
-        let glyph = face
-            .glyph_index(character)
-            .ok_or_else(|| invalid(format!("The bundled font does not contain U+{code:04X}.")))?;
-        glyphs.entry(character).or_insert((
-            glyph.0,
-            f32::from(face.glyph_hor_advance(glyph).unwrap_or(face.units_per_em())) * unit,
-        ));
-    }
+    let glyphs = font_glyphs(&face, text)?;
     let mut font_file = Stream::new(
         dictionary! { "Length1" => FONT.len() as i64 },
         FONT.to_vec(),

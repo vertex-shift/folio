@@ -76,6 +76,22 @@ struct FormFillRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImageRequest {
+    document_id: u64,
+    revision: u64,
+    asset_id: u64,
+    placement: folio_core::authoring::ImagePlacement,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CancelImageRequest {
+    document_id: u64,
+    asset_id: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RedactionRequest {
     document_id: u64,
     revision: u64,
@@ -343,6 +359,36 @@ fn handle(
             workspace
                 .current_mut(input.document_id, input.revision)?
                 .fill_form_fields(input.changes)?
+        }
+        (&Method::Post, "/authoring/image") => {
+            let id = numeric_header(request, "X-Document-Id")?;
+            let revision = numeric_header(request, "X-Revision")?;
+            workspace.check_revision(id, revision)?;
+            let limit = folio_core::authoring::MAX_IMAGE_BYTES;
+            if request.body_length().is_some_and(|length| length > limit) {
+                return Err(Error::Invalid(
+                    "Choose a PNG or JPEG no larger than 16 MiB.".into(),
+                ));
+            }
+            let mut bytes = Vec::new();
+            request
+                .as_reader()
+                .take(limit as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            return json(workspace.stage_authoring_image(id, revision, &bytes)?);
+        }
+        (&Method::Post, "/authoring/image/insert") => {
+            let input: ImageRequest = json_body(request)?;
+            workspace.insert_authoring_image(
+                input.document_id,
+                input.revision,
+                input.asset_id,
+                input.placement,
+            )?
+        }
+        (&Method::Post, "/authoring/image/cancel") => {
+            let input: CancelImageRequest = json_body(request)?;
+            return json(workspace.cancel_authoring_image(input.document_id, input.asset_id)?);
         }
         (&Method::Post, "/redaction/begin") => {
             let input: RedactionRequest = json_body(request)?;

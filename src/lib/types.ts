@@ -1,3 +1,5 @@
+import type { NumberPosition, PageGeometry } from "./authoring.ts";
+
 export type Quad = [number, number, number, number, number, number, number, number];
 export type Point = [number, number];
 export type Color = [number, number, number];
@@ -34,7 +36,7 @@ export interface RedactionPlan {
 export interface AnnotationInfo {
   id: string;
   page: number;
-  kind: "note" | "highlight" | "text" | "ink";
+  kind: "note" | "highlight" | "text" | "ink" | "image" | "watermark" | "page_number";
   text: string;
   author: string;
   rect: [number, number, number, number];
@@ -55,7 +57,7 @@ export interface DocumentInfo {
   readOnlyReason: string | null;
   passwordProtected: boolean;
   copyAllowed: boolean;
-  pages: { key: string; rotation: number }[];
+  pages: { key: string; rotation: number; geometry: PageGeometry }[];
   annotations: AnnotationInfo[];
 }
 
@@ -103,11 +105,16 @@ export type Edit =
   | { type: "ink"; page: number; points: Point[]; color: Color; width: number }
   | { type: "blank_page"; at: number; width: number; height: number }
   | { type: "duplicate"; page: number }
-  | { type: "replace_text"; page: number; path: number[]; expected: string; replacement: string; font: ReplacementFont };
+  | { type: "replace_text"; page: number; path: number[]; expected: string; replacement: string; font: ReplacementFont }
+  | { type: "crop"; pages: number[]; margins: [number, number, number, number] }
+  | { type: "remove_crop" | "reset_crop"; pages: number[] }
+  | { type: "watermark"; pages: number[]; settings: { text: string; size: number; color: Color; opacity: number; angle: number } }
+  | { type: "page_numbers"; pages: number[]; settings: { start: number; prefix: string; suffix: string; position: NumberPosition; size: number; color: Color; margin: number } }
+  | { type: "remove_authoring"; pages: number[]; kind: "watermark" | "page_number" };
 
-export type Tool = "select" | "hand" | "highlight" | "note" | "text" | "ink" | "edit-text" | "redact";
+export type Tool = "select" | "hand" | "highlight" | "note" | "text" | "ink" | "edit-text" | "redact" | "image" | "crop";
 export type Mode = "read" | "write" | "comment" | "organize";
-export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write" | "edit" | "redact" | "signatures";
+export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write" | "edit" | "redact" | "signatures" | "authoring";
 export type Zoom = { mode: "page" | "width" } | { mode: "custom"; scale: number };
 
 export interface SearchResult {

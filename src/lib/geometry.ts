@@ -7,6 +7,11 @@ export interface Rect {
   bottom: number;
 }
 
+export function intersectsPdfRect(rect: readonly number[], bounds: readonly number[]): boolean {
+  return Math.max(rect[0], rect[2]) > bounds[0] && Math.min(rect[0], rect[2]) < bounds[2]
+    && Math.max(rect[1], rect[3]) > bounds[1] && Math.min(rect[1], rect[3]) < bounds[3];
+}
+
 export function selectionQuads(
   rectangles: readonly Rect[],
   page: Rect,

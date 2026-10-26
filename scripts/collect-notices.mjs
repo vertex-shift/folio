@@ -33,7 +33,8 @@ export function collectNotices(root) {
   const names = new Set(["lopdf", "tauri", "tauri-plugin-opener", "rfd", "tempfile", "serde", "serde_json", "thiserror", "ttf-parser", "unicode-normalization", "png",
     "openssl", "openssl-sys", "openssl-src", "openssl-macros", "foreign-types", "foreign-types-shared",
     "cms", "der", "der_derive", "const-oid", "spki", "x509-cert", "flagset", "zeroize", "zeroize_derive",
-    "base64ct", "pem-rfc7468", "tls_codec", "tls_codec_derive"]);
+    "base64ct", "pem-rfc7468", "tls_codec", "tls_codec_derive",
+    "image", "zune-jpeg", "zune-core", "byteorder-lite", "bytemuck", "moxcms", "pxfm"]);
   for (const dependency of metadata.packages.filter((entry) => names.has(entry.name))) {
     const folder = dirname(dependency.manifest_path);
     const candidates = ["LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "LICENSE.md", "LICENSE.txt", "LICENSE.spdx", "COPYING"];

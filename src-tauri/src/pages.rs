@@ -24,7 +24,7 @@ pub(crate) fn blank_page(document: &mut Document, width: f32, height: f32) -> Re
     }))
 }
 
-fn reject_forms(document: &Document) -> Result<()> {
+pub(crate) fn reject_forms(document: &Document) -> Result<()> {
     if has_form_fields(document)? {
         return Err(invalid(
             "This page operation does not yet support interactive forms or XFA. Use a flattened copy.",

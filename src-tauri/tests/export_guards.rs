@@ -155,3 +155,51 @@ fn unchanged_signed_copies_are_not_confused_with_pdf_mutations() {
             .is_err()
     );
 }
+
+#[test]
+fn staged_images_block_exports_and_signing_before_a_frontend_draft_update() {
+    let mut workspace = Workspace::default();
+    let document = open_blank(&mut workspace, "Image draft.pdf");
+    assert!(
+        workspace
+            .check_signing(document.id, document.revision)
+            .is_ok()
+    );
+    let original = workspace.document(document.id).unwrap().bytes().to_vec();
+    let mut image = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut image, 1, 1);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&[0, 128, 255, 128]).unwrap();
+        writer.finish().unwrap();
+    }
+    let asset = workspace
+        .stage_authoring_image(document.id, document.revision, &image)
+        .unwrap();
+    assert!(
+        workspace
+            .ensure_export_ready(document.id, document.revision)
+            .is_err()
+    );
+    assert!(
+        workspace
+            .check_signing(document.id, document.revision)
+            .is_err()
+    );
+    assert_eq!(workspace.document(document.id).unwrap().bytes(), original);
+    workspace
+        .cancel_authoring_image(document.id, asset.asset_id)
+        .unwrap();
+    assert!(
+        workspace
+            .ensure_export_ready(document.id, document.revision)
+            .is_ok()
+    );
+    assert!(
+        workspace
+            .check_signing(document.id, document.revision)
+            .is_ok()
+    );
+}

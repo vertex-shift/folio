@@ -19,6 +19,7 @@ pub struct Workspace {
     pending_open: BTreeMap<u64, PendingOpen>,
     next_open_id: u64,
     drafts: HashSet<u64>,
+    authoring_images: crate::authoring::ImageStaging,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,11 +125,16 @@ impl Workspace {
         discard_changes: bool,
     ) -> Result<WorkspaceInfo> {
         let document = self.check_revision(id, revision)?;
-        if !discard_changes && (document.is_dirty() || self.drafts.contains(&id)) {
+        if !discard_changes
+            && (document.is_dirty()
+                || self.drafts.contains(&id)
+                || self.authoring_images.contains(id))
+        {
             return Err(Error::Invalid("This PDF has unsaved changes or pending marks. Save or explicitly discard them before closing the tab.".into()));
         }
         self.sessions.remove(&id);
         self.drafts.remove(&id);
+        self.authoring_images.clear(id);
         self.redactions.retain(|_, job| job.plan.document_id != id);
         self.pending_open.retain(|_, pending| {
             !matches!(pending.kind,
@@ -156,12 +162,45 @@ impl Workspace {
     }
 
     pub fn has_unsaved_changes(&self) -> bool {
-        self.is_dirty() || !self.drafts.is_empty()
+        self.is_dirty() || !self.drafts.is_empty() || !self.authoring_images.is_empty()
+    }
+
+    pub fn stage_authoring_image(
+        &mut self,
+        id: u64,
+        revision: u64,
+        bytes: &[u8],
+    ) -> Result<crate::authoring::ImageAsset> {
+        self.check_revision(id, revision)?.ensure_writable()?;
+        self.authoring_images.stage(id, revision, bytes)
+    }
+
+    pub fn insert_authoring_image(
+        &mut self,
+        id: u64,
+        revision: u64,
+        asset_id: u64,
+        placement: crate::authoring::ImagePlacement,
+    ) -> Result<DocumentInfo> {
+        self.check_revision(id, revision)?.ensure_writable()?;
+        let image = self.authoring_images.get(id, revision, asset_id)?;
+        let session = self
+            .sessions
+            .get_mut(&id)
+            .ok_or_else(|| Error::Invalid("This PDF tab is no longer open.".into()))?;
+        let result = session.insert_image(image, placement)?;
+        self.authoring_images.clear(id);
+        Ok(result)
+    }
+
+    pub fn cancel_authoring_image(&mut self, id: u64, asset_id: u64) -> Result<bool> {
+        self.document(id)?;
+        self.authoring_images.cancel(id, asset_id)
     }
 
     pub fn ensure_export_ready(&self, id: u64, revision: u64) -> Result<&Session> {
         let session = self.check_revision(id, revision)?;
-        if self.drafts.contains(&id) {
+        if self.drafts.contains(&id) || self.authoring_images.contains(id) {
             return Err(Error::Invalid(
                 "Apply or discard pending edits before saving or exporting this PDF. Use Export redacted copy for pending redactions.".into(),
             ));
@@ -190,12 +229,11 @@ impl Workspace {
     }
 
     pub fn check_signing(&self, id: u64, revision: u64) -> Result<&Session> {
-        let session = self.check_revision(id, revision)?;
-        if self.drafts.contains(&id)
-            || self
-                .redactions
-                .values()
-                .any(|job| job.plan.document_id == id)
+        let session = self.ensure_export_ready(id, revision)?;
+        if self
+            .redactions
+            .values()
+            .any(|job| job.plan.document_id == id)
         {
             return Err(Error::Invalid(
                 "Apply or cancel pending writing and clear pending redaction marks before signing. A signature must not export an unapplied or unredacted original.".into(),

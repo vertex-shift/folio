@@ -4,6 +4,8 @@ import type { DocumentInfo, Edit, ExistingTextRun, OpenOutcome, RedactionPlan, R
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { safeExternalUrl } from "./navigation";
 import { resolveRuntime } from "./runtime";
+import { MAX_IMAGE_BYTES } from "./authoring";
+import type { ImageAsset, ImagePlacement } from "./authoring";
 
 const runtime = await resolveRuntime({
   hasNativeBridge: isTauri(),
@@ -156,6 +158,21 @@ export const bridge = {
   textRuns(info: DocumentInfo, page: number): Promise<ExistingTextRun[]> {
     return native ? invoke("page_text_runs", { ...revision(info), page })
       : previewJson("/text-runs", post({ ...revision(info), page }));
+  },
+  async stageImage(info: DocumentInfo, file: File): Promise<ImageAsset> {
+    if (!file.size || file.size > MAX_IMAGE_BYTES) throw new Error("Choose a PNG or JPEG no larger than 16 MiB.");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const headers = { "X-Document-Id": String(info.id), "X-Revision": String(info.revision) };
+    return native ? invoke("stage_authoring_image", bytes, { headers })
+      : previewJson("/authoring/image", { method: "POST", headers: { ...headers, "Content-Type": "application/octet-stream" }, body: bytes });
+  },
+  insertImage(info: DocumentInfo, assetId: number, placement: ImagePlacement): Promise<DocumentInfo> {
+    const input = { ...revision(info), assetId, placement };
+    return native ? invoke("insert_authoring_image", input) : previewJson("/authoring/image/insert", post(input));
+  },
+  cancelImage(documentId: number, assetId: number): Promise<boolean> {
+    return native ? invoke("cancel_authoring_image", { documentId, assetId })
+      : previewJson("/authoring/image/cancel", post({ documentId, assetId }));
   },
   beginRedaction(info: DocumentInfo, dpi: 150 | 300, regions: RedactionRegion[]): Promise<RedactionPlan> {
     const input = { ...revision(info), dpi, regions };

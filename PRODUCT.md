@@ -52,6 +52,17 @@ The desktop app processes document contents locally.
   Index nested Form invocations and isolate shared streams/resources so only
   the selected occurrence changes. Replacements must be searchable, selectable,
   undoable, and persistent after save/reopen, not drawn over old text.
+- Page authoring: user-selected PNG/JPEG image stamps with physical placement,
+  size, opacity and real alpha; bounded decoding and metadata-free image objects.
+  Crop the actual visible CropBox non-destructively, with per-page geometry,
+  full-MediaBox and original-crop reset across save/reopen. Center configurable
+  single-line text watermarks and position sequential numbers on explicit page
+  ranges. Watermarks/numbers are removable annotations, not security or dynamic
+  page labels. Preserve document-scoped settings/placement drafts across tab
+  switches and virtualization; guard ordinary save, close, quit, and mutations.
+  Cropping is not permanent redaction, and existing-image editing remains out
+  of scope. Keep cropped rendering, overlays, writing, thumbnails, and redacted
+  exports on a shared MediaBox/CropBox/rotation/UserUnit geometry contract.
 - Redaction: mark page rectangles and export a separate, fresh image-only PDF.
   Permanently replace marked pixels with opaque black before lossless image
   encoding; copy no original PDF objects, text layer, attachments, or metadata.

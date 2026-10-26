@@ -34,6 +34,7 @@ thiserror = "2"
 ttf-parser = "0.25"
 unicode-normalization = "0.1"
 png = "0.18"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 tauri = { version = "2", optional = true, features = [] }
 tauri-plugin-opener = { version = "2", optional = true }
 rfd = { version = "0.17", optional = true }

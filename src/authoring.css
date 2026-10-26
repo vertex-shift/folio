@@ -1,0 +1,50 @@
+.tools-panel.panel-authoring { width: 292px; }
+.authoring-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.authoring-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; padding: 0 16px 16px; border-bottom: 1px solid var(--line); }
+.authoring-sections button { display: flex; align-items: center; gap: 7px; padding: 9px 8px; min-height: 36px; border: 1px solid var(--border); border-radius: var(--radius-control); color: var(--secondary); font-size: 12px; text-align: left; }
+.authoring-sections button:hover:not(:disabled) { background: var(--hover); }
+.authoring-sections button.selected { border-color: var(--blue); background: var(--blue-tint); color: var(--blue-ink); font-weight: 600; }
+.authoring-error { display: flex; align-items: start; gap: 6px; padding: 12px 14px 12px 18px; background: var(--danger-soft); color: var(--danger-ink); font-size: 11px; line-height: 1.7; }
+.authoring-error span { flex: 1; min-width: 0; overflow-wrap: anywhere; max-height: 150px; overflow-y: auto; }
+.authoring-error .icon-button { color: var(--danger-ink); width: 26px; height: 26px; }
+.authoring-settings { padding: 14px 18px 20px; }
+.authoring-settings fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.authoring-settings p { color: var(--secondary); font-size: 12px; line-height: 1.75; margin-bottom: 14px; overflow-wrap: anywhere; }
+.authoring-settings .authoring-page-summary { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.authoring-range { padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.authoring-range .setting-field { margin: 0; }
+.authoring-range .authoring-field { margin: 12px 0 0; }
+.authoring-retarget { margin-bottom: 15px; }
+.authoring-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 15px; min-width: 0; font-size: 11px; color: var(--secondary); }
+.authoring-field input { width: 100%; min-width: 0; min-height: 34px; border: 1px solid var(--control-border); border-radius: var(--radius-control); background: var(--input-bg); color: var(--ink); padding: 6px 9px; }
+.authoring-field input[type="number"] { font-variant-numeric: tabular-nums; }
+.authoring-field input[type="color"] { padding: 3px; cursor: pointer; }
+.authoring-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 12px; margin-top: 17px; }
+.authoring-wide { width: 100%; }
+.authoring-image-preview { display: flex; flex-direction: column; gap: 6px; margin-block: 17px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.authoring-image-preview img { max-width: 100%; width: 100%; height: 112px; object-fit: contain; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-control); }
+.authoring-image-preview span:first-of-type { color: var(--ink); }
+.authoring-settings .authoring-note { font-size: 11px; color: var(--muted); margin-top: 17px; }
+.authoring-settings .authoring-warning { font-size: 11px; padding: 12px; background: var(--warning-bg); color: var(--warning-ink); border-radius: var(--radius-control); margin-top: 20px; }
+.authoring-secondary-actions { display: flex; flex-direction: column; gap: 9px; }
+.authoring-commit { padding: 14px 18px 16px; border-top: 1px solid var(--line); }
+.authoring-commit p { color: var(--secondary); font-size: 11px; line-height: 1.7; margin-bottom: 12px; }
+.authoring-commit .authoring-success { color: var(--success-ink); }
+.authoring-commit .text-button { margin-top: 8px; font-size: 11px; min-height: 30px; }
+.authoring-on-page { display: none; width: 100%; margin-top: 12px; }
+.tool-image .textLayer, .tool-crop .textLayer { pointer-events: none; -webkit-user-select: none; user-select: none; }
+.tool-image, .tool-crop { cursor: crosshair; }
+.authoring-overlay { position: absolute; inset: 0; z-index: 8; overflow: hidden; pointer-events: none; }
+.authoring-overlay.capturing { pointer-events: auto; touch-action: none; -webkit-user-select: none; user-select: none; }
+.authoring-image-placement { position: absolute; border: 1px dashed #225ae6; pointer-events: none; }
+.authoring-image-placement img { width: 100%; height: 100%; display: block; }
+.authoring-image-placement span, .authoring-crop-kept span { position: absolute; left: 0; top: 0; padding: 3px 6px; background: #225ae6; color: #fff; font-size: 11px; white-space: nowrap; }
+.authoring-crop-shade { position: absolute; background: #29324166; pointer-events: none; }
+.authoring-crop-kept { position: absolute; border: 1px dashed #225ae6; pointer-events: none; }
+@media (max-width: 1199px) {
+  .tools-panel.panel-authoring { width: 274px; }
+}
+@media (max-width: 899px) {
+  .tools-panel.panel-authoring { width: min(292px, calc(100vw - 44px)); }
+  .authoring-on-page { display: inline-flex; }
+}

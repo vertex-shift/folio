@@ -1,5 +1,8 @@
+pub mod authoring;
+mod authoring_image;
 pub mod document;
 pub mod forms;
+pub mod page_geometry;
 mod pages;
 mod protection;
 pub mod redaction;

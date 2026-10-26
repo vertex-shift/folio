@@ -214,7 +214,7 @@ a { color: var(--blue-ink); text-underline-offset: 3px; }
 .continuous-page-slot { position: absolute; }
 .continuous-loading { position: sticky; top: 24px; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 12px; padding: 24px 64px; color: var(--secondary); font-size: 12px; line-height: 1.8; }
 .continuous-loading p { flex-basis: 100%; text-align: center; }
-.pdf-paper { --focus: #225ae6; position: relative; flex-shrink: 0; background: #fff; color-scheme: only light; box-shadow: 0 2px 5px #24324816, 0 8px 26px #24324812; }
+.pdf-paper { --focus: #225ae6; position: relative; flex-shrink: 0; overflow: hidden; background: #fff; color-scheme: only light; box-shadow: 0 2px 5px #24324816, 0 8px 26px #24324812; }
 .page-content { width: 100%; height: 100%; position: relative; overflow: hidden; }
 .page-content > canvas { display: block; }
 .textLayer { position: absolute; inset: 0; overflow: hidden; line-height: 1; text-align: initial; transform-origin: 0 0; -webkit-text-size-adjust: none; text-size-adjust: none; z-index: 3; color-scheme: only light; }

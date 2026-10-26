@@ -173,6 +173,29 @@ the organize heading 23px, and dialogs 20px. Compact metadata and page
 numbers use 10px and 11px text with tabular numerals where relevant.
 Do not reuse metadata sizing for primary actions.
 
+## Page authoring
+
+Use one contextual Page authoring panel for Image, Crop, Watermark, and Page
+numbers. Its compact two-column tool selector inherits the existing outlined
+control/selected-action vocabulary; do not introduce a second visual system.
+Group dimensions and related settings in paired fields with tabular numerals.
+Keep apply/discard actions outside the settings scroll area. Inline errors and
+success feedback must not cover those controls, including in narrow previews.
+Keyboard numeric entry is an equal alternative to page placement and dragging.
+
+Draft image previews and crop edges are document-blue, temporary review UI,
+not saved geometry. Crop-outside shading is neutral slate. Never animate PDF
+rectangles, image dimensions, crop edges, thumbnails, or changes in paper size.
+Clip all on-page overlays to the actual visible page and omit off-page note
+and link targets. Preserve the existing continuous-page reading anchor.
+
+Explicitly distinguish non-destructive cropping from redaction and ordinary
+watermarks/numbers from tamper-proof security. Name current-page/range targets,
+physical-point measurements, and static numbering behavior. Drafts belong to
+the document workspace so tab switching and virtualized pages do not erase
+uncommitted input. Keep the established appearance themes, focus treatment,
+reduced-motion behavior, and native/preview distinction.
+
 ## Protected document opening
 
 Use the existing focused dialog for password entry, not a new workspace or

@@ -34,6 +34,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct PageInfo {
     pub key: String,
     pub rotation: i32,
+    pub geometry: crate::page_geometry::PageGeometry,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -127,6 +128,28 @@ pub enum Edit {
         expected: String,
         replacement: String,
         font: crate::text_edit::ReplacementFont,
+    },
+    Crop {
+        pages: Vec<usize>,
+        margins: [f32; 4],
+    },
+    RemoveCrop {
+        pages: Vec<usize>,
+    },
+    ResetCrop {
+        pages: Vec<usize>,
+    },
+    Watermark {
+        pages: Vec<usize>,
+        settings: crate::authoring::WatermarkSettings,
+    },
+    PageNumbers {
+        pages: Vec<usize>,
+        settings: crate::authoring::PageNumberSettings,
+    },
+    RemoveAuthoring {
+        pages: Vec<usize>,
+        kind: crate::authoring::StampKind,
     },
 }
 
@@ -311,6 +334,7 @@ impl Session {
                 Ok(PageInfo {
                     key: object_key(*id),
                     rotation: page_rotation(&self.document, *id)?,
+                    geometry: crate::page_geometry::PageGeometry::for_page(&self.document, *id)?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -334,6 +358,15 @@ impl Session {
     pub fn apply(&mut self, edit: Edit) -> Result<DocumentInfo> {
         let revision = self.next_revision;
         self.mutate(|next| apply_edit(next, edit, revision))
+    }
+
+    pub(crate) fn insert_image(
+        &mut self,
+        image: &crate::authoring_image::PreparedImage,
+        placement: crate::authoring::ImagePlacement,
+    ) -> Result<DocumentInfo> {
+        let revision = self.next_revision;
+        self.mutate(|next| crate::authoring::insert_image(next, image, placement, revision))
     }
 
     pub fn import_pages(&mut self, bytes: Vec<u8>, at: usize) -> Result<DocumentInfo> {
@@ -579,28 +612,23 @@ pub(crate) fn page_rotation(document: &Document, id: ObjectId) -> Result<i32> {
 }
 
 pub(crate) fn page_bounds(document: &Document, id: ObjectId) -> Result<[f32; 4]> {
-    let value = inherited(document, id, b"CropBox")?
-        .or(inherited(document, id, b"MediaBox")?)
-        .ok_or_else(|| invalid("This page does not define its dimensions."))?;
-    let array = document.dereference(&value)?.1.as_array()?;
-    if array.len() != 4 {
-        return Err(invalid("This page has an invalid page rectangle."));
-    }
-    let mut bounds = [0.0; 4];
-    for (index, item) in array.iter().enumerate() {
-        bounds[index] = document.dereference(item)?.1.as_float()?;
-    }
-    if bounds.iter().any(|value| !value.is_finite())
-        || bounds[2] <= bounds[0]
-        || bounds[3] <= bounds[1]
-    {
-        return Err(invalid("This page has invalid dimensions."));
-    }
-    Ok(bounds)
+    Ok(crate::page_geometry::PageGeometry::for_page(document, id)?.bounds)
 }
 
 fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> {
     match edit {
+        Edit::Crop { pages, margins } => crate::authoring::crop(document, &pages, margins)?,
+        Edit::RemoveCrop { pages } => crate::authoring::remove_crop(document, &pages)?,
+        Edit::ResetCrop { pages } => crate::authoring::reset_crop(document, &pages)?,
+        Edit::Watermark { pages, settings } => {
+            crate::authoring::watermark(document, &pages, settings, revision)?
+        }
+        Edit::PageNumbers { pages, settings } => {
+            crate::authoring::page_numbers(document, &pages, settings, revision)?
+        }
+        Edit::RemoveAuthoring { pages, kind } => {
+            crate::authoring::remove_stamps(document, &pages, kind)?
+        }
         Edit::ReplaceText {
             page,
             path,
@@ -960,7 +988,7 @@ pub(crate) fn annotation_entries(document: &Document, id: ObjectId) -> Result<Ve
     Ok(document.dereference(value)?.1.as_array()?.clone())
 }
 
-fn append_annotation(
+pub(crate) fn append_annotation(
     document: &mut Document,
     page: ObjectId,
     annotation: Dictionary,
@@ -983,6 +1011,16 @@ fn annotations(document: &Document) -> Result<Vec<AnnotationInfo>> {
                 b"Highlight" => "highlight",
                 b"FreeText" => "text",
                 b"Ink" => "ink",
+                b"Stamp" => match dictionary
+                    .get(b"FolioAuthoring")
+                    .and_then(Object::as_name)
+                    .ok()
+                {
+                    Some(b"image") => "image",
+                    Some(b"watermark") => "watermark",
+                    Some(b"page_number") => "page_number",
+                    _ => continue,
+                },
                 _ => continue,
             };
             let rectangle = document

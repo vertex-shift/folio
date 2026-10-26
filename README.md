@@ -103,6 +103,10 @@ the tag before rerunning the workflow.
 | Redact | Mark rectangles and export a fresh image-only PDF with permanently blacked-out pixels and no original document content, attachments, or descriptive metadata; retain existing encryption when protected |
 | Write | Placed, editable `/FreeText` annotations with embedded Noto Sans; supported Latin, Greek, and Cyrillic text |
 | Draw | Standard `/Ink` annotations with selectable color and stroke width |
+| Insert images | User-selected PNG/JPEG image stamps with real RGB/alpha appearance streams, placement, size, and opacity controls |
+| Crop | Non-destructive visible-page CropBox cropping by physical margins or dragging; show full MediaBox or restore the original crop |
+| Watermark | Configurable, embedded-font text watermark on current, all, or explicitly chosen pages |
+| Number pages | Persistent positioned numbers, with starting number, prefix/suffix, and explicit page-range order |
 | Search | Case-insensitive or case-sensitive text and phrases, including across line breaks; result snippets and on-page marks |
 | Highlight | Select a passage and choose Highlight, or drag across text with the highlighter |
 | Notes | Place a note on the page, enter Unicode text, and revisit it in Comments |
@@ -133,7 +137,8 @@ tab renders page canvases and thumbnails. Use the tab strip's arrow keys,
 Home/End, or **Control+Tab / Control+Shift+Tab** to move between documents.
 
 Close a tab with its **X** or **Command/Control+W**. Unsaved edits and pending
-marks require an explicit decision before that tab closes; other PDFs remain
+marks require an explicit decision before that tab closes; unapplied page-authoring
+drafts must first be applied or discarded. Other PDFs remain
 open. Closing the last tab leaves an empty workspace. Quitting checks every
 tab, including inactive ones, and lets you review unsaved documents or
 explicitly discard all of them. Saving/exporting cannot overwrite a file
@@ -378,6 +383,74 @@ as `3, 1`. Invalid ranges and repeated pages are rejected. Export does not
 alter the document, its saved state, or its undo history. Native extraction
 refuses to overwrite the active PDF. Extraction is not sanitization.
 
+## Page authoring
+
+Open **Page authoring** from All tools or the writing panel. It groups **Image**,
+**Crop**, **Watermark**, and **Page numbers** without changing the document
+workspace. Each applied operation is one PDF history change, retains existing
+password protection, and survives saving/reopening. Signed and restricted PDFs
+remain guarded. Drafts live with their document tab, not virtualized page
+components; switching tabs or scrolling away does not lose them. Apply or
+explicitly discard a draft before ordinary Save, close, history, or another
+document mutation. Failed input validation keeps the draft and working PDF.
+
+**Image:** choose a still PNG or an 8-bit grayscale/RGB JPEG through the local
+file picker in desktop or browser preview. Set left/top, width/height, original
+proportions, and opacity; click a visible page to position the image or use
+the numeric controls. This creates a standard `/Stamp` annotation containing
+a real image XObject, not an HTML image or a link to the source file. PNG
+transparency uses a PDF soft mask and combines with the selected opacity.
+EXIF orientation is applied to pixels; original EXIF/location, filename, and
+other image metadata are not copied into the PDF. Source color samples are
+converted to 8-bit RGB; 16-bit PNG samples are reduced to 8 bits. CMYK,
+higher-bit-depth/lossless/arithmetic JPEGs, animated PNGs, and other formats
+are explicitly unsupported. Limits are **16 MiB encoded**, **24 megapixels**,
+**8,192 pixels per side**, and **128 MiB of staged decoded images across tabs**.
+Inserted image stamps can be removed in Comments or undone. This does not
+offer editing, replacing, or moving arbitrary images already inside a PDF.
+
+**Crop:** drag the visible area to keep, or enter top/right/bottom/left margins.
+Current-page, all-page, and explicit page ranges are supported. Each selected
+page uses its own current visible edges, rotation, dimensions, and physical
+scale; margins must leave at least one physical point in each dimension.
+**Show full MediaBox** removes visible cropping, including an inherited crop.
+**Reset original crop** restores the effective crop from before Folio's first
+crop change, including after save/reopen and page reordering. The MediaBox and
+underlying drawing instructions are never changed.
+
+**Cropping is not redaction.** Hidden content, annotations, and metadata remain
+recoverable. Use the separate **Redact a PDF** export for permanent removal.
+PDF rendering, continuous layout, thumbnails, writing/selection overlays, and
+redaction export all use the actual cropped geometry. Cropping documents with
+interactive form fields/widgets or XFA remains unsupported.
+
+**Watermark:** place a centered, single-line text stamp on chosen pages, with
+font size (6-144 pt), color, opacity, and angle (-90 to 90 degrees). Positive
+angles rise left to right. Text uses the existing embedded Noto Sans font and
+its supported Latin/Greek/Cyrillic subset. Text that does not fit any chosen
+page fails without changing any page. Applying again replaces only Folio
+watermarks on the chosen pages; the panel can also remove those watermarks.
+
+**Page numbers:** choose a starting integer (0-999,999), optional prefix/suffix,
+font size/color, one of six top/bottom positions, and an edge-to-text-box
+margin. The first page in the entered range receives the starting number;
+`3, 1-2` with start `7` produces `7` on page 3, `8` on page 1, and `9` on page 2.
+These are visible static stamps, not PDF page labels or an automatic
+renumbering system. Reapply after reordering to renumber chosen pages.
+Applying again replaces only Folio numbers there; removal is also available.
+
+Watermarks and numbers are ordinary editable/removable PDF annotations, **not
+tamper-proof security**. Their text appears in Comments, not Find's page-text
+search. Use the authoring panel to replace/remove them, or remove an individual
+stamp in Comments. No passwords, rights management, or certification are added.
+
+Authoring measurements are physical points (72 pt = 1 inch) from the rotated
+visible top-left. Stored annotation rectangles and source-text/OCR coordinates
+remain absolute, unrotated PDF default-user-space units. The visible rectangle
+is normalized inherited `MediaBox` intersect inherited `CropBox`; page-local
+`UserUnit` supplies physical scale and does not change those coordinates.
+Cropping never rebases the original content or coordinate origin.
+
 ## Appearance
 
 Use the **Appearance** palette button in the title bar. The default **System**
@@ -425,7 +498,7 @@ package dependency.
   panel verifies the supported CMS subset above, not identity trust or all
   signature formats.
 - Interactive forms are rendered but cannot yet be filled or authored.
-  Deleting, duplicating, importing, or extracting pages in PDFs with form
+  Cropping, deleting, duplicating, importing, or extracting pages in PDFs with form
   fields or XFA is refused. Duplicate pages with popup/reply annotations
   and imported documents with optional-content layers also require a
   flattened copy.
@@ -444,7 +517,7 @@ package dependency.
   snapshot. History is in memory only.
 - No autosave or crash recovery. Only committed annotations and page edits
   belong to the document; save a copy before quitting.
-- Page deletion, text replacement, ordinary annotations, and extraction are
+- Cropping, page deletion, text replacement, ordinary annotations, and extraction are
   **not secure redaction**. Use the dedicated redacted-copy export for marked
   regions, accept its image-only limitations, and verify the exported file.
 
@@ -466,8 +539,8 @@ preview. Open uses a browser file picker; Download PDF exports a copy.
 Downloading does not pretend that a local file was overwritten or clear
 the working copy's unsaved state.
 
-The development bridge binds only `127.0.0.1:19148`, accepts PDF bytes rather
-than filesystem paths, restricts browser origins, and is excluded from the
+The development bridge binds only `127.0.0.1:19148`, accepts user-selected PDF
+and PNG/JPEG bytes rather than filesystem paths, restricts browser origins, and is excluded from the
 default native build. Do not expose the Vite server or preview bridge to a
 network.
 
@@ -562,6 +635,27 @@ Additional authoring coverage checks new-document dirty state, embedded text
 appearances, Unicode normalization and supported scripts, overflow rejection,
 rotated text matrices, independent annotation copies, imported links and
 resources, safe extraction, form/signature guards, and page-range/URL parsing.
+Page-authoring regressions cover real image pixels and soft masks, palette/
+16-bit PNG alpha, JPEG orientation, exact decode limits, metadata removal,
+document/revision-scoped image staging, all crop rotations/nonzero origins/
+inherited boxes/UserUnit, crop reset after save/reorder, selected-page numbering,
+embedded watermark fonts, transactional batch failures, RC4/AES history and
+save/reopen, and cropped writing/source-text/redaction geometry.
+
+To generate original page-authoring fixtures, set `FOLIO_AUTHORING_FIXTURES` to
+an empty output directory and run:
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml --no-default-features \
+  --test page_authoring write_original_synthetic_authoring_fixtures_when_requested
+```
+
+The fixtures include a four-page original with 0/90/180/270-degree rotations,
+nonzero origins, inherited crops, differing page sizes and UserUnit 2; an alpha
+PNG; an oriented JPEG; and stamped/cropped/reset saved PDFs. Compare the reset
+with the stamped view, then try page-2 cropping, numbering `3, 1-2`, save/reopen,
+history, draft tab switches, and a redacted export. No user PDFs are used.
+
 Existing-text coverage includes all four text-show operators, repeated text,
 shared page streams and nested Forms, original and explicit embedded fonts,
 Unicode/Differences encodings, invisible/ActualText guards, deletion,

@@ -415,6 +415,66 @@ async fn fill_form_fields(
 }
 
 #[tauri::command]
+async fn stage_authoring_image(
+    app: AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> std::result::Result<crate::authoring::ImageAsset, String> {
+    let number = |name: &str| {
+        request
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or_else(|| format!("The {name} image header is missing or invalid."))
+    };
+    let document_id = number("x-document-id")?;
+    let revision = number("x-revision")?;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Send the user-selected PNG/JPEG as binary image data.".into());
+    };
+    if bytes.len() > crate::authoring::MAX_IMAGE_BYTES {
+        return Err("Choose a PNG or JPEG no larger than 16 MiB.".into());
+    }
+    let bytes = bytes.clone();
+    with_state(app, move |state| {
+        state
+            .workspace
+            .stage_authoring_image(document_id, revision, &bytes)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn insert_authoring_image(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+    asset_id: u64,
+    placement: crate::authoring::ImagePlacement,
+) -> std::result::Result<DocumentInfo, String> {
+    with_state(app, move |state| {
+        state
+            .workspace
+            .insert_authoring_image(document_id, revision, asset_id, placement)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn cancel_authoring_image(
+    app: AppHandle,
+    document_id: u64,
+    asset_id: u64,
+) -> std::result::Result<bool, String> {
+    with_state(app, move |state| {
+        state
+            .workspace
+            .cancel_authoring_image(document_id, asset_id)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn begin_redaction(
     app: AppHandle,
     document_id: u64,
@@ -733,6 +793,9 @@ pub fn run() {
             export_signed_copy,
             form_fields,
             fill_form_fields,
+            stage_authoring_image,
+            insert_authoring_image,
+            cancel_authoring_image,
             begin_redaction,
             stage_redaction_page,
             export_redacted_copy,

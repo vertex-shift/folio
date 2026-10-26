@@ -3,7 +3,8 @@ use std::io::Cursor;
 use lopdf::{Document, Object, ObjectId, Stream, content::Content, content::Operation, dictionary};
 use serde::{Deserialize, Serialize};
 
-use crate::document::{MAX_DOCUMENT_BYTES, Result, inherited, invalid, page_rotation};
+use crate::document::{MAX_DOCUMENT_BYTES, Result, invalid};
+use crate::page_geometry::PageGeometry;
 
 pub const MAX_REGIONS: usize = 500;
 pub const MAX_PAGE_PNG_BYTES: usize = 64 * 1024 * 1024;
@@ -80,19 +81,10 @@ pub(crate) fn plan(
     }
     let mut pages = Vec::with_capacity(ids.len());
     for (index, id) in ids.into_iter().enumerate() {
-        let bounds = visible_bounds(source, id)?;
-        let rotation = page_rotation(source, id)?;
-        let user_unit = match source.get_dictionary(id)?.get(b"UserUnit") {
-            Ok(value) => f64::from(source.dereference(value)?.1.as_float()?),
-            Err(lopdf::Error::DictKey(_)) => 1.0,
-            Err(error) => return Err(error.into()),
-        };
-        if !user_unit.is_finite() || user_unit <= 0.0 || user_unit > 75_000.0 {
-            return Err(invalid(format!(
-                "Page {} has an invalid physical scale.",
-                index + 1
-            )));
-        }
+        let geometry = PageGeometry::for_page(source, id)?;
+        let bounds = geometry.bounds.map(f64::from);
+        let rotation = geometry.rotation;
+        let user_unit = f64::from(geometry.user_unit);
         let mut width_points = (bounds[2] - bounds[0]) * user_unit;
         let mut height_points = (bounds[3] - bounds[1]) * user_unit;
         if rotation % 180 != 0 {
@@ -136,49 +128,6 @@ pub(crate) fn plan(
         dpi,
         pages,
     })
-}
-
-fn read_box(source: &Document, value: &Object) -> Result<[f64; 4]> {
-    let values = source.dereference(value)?.1.as_array()?;
-    if values.len() != 4 {
-        return Err(invalid("A page has an invalid crop or media rectangle."));
-    }
-    let mut bounds = [0.0; 4];
-    for (index, value) in values.iter().enumerate() {
-        bounds[index] = f64::from(source.dereference(value)?.1.as_float()?);
-    }
-    if bounds.iter().any(|value| !value.is_finite()) {
-        return Err(invalid("A page has non-finite dimensions."));
-    }
-    if bounds[0] > bounds[2] {
-        bounds.swap(0, 2);
-    }
-    if bounds[1] > bounds[3] {
-        bounds.swap(1, 3);
-    }
-    Ok(bounds)
-}
-
-fn visible_bounds(source: &Document, id: ObjectId) -> Result<[f64; 4]> {
-    let media = inherited(source, id, b"MediaBox")?
-        .ok_or_else(|| invalid("A page has no media dimensions."))?;
-    let media = read_box(source, &media)?;
-    let bounds = match inherited(source, id, b"CropBox")? {
-        Some(crop) => {
-            let crop = read_box(source, &crop)?;
-            [
-                media[0].max(crop[0]),
-                media[1].max(crop[1]),
-                media[2].min(crop[2]),
-                media[3].min(crop[3]),
-            ]
-        }
-        None => media,
-    };
-    if bounds[2] <= bounds[0] || bounds[3] <= bounds[1] {
-        return Err(invalid("A page has an empty visible crop rectangle."));
-    }
-    Ok(bounds)
 }
 
 fn pixel_rect(page: &RasterPage, rect: [f64; 4], dpi: u16) -> Result<PixelRect> {

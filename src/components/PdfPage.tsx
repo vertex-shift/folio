@@ -2,11 +2,13 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Highlighter, LoaderCircle, MessageSquareText, TriangleAlert } from "lucide-react";
 import { TextLayer } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PageViewport, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
-import { errorMessage, selectionQuads } from "../lib/geometry";
+import { errorMessage, intersectsPdfRect, selectionQuads } from "../lib/geometry";
 import { findMatches, mapText } from "../lib/search";
 import { isRecord } from "../lib/navigation";
 import { validateRedactionRect } from "../lib/redaction";
 import { pageScale } from "../lib/continuous";
+import AuthoringOverlay from "./AuthoringOverlay";
+import type { AuthoringDraft } from "../lib/authoring";
 import type { AnnotationInfo, PdfRect, Point, Quad, RedactionMark, Tool, Zoom } from "../lib/types";
 
 interface Props {
@@ -37,6 +39,9 @@ interface Props {
   penWidth: number;
   onAnnotation(id: string): void;
   onError(message: string): void;
+  authoringDraft: AuthoringDraft | null;
+  onAuthoringPoint(point: Point): void;
+  onAuthoringCrop(margins: [number, number, number, number]): void;
 }
 
 interface Layout {
@@ -419,7 +424,10 @@ export default function PdfPage(props: Props) {
       }}
     >
       <div ref={hostRef} className="page-content" />
-      {layout && links.map((link, index) => {
+      {layout && props.authoringDraft && <AuthoringOverlay draft={props.authoringDraft}
+        viewport={layout.viewport} page={props.page} tool={props.tool} disabled={props.disabled}
+        onPoint={props.onAuthoringPoint} onCrop={props.onAuthoringCrop} onError={props.onError} />}
+      {layout && links.filter((link) => intersectsPdfRect(link.rect, layout.viewport.viewBox)).map((link, index) => {
         const a = layout.viewport.convertToViewportPoint(link.rect[0], link.rect[1]);
         const b = layout.viewport.convertToViewportPoint(link.rect[2], link.rect[3]);
         return <button className="pdf-link" key={index} disabled={props.tool !== "select"}
@@ -448,7 +456,8 @@ export default function PdfPage(props: Props) {
           style={{ left: rectangle.left, top: rectangle.top, width: rectangle.width, height: rectangle.height }}
         />
       ))}
-      {layout && props.annotations.filter((annotation) => annotation.kind === "note").map((annotation) => {
+      {layout && props.annotations.filter((annotation) => annotation.kind === "note"
+        && intersectsPdfRect(annotation.rect, layout.viewport.viewBox)).map((annotation) => {
         const start = layout.viewport.convertToViewportPoint(annotation.rect[0], annotation.rect[1]);
         const end = layout.viewport.convertToViewportPoint(annotation.rect[2], annotation.rect[3]);
         return (
