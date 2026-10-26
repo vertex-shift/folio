@@ -67,8 +67,9 @@ export default function SigningDialog({ info, report, busy, error, onClose, onEx
     <p className="signature-document-name">Sign <strong>{info.name}</strong> with a local certificate and private key.
       {info.dirty ? " Current unsaved edits are included." : ""} This adds a detached CMS approval signature, not a drawn signature image.
       {coSigning ? " Earlier signatures and every source byte are retained; earlier signatures cover their own revisions, not this added approval." : ""}</p>
-    <label className="signature-field-picker">Signature location
-      <select value={fieldId ?? ""} disabled={blocked} onChange={(event) => { setFieldId(event.target.value || null); setReviewed(false); }}>
+    <label className="signature-field-picker"><span id={`signature-location-${info.id}`}>Signature location</span>
+      <select aria-labelledby={`signature-location-${info.id}`} value={fieldId ?? ""} disabled={blocked}
+        onChange={(event) => { setFieldId(event.target.value || null); setReviewed(false); }}>
         <option value="">New invisible approval field (separate copy)</option>
         {report.emptyFields.map((field) => <option key={field.id} value={field.id} disabled={Boolean(field.blockedReason)}>
           {field.name} · {field.id}{field.widgets.length ? ` · page ${field.widgets[0]!.page + 1}` : ""}{field.blockedReason ? " (unavailable)" : ""}

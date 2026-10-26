@@ -538,50 +538,53 @@ fn successive_approvals_are_exact_prefixes_and_all_prior_signatures_and_appearan
     }
 }
 
+fn verify_cms_with_cli(bytes: &[u8], folder: &Path, label: &str) {
+    let document = Document::load_mem(bytes).unwrap();
+    for (index, signature) in signatures(&document).iter().enumerate() {
+        let [_, first, second, length] = byte_range(signature);
+        let mut data = bytes[..first].to_vec();
+        data.extend_from_slice(&bytes[second..second + length]);
+        let cms = CmsContentInfo::from_der(signature.get(b"Contents").unwrap().as_str().unwrap())
+            .unwrap()
+            .to_der()
+            .unwrap();
+        let data_path = folder.join(format!("{label}-{index}.data"));
+        let cms_path = folder.join(format!("{label}-{index}.cms"));
+        let verified = folder.join(format!("{label}-{index}.verified"));
+        std::fs::write(&data_path, &data).unwrap();
+        std::fs::write(&cms_path, cms).unwrap();
+        let output = Command::new("openssl")
+            .args([
+                "cms",
+                "-verify",
+                "-binary",
+                "-inform",
+                "DER",
+                "-noverify",
+                "-in",
+            ])
+            .arg(cms_path)
+            .arg("-content")
+            .arg(data_path)
+            .arg("-out")
+            .arg(&verified)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "Independent OpenSSL verification failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(std::fs::read(verified).unwrap(), data);
+    }
+}
+
 #[test]
 #[ignore = "requires an independent OpenSSL command-line executable"]
 fn successive_pdfs_verify_every_cms_with_independent_openssl_cli() {
     let folder = tempfile::tempdir().unwrap();
     for (revision, bytes) in successive().iter().enumerate().skip(1) {
-        let document = Document::load_mem(bytes).unwrap();
-        for (index, signature) in signatures(&document).iter().enumerate() {
-            let [_, first, second, length] = byte_range(signature);
-            let mut data = bytes[..first].to_vec();
-            data.extend_from_slice(&bytes[second..second + length]);
-            let cms =
-                CmsContentInfo::from_der(signature.get(b"Contents").unwrap().as_str().unwrap())
-                    .unwrap()
-                    .to_der()
-                    .unwrap();
-            let data_path = folder.path().join(format!("{revision}-{index}.data"));
-            let cms_path = folder.path().join(format!("{revision}-{index}.cms"));
-            let verified = folder.path().join(format!("{revision}-{index}.verified"));
-            std::fs::write(&data_path, &data).unwrap();
-            std::fs::write(&cms_path, cms).unwrap();
-            let output = Command::new("openssl")
-                .args([
-                    "cms",
-                    "-verify",
-                    "-binary",
-                    "-inform",
-                    "DER",
-                    "-noverify",
-                    "-in",
-                ])
-                .arg(cms_path)
-                .arg("-content")
-                .arg(data_path)
-                .arg("-out")
-                .arg(&verified)
-                .output()
-                .unwrap();
-            assert!(
-                output.status.success(),
-                "Independent OpenSSL verification failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            assert_eq!(std::fs::read(verified).unwrap(), data);
-        }
+        verify_cms_with_cli(bytes, folder.path(), &revision.to_string());
     }
 }
 
@@ -761,6 +764,33 @@ fn visible_widget_physical_thresholds_and_geometry_are_enforced_before_any_outpu
             .signed_copy_in_field(identity(), PASSWORD, Some(&id(fixture.fields[0])))
             .is_ok()
     );
+}
+
+#[test]
+fn incremental_object_allocation_has_bounded_headroom_instead_of_overflowing() {
+    for (highest, supported) in [(u32::MAX - 129, true), (u32::MAX - 128, false)] {
+        let mut document =
+            Document::load_mem(Session::blank(72.0, 72.0, 1).unwrap().bytes()).unwrap();
+        document.set_object(
+            (highest, 0),
+            Object::string_literal("Sparse high object number"),
+        );
+        document.max_id = highest;
+        let bytes = save(document);
+        assert_eq!(Document::load_mem(&bytes).unwrap().max_id, highest + 1);
+        let session = open(bytes.clone());
+        let result = session.signed_copy(identity(), PASSWORD);
+        assert_eq!(result.is_ok(), supported);
+        if !supported {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("object-number limit")
+            );
+        }
+        assert_eq!(session.bytes(), bytes);
+    }
 }
 
 #[test]
@@ -1228,4 +1258,117 @@ fn removing_anchors_changes_reports_in_every_tab_without_changing_any_document_r
             .anchors
             .is_empty()
     );
+}
+
+#[test]
+#[ignore = "requires original designer fixtures, a fresh evidence directory, and independent OpenSSL CLI"]
+fn designer_created_and_moved_slots_sign_successively_when_requested() {
+    let fixtures = std::path::PathBuf::from(std::env::var_os("FOLIO_DESIGNER_SIGNATURE_FIXTURES").expect(
+        "Set FOLIO_DESIGNER_SIGNATURE_FIXTURES to the original synthetic designer fixture directory.",
+    ));
+    let output = std::path::PathBuf::from(
+        std::env::var_os("FOLIO_SIGNATURE_CONTRACT_OUTPUT")
+            .expect("Set FOLIO_SIGNATURE_CONTRACT_OUTPUT to a fresh synthetic evidence directory."),
+    );
+    std::fs::create_dir_all(&output).unwrap();
+    let verification = tempfile::tempdir().unwrap();
+    for name in ["unsigned-slots-created", "unsigned-slots-moved"] {
+        let original = std::fs::read(fixtures.join(format!("{name}.pdf"))).unwrap();
+        let contract: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(fixtures.join(format!("{name}.json"))).unwrap())
+                .unwrap();
+        let mut bytes = original.clone();
+        let fields = contract["fields"].as_array().unwrap();
+        assert_eq!(fields.len(), 4);
+        for (index, expected) in fields.iter().enumerate() {
+            let field = expected["id"].as_str().unwrap();
+            let session = open(bytes.clone());
+            let before = session.signature_report().unwrap();
+            let slot = before
+                .empty_fields
+                .iter()
+                .find(|slot| slot.id == field)
+                .unwrap();
+            assert!(
+                slot.blocked_reason.is_none(),
+                "{name} {field}: {:?}",
+                slot.blocked_reason
+            );
+            assert_eq!(
+                slot.widgets[0].id,
+                expected["widgets"][0]["id"].as_str().unwrap()
+            );
+            let next = session
+                .signed_copy_in_field(identity(), PASSWORD, Some(field))
+                .unwrap();
+            assert!(next.starts_with(&bytes));
+            assert!(next.starts_with(&original));
+            assert_eq!(session.bytes(), bytes);
+            let report = open(next.clone()).signature_report().unwrap();
+            assert_eq!(report.signatures.len(), index + 1);
+            assert!(
+                report
+                    .signatures
+                    .iter()
+                    .all(|signature| signature.integrity == Integrity::Intact)
+            );
+            assert_eq!(
+                report
+                    .signatures
+                    .iter()
+                    .filter(|signature| signature.coverage == Coverage::WholeDocument)
+                    .count(),
+                1
+            );
+            verify_cms_with_cli(&next, verification.path(), &format!("{name}-{}", index + 1));
+            let document = Document::load_mem(&next).unwrap();
+            let widget = document
+                .get_dictionary(
+                    expected["widgets"][0]["id"]
+                        .as_str()
+                        .unwrap()
+                        .split_once(':')
+                        .map(|(object, generation)| {
+                            (object.parse().unwrap(), generation.parse().unwrap())
+                        })
+                        .unwrap(),
+                )
+                .unwrap();
+            let ap = document
+                .dereference(widget.get(b"AP").unwrap())
+                .unwrap()
+                .1
+                .as_dict()
+                .unwrap();
+            assert!(
+                document
+                    .dereference(ap.get(b"N").unwrap())
+                    .unwrap()
+                    .1
+                    .as_stream()
+                    .unwrap()
+                    .dict
+                    .has(b"Matrix")
+            );
+            let path = output.join(format!("{name}-approval-{}.pdf", index + 1));
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .unwrap();
+            file.write_all(&next).unwrap();
+            bytes = next;
+        }
+        let report = open(bytes).signature_report().unwrap();
+        let path = output.join(format!("{name}-report.json"));
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .unwrap();
+        file.write_all(&serde_json::to_vec_pretty(&report).unwrap())
+            .unwrap();
+    }
 }

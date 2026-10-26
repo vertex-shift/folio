@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { degrees, PDFDocument, PDFName, PDFNumber, PDFString, StandardFonts } from "pdf-lib";
+import { degrees, PDFDict, PDFDocument, PDFName, PDFNumber, PDFString, StandardFonts } from "pdf-lib";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporary = await mkdtemp(join(tmpdir(), "folio-signatures-"));
@@ -18,10 +18,11 @@ await mkdir(identityFolder);
 const password = "Synthetic runtime identity only";
 const children = [];
 const pageErrors = [];
-const evidence = { externalRequests: [], signatureCounts: [], exactPrefixes: [], screenshots: [] };
+const evidence = { externalRequests: [], signatureCounts: [], exactPrefixes: [], independentCmsChecks: [], screenshots: [] };
 const env = { ...process.env, CARGO_INCREMENTAL: "0", CARGO_PROFILE_DEV_DEBUG: "0",
   CARGO_PROFILE_TEST_DEBUG: "0", CARGO_BUILD_JOBS: "2" };
 let browser;
+let page;
 
 function start(command, args, extra = {}) {
   const child = spawn(command, args, { cwd: root, env: { ...env, ...extra }, stdio: ["ignore", "pipe", "pipe"] });
@@ -38,6 +39,29 @@ async function command(executable, args) {
     child.on("error", reject);
     child.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`${executable} failed (${code}): ${child.output}`)));
   });
+  return child.output.trim();
+}
+
+async function independentlyVerify(bytes, label) {
+  const document = await PDFDocument.load(bytes, { updateMetadata: false });
+  let count = 0;
+  for (const [, value] of document.context.enumerateIndirectObjects()) {
+    if (!(value instanceof PDFDict) || value.get(PDFName.of("Type"))?.toString() !== "/Sig") continue;
+    const [start, first, second, length] = value.lookup(PDFName.of("ByteRange")).asArray().map((value) => value.asNumber());
+    assert.equal(start, 0);
+    const data = Buffer.concat([bytes.slice(0, first), bytes.slice(second, second + length)]);
+    const dataPath = join(temporary, `${label}-${count}.data`);
+    const cmsPath = join(temporary, `${label}-${count}.cms`);
+    const verifiedPath = join(temporary, `${label}-${count}.verified`);
+    await writeFile(dataPath, data);
+    await writeFile(cmsPath, value.lookup(PDFName.of("Contents")).asBytes());
+    await command("openssl", ["cms", "-verify", "-binary", "-inform", "DER", "-noverify", "-in", cmsPath,
+      "-content", dataPath, "-out", verifiedPath]);
+    assert.deepEqual(await readFile(verifiedPath), data);
+    count++;
+  }
+  assert.ok(count > 0);
+  evidence.independentCmsChecks.push({ file: label, signatures: count });
 }
 
 async function freePort(preferred) {
@@ -130,6 +154,7 @@ async function fixture() {
 }
 
 try {
+  evidence.opensslVersion = await command("openssl", ["version"]);
   const selectedIdentity = await identity();
   const source = await fixture();
   if (process.env.FOLIO_SIGNATURE_SKIP_BUILD !== "1") {
@@ -165,19 +190,37 @@ try {
   browser = await chromium.launch({ headless: true,
     ...(process.env.FOLIO_SIGNATURE_BROWSER ? { executablePath: process.env.FOLIO_SIGNATURE_BROWSER } : {}) });
   evidence.browserVersion = browser.version();
+  console.log(`Signature browser: ${evidence.browserVersion}`);
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: "reduce" });
   await context.route("**/*", (route) => {
     if (new URL(route.request().url()).origin === origin) return route.continue();
     evidence.externalRequests.push(route.request().url());
     return route.abort();
   });
-  const page = await context.newPage();
+  page = await context.newPage();
   page.setDefaultTimeout(20_000);
-  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("pageerror", (error) => { pageErrors.push(error.message); console.error(error.message); });
   await page.goto(origin);
   const active = () => page.locator(".document-workspace:not([hidden])");
   const openFile = async (path, name) => {
-    await page.getByLabel("Choose PDF files").setInputFiles(path);
+    await page.waitForFunction(() => {
+      const button = document.querySelector('button[aria-label="Open PDFs in new tabs"]');
+      return button && !button.disabled;
+    }, null, { timeout: 20_000 }).catch(async (error) => {
+      console.error("Opening guard:", await page.locator("body").innerText(), frontend.output, backend.output);
+      throw error;
+    });
+    const [selected] = await Promise.all([
+      page.waitForEvent("filechooser", { timeout: 20_000 }),
+      page.getByRole("button", { name: "Open PDFs in new tabs", exact: true }).click({ timeout: 20_000 }),
+    ]);
+    const [response] = await Promise.all([
+      page.waitForResponse((response) => response.url().endsWith("/__folio/open") && response.request().method() === "POST"),
+      selected.setFiles(path),
+    ]);
+    assert.equal(response.status(), 200);
+    const opened = (await snapshot()).documents.find((document) => document.name === name);
+    assert.ok(opened, `The uploaded PDF did not open: ${name}`);
     await page.waitForFunction((name) => [...document.querySelectorAll(".document-tab.selected")].some((tab) => tab.textContent.includes(name)), name);
   };
   await openFile(source.path, "Workflow-with-slots.pdf");
@@ -198,11 +241,11 @@ try {
   assert.equal(await active().getByRole("textbox", { name: "Review note", exact: true }).inputValue(), "Unapplied review draft");
   await active().getByRole("button", { name: "Apply form changes", exact: true }).click();
   await active().getByText("No unapplied form changes.", { exact: true }).waitFor();
+  await active().getByRole("button", { name: "Show digital signatures", exact: true }).click();
   sourceInfo = (await snapshot()).documents.find((info) => info.id === sourceInfo.id);
   const unsaved = await currentBytes(sourceInfo);
   assert.equal(sourceInfo.dirty, true);
   const sourceState = JSON.stringify(sourceInfo);
-  await active().getByRole("button", { name: "Show digital signatures", exact: true }).click();
   await active().getByRole("button", { name: "Export signed copy", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Signature location", { exact: true }).selectOption(source.slots[0].fieldId);
@@ -220,16 +263,19 @@ try {
   await dialog.getByLabel("Choose PKCS#12 signing identity", { exact: true }).setInputFiles(selectedIdentity.file);
   await dialog.getByLabel("Identity password", { exact: true }).fill(password);
   await dialog.getByRole("checkbox").check();
-  const download = page.waitForEvent("download");
-  await dialog.getByRole("button", { name: "Sign and export copy", exact: true }).click();
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    dialog.getByRole("button", { name: "Sign and export copy", exact: true }).click(),
+  ]);
   const firstPath = join(artifacts, "First-signed.pdf");
-  await (await download).saveAs(firstPath);
+  await download.saveAs(firstPath);
   const firstBytes = new Uint8Array(await readFile(firstPath));
+  await independentlyVerify(firstBytes, "First-signed");
   assert.deepEqual(firstBytes.slice(0, unsaved.length), unsaved);
   evidence.exactPrefixes.push({ original: unsaved.length, output: firstBytes.length });
   assert.equal(JSON.stringify((await snapshot()).documents.find((info) => info.id === sourceInfo.id)), sourceState);
   assert.deepEqual(await currentBytes(sourceInfo), unsaved);
-  const appearance = await page.evaluate(async ({ original, signed, slot }) => {
+  const appearance = await page.evaluate(async ({ original, signed }) => {
     const { loadPdf } = await import("/src/lib/pdf.ts");
     const { OPS } = await import("/node_modules/pdfjs-dist/legacy/build/pdf.mjs");
     const renders = [];
@@ -243,7 +289,7 @@ try {
         const selected = fields.get("Approval 1")?.[0];
         const page = await pdf.getPage(2);
         const annotations = await page.getAnnotations();
-        const signature = annotations.find((annotation) => annotation.id === slot.widgetId.replace(":", "R"));
+        const signature = annotations.find((annotation) => annotation.fieldName === "Approval 1");
         const viewport = page.getViewport({ scale: 1 });
         const canvas = document.createElement("canvas");
         canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
@@ -255,7 +301,7 @@ try {
             text += list.argsArray[index][0].map((glyph) => typeof glyph === "object" ? glyph.unicode ?? "" : "").join("");
           }
         }
-        const rect = viewport.convertToViewportRectangle([40, 130, 300, 200]);
+        const rect = [...viewport.convertToViewportPoint(40, 130), ...viewport.convertToViewportPoint(300, 200)];
         const x = Math.floor(Math.min(rect[0], rect[2])), y = Math.floor(Math.min(rect[1], rect[3]));
         const width = Math.ceil(Math.abs(rect[2] - rect[0])), height = Math.ceil(Math.abs(rect[3] - rect[1]));
         const pixels = canvas.getContext("2d").getImageData(x, y, width, height).data;
@@ -267,7 +313,7 @@ try {
     let changed = 0;
     for (let index = 0; index < renders[0].length; index++) if (renders[0][index] !== renders[1][index]) changed++;
     return { records, changed };
-  }, { original: Array.from(unsaved), signed: Array.from(firstBytes), slot: source.slots[0] });
+  }, { original: Array.from(unsaved), signed: Array.from(firstBytes) });
   assert.ok(appearance.records.every((record) => record.selected));
   assert.match(appearance.records[1].text, /Digitally signed/);
   assert.ok(appearance.changed > 100, "The persistent selected-widget appearance must change, not remain unsigned.");
@@ -280,13 +326,17 @@ try {
   await active().getByRole("button", { name: "Show digital signatures", exact: true }).click();
   await active().getByText("Signed bytes intact", { exact: true }).waitFor();
   await active().getByText("Custom CA store (0)", { exact: true }).click();
-  const cancelCa = page.waitForEvent("filechooser");
-  await active().getByRole("button", { name: "Add public root CA", exact: true }).click();
-  await (await cancelCa).setFiles([]);
+  const [cancelCa] = await Promise.all([
+    page.waitForEvent("filechooser"),
+    active().getByRole("button", { name: "Add public root CA", exact: true }).click(),
+  ]);
+  await cancelCa.setFiles([]);
   assert.equal((await inspect(firstInfo)).trustStore.revision, 0);
-  const chooseCa = page.waitForEvent("filechooser");
-  await active().getByRole("button", { name: "Add public root CA", exact: true }).click();
-  await (await chooseCa).setFiles(selectedIdentity.root);
+  const [chooseCa] = await Promise.all([
+    page.waitForEvent("filechooser"),
+    active().getByRole("button", { name: "Add public root CA", exact: true }).click(),
+  ]);
+  await chooseCa.setFiles(selectedIdentity.root);
   await active().getByText("Chain anchored in your custom CA store", { exact: true }).waitFor();
   const trusted = await inspect(firstInfo);
   assert.equal(trusted.signatures[0].chain.status, "anchored_custom_store");
@@ -297,7 +347,7 @@ try {
   await active().getByRole("button", { name: "Show digital signatures", exact: true }).click();
   await active().getByText("Chain anchored in your custom CA store", { exact: true }).waitFor();
   await active().getByText("Custom CA store (1)", { exact: true }).click();
-  await active().getByRole("button", { name: "Remove anchor", exact: true }).click();
+  await active().getByRole("button", { name: /^Remove custom CA / }).click();
   await active().getByText("Certificate-chain trust not checked", { exact: true }).waitFor();
   assert.equal(await page.locator(".signature-custom-anchor").count(), 0, "Inactive tabs must not retain removed-anchor conclusions.");
   await page.getByRole("tab").filter({ hasText: "First-signed.pdf" }).click();
@@ -306,11 +356,14 @@ try {
   await dialog.getByLabel("Choose PKCS#12 signing identity", { exact: true }).setInputFiles(selectedIdentity.file);
   await dialog.getByLabel("Identity password", { exact: true }).fill(password);
   await dialog.getByRole("checkbox").check();
-  const secondDownload = page.waitForEvent("download");
-  await dialog.getByRole("button", { name: "Sign and export copy", exact: true }).click();
+  const [secondDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    dialog.getByRole("button", { name: "Sign and export copy", exact: true }).click(),
+  ]);
   const secondPath = join(artifacts, "Second-signed.pdf");
-  await (await secondDownload).saveAs(secondPath);
+  await secondDownload.saveAs(secondPath);
   const secondBytes = new Uint8Array(await readFile(secondPath));
+  await independentlyVerify(secondBytes, "Second-signed");
   assert.deepEqual(secondBytes.slice(0, firstBytes.length), firstBytes);
   evidence.exactPrefixes.push({ original: firstBytes.length, output: secondBytes.length });
   assert.deepEqual(await currentBytes(firstInfo), firstBytes);
@@ -367,6 +420,9 @@ try {
   evidence.sha256 = createHash("sha256").update(secondBytes).digest("hex");
   await writeFile(join(artifacts, "signature-evidence.json"), JSON.stringify(evidence, null, 2));
   console.log(JSON.stringify(evidence, null, 2));
+} catch (error) {
+  if (page && !page.isClosed()) console.error("Signature UI failure state:\n", (await page.locator("body").innerText()).slice(-18000));
+  throw error;
 } finally {
   await browser?.close();
   for (const child of children) {

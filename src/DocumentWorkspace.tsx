@@ -1838,7 +1838,7 @@ export default function DocumentWorkspace(props: Props) {
       }} />}
 
     {modal?.type === "sign-copy" && info && <SigningDialog info={info} report={modal.report} busy={Boolean(busy)} error={error}
-      onClose={() => setModal(null)} onExport={exportSignedCopy} />}
+      onClose={() => { setModal(null); setError(null); }} onExport={exportSignedCopy} />}
     {modal?.type === "static-form-copy" && <Dialog title="Export a separate static form copy?" error={error} busy={Boolean(busy)}
       onClose={() => setModal(null)} actions={<>
         <button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Keep interactive original</button>

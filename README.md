@@ -388,7 +388,9 @@ The explicit supported subset is:
   displayed, at most 14,400 points per side; zero-width/zero-height invisible
   widgets are supported. Independent widget `/MK` rotation, hidden/read-only/
   locked widgets, and malformed geometry are refused. An oversized chain or
-  output above 128 MiB is rejected before any export is written.
+  output above 128 MiB is rejected before any export is written. The engine
+  also requires 128 available object numbers below its `u32` ceiling to reserve
+  safe incremental allocation headroom.
 
 The implementation uses RustCrypto `cms`/`der`/`x509-cert` for structural
 checks and the Rust `openssl` bindings with vendored OpenSSL 3 for PKCS#12
@@ -1282,6 +1284,20 @@ application itself needs no external executable):
 ```sh
 cargo test --manifest-path src-tauri/Cargo.toml --no-default-features \
   --test signature_parity successive_pdfs_verify_every_cms_with_independent_openssl_cli \
+  -- --ignored --exact
+```
+
+An explicit designer/signing contract check consumes original synthetic
+`unsigned-slots-created.pdf/.json` and `unsigned-slots-moved.pdf/.json` fixtures.
+It actually signs every slot successively across all four page rotations,
+crop/UserUnit and page moves, reopens and checks field/widget identity and all
+CMS, and independently verifies every CMS with the OpenSSL CLI:
+
+```sh
+FOLIO_DESIGNER_SIGNATURE_FIXTURES=/absolute/fixture-directory \
+  FOLIO_SIGNATURE_CONTRACT_OUTPUT=/absolute/new-evidence-directory \
+  cargo test --manifest-path src-tauri/Cargo.toml --no-default-features \
+  --test signature_parity designer_created_and_moved_slots_sign_successively_when_requested \
   -- --ignored --exact
 ```
 

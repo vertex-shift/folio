@@ -228,6 +228,11 @@ fn signing_fields(document: &Document) -> Result<fields::Fields> {
     if document.trailer.has(b"XRefStm") {
         return Err(invalid("Signing hybrid-reference PDFs is not supported."));
     }
+    if document.max_id > u32::MAX - 128 {
+        return Err(invalid(
+            "Signing requires at least 128 unused object numbers below the PDF engine's object-number limit.",
+        ));
+    }
     let fields = fields::read(document)?;
     for (id, object) in &document.objects {
         walk(object, Some(*id), 0, &mut |id, dictionary| {
@@ -432,7 +437,7 @@ fn inspect_signatures(
                 info.message = if info.coverage == Coverage::WholeDocument {
                     "The CMS signature and signed bytes are cryptographically intact. Certificate-chain trust is a separate check."
                 } else {
-                    "The signed revision is cryptographically intact, but later bytes are NOT covered. Do not treat the current document as fully signed."
+                    "The signed revision is cryptographically intact, but later bytes are NOT covered by this signature. Review each later approval independently."
                 }.into();
             }
             Err(error) => {

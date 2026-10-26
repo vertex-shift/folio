@@ -238,9 +238,16 @@ impl TrustStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| invalid("The custom CA store revision limit was reached."))?;
-        self.anchors.insert(info.sha256_fingerprint, certificate);
+        let fingerprint = info.sha256_fingerprint.clone();
+        let mut store = self.info()?;
+        store.revision = next_revision;
+        store.anchors.push(info);
+        store
+            .anchors
+            .sort_by(|a, b| a.sha256_fingerprint.cmp(&b.sha256_fingerprint));
+        self.anchors.insert(fingerprint, certificate);
         self.revision = next_revision;
-        self.info()
+        Ok(store)
     }
 
     pub fn remove(&mut self, revision: u64, fingerprint: &str) -> Result<TrustStoreInfo> {
@@ -252,9 +259,14 @@ impl TrustStore {
             .revision
             .checked_add(1)
             .ok_or_else(|| invalid("The custom CA store revision limit was reached."))?;
+        let mut store = self.info()?;
+        store.revision = next_revision;
+        store
+            .anchors
+            .retain(|anchor| anchor.sha256_fingerprint != fingerprint);
         self.anchors.remove(fingerprint);
         self.revision = next_revision;
-        self.info()
+        Ok(store)
     }
 
     pub(super) fn evaluate(&self, signer: &X509, embedded: &[X509]) -> ChainEvaluation {

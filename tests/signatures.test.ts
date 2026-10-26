@@ -47,6 +47,8 @@ test("identity selection enforces PKCS#12 names and exact nonempty 4 MiB bounds"
     { name: "private-key.pem", size: 42 },
     { name: "identity.pfx", size: 0 },
     { name: "identity.p12", size: 4 * 1024 * 1024 + 1 },
+    { name: "identity.p12", size: Number.NaN },
+    { name: "identity.pfx", size: 0.5 },
   ]) {
     assert.throws(() => validateIdentityFile(input));
   }
