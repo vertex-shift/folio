@@ -546,6 +546,11 @@ impl Session {
         })
     }
 
+    pub(crate) fn optimized_copy(&self) -> Result<crate::output::OptimizedCopy> {
+        self.ensure_writable()?;
+        crate::output::optimize(&self.document, &self.bytes)
+    }
+
     pub(crate) fn redaction_plan(
         &self,
         job_id: u64,

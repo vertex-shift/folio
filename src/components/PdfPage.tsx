@@ -32,6 +32,7 @@ interface Props {
   onText(rect: [number, number, number, number]): void;
   onEditExisting(text: string, origin: Point): void;
   onInk(points: Point[]): void;
+  onGestureDraft?(pending: boolean): void;
   redactions: RedactionMark[];
   onRedaction(rect: PdfRect): void;
   onLink(destination: unknown, url: string | null): void;
@@ -117,6 +118,7 @@ export default function PdfPage(props: Props) {
     setStroke([]);
     redactionStart.current = null;
     setRedactionPreview(null);
+    callbacks.current.onGestureDraft?.(false);
 
     async function draw() {
       const page = await props.pdf.getPage(props.page + 1);
@@ -187,6 +189,7 @@ export default function PdfPage(props: Props) {
       cancelled = true;
       render?.cancel();
       layer?.cancel();
+      callbacks.current.onGestureDraft?.(false);
     };
   }, [props.pdf, props.page, props.zoom.mode, customScale, props.width, props.height]);
 
@@ -254,6 +257,7 @@ export default function PdfPage(props: Props) {
     setStroke([]);
     redactionStart.current = null;
     setRedactionPreview(null);
+    callbacks.current.onGestureDraft?.(false);
   }, [props.tool]);
 
   function captureSelection(autoHighlight: boolean) {
@@ -335,6 +339,7 @@ export default function PdfPage(props: Props) {
         if (!["ink", "redact"].includes(props.tool) || props.disabled || !layout || event.button !== 0
           || event.target instanceof Element && event.target.closest("button")) return;
         event.preventDefault();
+        props.onGestureDraft?.(true);
         if (props.tool === "redact") {
           redactionStart.current = localPoint(event);
           window.getSelection()?.removeAllRanges();
@@ -358,6 +363,7 @@ export default function PdfPage(props: Props) {
         if (last && Math.hypot(point[0] - last[0], point[1] - last[1]) < 1) return;
         if (strokeRef.current.length >= 20_000) {
           strokeRef.current = []; setStroke([]);
+          props.onGestureDraft?.(false);
           props.onError("This stroke is too long. Draw several shorter strokes.");
           return;
         }
@@ -367,8 +373,15 @@ export default function PdfPage(props: Props) {
       onPointerCancel={() => {
         strokeRef.current = []; setStroke([]);
         redactionStart.current = null; setRedactionPreview(null);
+        props.onGestureDraft?.(false);
+      }}
+      onLostPointerCapture={() => {
+        strokeRef.current = []; setStroke([]);
+        redactionStart.current = null; setRedactionPreview(null);
+        props.onGestureDraft?.(false);
       }}
       onPointerUp={(event) => {
+        props.onGestureDraft?.(false);
         if (redactionStart.current && layout) {
           const start = redactionStart.current;
           const end = localPoint(event);

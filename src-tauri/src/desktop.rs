@@ -23,6 +23,9 @@ struct DesktopState {
 
 type SharedState = Mutex<DesktopState>;
 
+#[path = "desktop_output.rs"]
+mod output_commands;
+
 async fn with_state<T: Send + 'static>(
     app: AppHandle,
     action: impl FnOnce(&mut DesktopState) -> Result<T> + Send + 'static,
@@ -257,6 +260,7 @@ async fn document_bytes(
         let bytes = if render {
             session.render_bytes()?
         } else {
+            state.workspace.ensure_export_ready(document_id, revision)?;
             session.bytes().to_vec()
         };
         Ok(tauri::ipc::Response::new(bytes))
@@ -762,6 +766,15 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                 true,
                 Some("CmdOrCtrl+Shift+S"),
             )?,
+            &MenuItem::with_id(app, "print", "Print...", true, Some("CmdOrCtrl+P"))?,
+            &MenuItem::with_id(
+                app,
+                "export",
+                "Export Images or Text...",
+                true,
+                None::<&str>,
+            )?,
+            &MenuItem::with_id(app, "optimize", "Optimize PDF Copy...", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "close-tab", "Close PDF", true, Some("CmdOrCtrl+W"))?,
         ],
@@ -856,6 +869,14 @@ pub fn run() {
             save_document,
             close_application,
             set_document_draft,
+            output_commands::begin_document_output,
+            output_commands::output_render_bytes,
+            output_commands::stage_document_output,
+            output_commands::prepare_optimized_output,
+            output_commands::check_document_output,
+            output_commands::save_document_output,
+            output_commands::print_document_output,
+            output_commands::cancel_document_output,
         ])
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
@@ -869,6 +890,9 @@ pub fn run() {
                 "redo",
                 "find",
                 "close-tab",
+                "print",
+                "export",
+                "optimize",
             ]
             .contains(&id)
             {

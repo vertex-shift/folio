@@ -22,6 +22,7 @@ pub struct Workspace {
     next_open_id: u64,
     drafts: HashSet<u64>,
     authoring_images: crate::authoring::ImageStaging,
+    pub(crate) outputs: crate::output::OutputJobs,
 }
 
 #[derive(Debug, Serialize)]
@@ -130,7 +131,8 @@ impl Workspace {
         if !discard_changes
             && (document.is_dirty()
                 || self.drafts.contains(&id)
-                || self.authoring_images.contains(id))
+                || self.authoring_images.contains(id)
+                || self.outputs.has_document(id))
         {
             return Err(Error::Invalid("This PDF has unsaved changes or pending marks. Save or explicitly discard them before closing the tab.".into()));
         }
@@ -139,6 +141,7 @@ impl Workspace {
         self.authoring_images.clear(id);
         self.redactions.retain(|_, job| job.plan.document_id != id);
         self.ocrs.retain(|_, job| job.plan.document_id != id);
+        self.outputs.close_document(id);
         self.pending_open.retain(|_, pending| {
             !matches!(pending.kind,
             OpenKind::Import { document_id, .. } if document_id == id)
@@ -166,7 +169,10 @@ impl Workspace {
     }
 
     pub fn has_unsaved_changes(&self) -> bool {
-        self.is_dirty() || !self.drafts.is_empty() || !self.authoring_images.is_empty()
+        self.is_dirty()
+            || !self.drafts.is_empty()
+            || !self.authoring_images.is_empty()
+            || self.outputs.is_pending()
     }
 
     pub fn stage_authoring_image(

@@ -169,6 +169,7 @@ enum Payload {
     Json(serde_json::Value),
     Pdf(Vec<u8>),
     Attachment(Vec<u8>),
+    Output(Vec<u8>, &'static str),
 }
 
 fn header(request: &Request, name: &'static str) -> Option<String> {
@@ -272,6 +273,52 @@ fn handle(
             let input: DraftRequest = json_body(request)?;
             workspace.set_draft(input.document_id, input.pending)?;
             return Ok(Payload::Json(serde_json::Value::Null));
+        }
+        (&Method::Post, "/output/begin") => {
+            let input: folio_core::output::OutputRequest = json_body(request)?;
+            return json(workspace.begin_output(input)?);
+        }
+        (&Method::Post, "/output/render-bytes") => {
+            let input: RedactionJob = json_body(request)?;
+            return Ok(Payload::Pdf(workspace.output_render_bytes(input.job_id)?));
+        }
+        (&Method::Post, "/output/page") => {
+            let job_id = numeric_header(request, "X-Folio-Job-Id")?;
+            let index = usize::try_from(numeric_header(request, "X-Folio-Output-Index")?)
+                .map_err(|_| Error::Invalid("The output page index is invalid.".into()))?;
+            let limit = folio_core::output::MAX_IMAGE_BYTES;
+            if request.body_length().is_some_and(|length| length > limit) {
+                return Err(Error::Invalid(
+                    "A rendered page exceeds the 64 MiB image limit.".into(),
+                ));
+            }
+            let mut bytes = Vec::new();
+            request
+                .as_reader()
+                .take(limit as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            workspace.stage_output_page(job_id, index, bytes)?;
+            return json(());
+        }
+        (&Method::Post, "/output/optimize") => {
+            let input: RedactionJob = json_body(request)?;
+            return json(workspace.prepare_optimized_output(input.job_id)?);
+        }
+        (&Method::Post, "/output/check") => {
+            let input: RedactionJob = json_body(request)?;
+            return json(workspace.check_output_ready(input.job_id)?);
+        }
+        (&Method::Post, "/output/file") => {
+            let input: RedactionJob = json_body(request)?;
+            let plan = workspace.check_output_ready(input.job_id)?;
+            return Ok(Payload::Output(
+                workspace.output_bytes(input.job_id)?,
+                plan.kind.mime(plan.pages.len()),
+            ));
+        }
+        (&Method::Post, "/output/cancel") => {
+            let input: RedactionJob = json_body(request)?;
+            return json(workspace.cancel_output(input.job_id));
         }
         (&Method::Post, "/import") => {
             let document_id = numeric_header(request, "X-Document-Id")?;
@@ -385,6 +432,7 @@ fn handle(
             return Ok(Payload::Pdf(if route == "/render-bytes" {
                 session.render_bytes()?
             } else {
+                workspace.ensure_export_ready(id, revision)?;
                 session.bytes().to_vec()
             }));
         }
@@ -605,6 +653,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 Ok(Payload::Json(value)) => (serde_json::to_vec(&value)?, "application/json", 200),
                 Ok(Payload::Pdf(bytes)) => (bytes, "application/pdf", 200),
                 Ok(Payload::Attachment(bytes)) => (bytes, "application/octet-stream", 200),
+                Ok(Payload::Output(bytes, mime)) => (bytes, mime, 200),
                 Err(error) => {
                     eprintln!("Preview request failed: {error}");
                     (

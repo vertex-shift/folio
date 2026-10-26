@@ -52,6 +52,7 @@ export default function App() {
     select: (_id: number) => {},
     close: (_id: number) => {},
     hasUnsaved: false,
+    guardUnload: false,
   });
 
   const onInfo = useCallback((info: DocumentInfo) => {
@@ -61,7 +62,7 @@ export default function App() {
   const onActivity = useCallback((id: number, activity: DocumentActivity | null) => {
     setActivities((current) => {
       const old = current[id];
-      if (activity && old?.busy === activity.busy && old.pendingDraft === activity.pendingDraft && old.modal === activity.modal) return current;
+      if (activity && old?.busy === activity.busy && old.pendingDraft === activity.pendingDraft && old.modal === activity.modal && old.outputPending === activity.outputPending) return current;
       const next = { ...current };
       if (activity) next[id] = activity; else delete next[id];
       return next;
@@ -207,11 +208,14 @@ export default function App() {
     control.menu(id);
   }
 
-  events.current = { open, paths: openPaths, menu, quit: requestQuit, select, close: requestClose, hasUnsaved: unsaved.length > 0 };
+  events.current = {
+    open, paths: openPaths, menu, quit: requestQuit, select, close: requestClose, hasUnsaved: unsaved.length > 0,
+    guardUnload: unsaved.length > 0 || busy || Object.values(activities).some((activity) => activity.outputPending),
+  };
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (events.current.hasUnsaved) { event.preventDefault(); event.returnValue = ""; }
+      if (events.current.guardUnload) { event.preventDefault(); event.returnValue = ""; }
     };
     const keydown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {

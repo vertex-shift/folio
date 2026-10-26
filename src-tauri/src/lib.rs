@@ -6,6 +6,7 @@ pub mod forms;
 pub mod metadata;
 pub mod ocr;
 pub mod outlines;
+pub mod output;
 pub mod page_geometry;
 mod pages;
 mod pdf_objects;

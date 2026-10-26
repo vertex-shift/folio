@@ -206,7 +206,9 @@ the existing document until unlocking succeeds. Passwords are not preferences.
 
 Use the established informational palette for an editable protected-document
 notice; keep amber read-only notices for restricted permissions and signatures.
-Saves and exports retain protection. Redaction review must disclose that
+PDF saves and PDF exports retain protection. Image/text export requires a
+separate explicit acknowledgment that these files are unencrypted and lose
+PDF permissions/signatures. Redaction review must disclose that
 encryption parameters, including a legacy file identifier where required,
 are retained even though original document content and metadata are removed.
 
@@ -407,8 +409,26 @@ locally; storage failures state that the theme applies only to the current
 session and offer an explicit retry.
 
 Dialogs are reserved for notes, protected destructive/unsaved decisions,
-and requested help/about content. They trap focus, support Escape where
+explicit output preparation/security review, and requested help/about content. They trap focus, support Escape where
 safe, and restore focus on dismissal.
+
+Print, image/text export and lossless optimization use the existing protected
+dialog, themed setting fields and fixed action vocabulary, not another shell.
+All tools and the native File menu expose the same operations; a compact
+print icon and Command/Control+P lead to print settings. Scope, resolution and
+quality stay per-document, above virtualized page renderers. Preparation shows
+cancellable selected-page progress. Protected-source image/text export has an
+unencrypted-output acknowledgment before preparation. Optimization reports
+exact before/after byte counts and a plain no-reduction state.
+
+Print is explicitly raster-based. A print-only surface outside the workspace
+contains every selected page image with its renderer-derived physical size.
+Never print the normal workspace, current viewport, chrome, comment popups or
+password UI. The dialog says Print dialog requested rather than claiming the
+driver printed. Keep the snapshot and URLs until the user explicitly finishes
+the print dialog; disable Escape/outside dismissal while it is retained.
+Unsupported geometry/printing, stale jobs, limits, cancellation and native
+filename collisions are explicit states. Preserve documents and all tabs.
 
 Focus uses a 2px outline with a 3px offset. Its color follows the palette,
 with amber in High Contrast; controls on a PDF retain a blue focus indicator

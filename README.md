@@ -94,8 +94,8 @@ the tag before rerunning the workflow.
 | Workflow | Implementation |
 | --- | --- |
 | Open PDFs | Multiple PDFs in independent tabs through the native picker, drag-and-drop, Finder association, or browser picker |
-| Protected PDFs | Password prompt for supported standard RC4/AES PDFs; preserve passwords and permissions on saved copies and exports |
-| Digital signatures | Local detached-CMS integrity inspection and certificate details; export separate unsigned, unencrypted copies signed with a local PKCS#12 identity; identity trust is not checked |
+| Protected PDFs | Password prompt for supported standard RC4/AES PDFs; preserve passwords and permissions on PDF copies and PDF exports |
+| Digital signatures | Local detached-CMS integrity inspection and certificate details; sign separate copies of unsigned, unencrypted sources with a local PKCS#12 identity; identity trust is not checked |
 | Read | Continuous vertical scrolling, real PDF rendering, selectable/copyable text, lazy thumbnails, synchronized page navigation, zoom, fit page/width, hand panning |
 | Navigate | Create, rename, nest, reorder, and delete real PDF bookmarks; internal links; confirmed external web/email links |
 | Document properties | Inspect/edit title, author, subject, and keywords; synchronize supported existing XMP with classic Info metadata |
@@ -118,6 +118,9 @@ the tag before rerunning the workflow.
 | Fill forms | Inspect and fill supported existing AcroForm text, multiline/comb/password, checkbox, radio, list, and combo fields; apply values and embedded appearances together |
 | Organize | Move, rotate, delete, duplicate, and insert blank pages; import another PDF after the selected page |
 | Extract | Export page numbers/ranges to a separate PDF, in the requested order, without changing the working document |
+| Print | Prepare all selected pages independently of virtualization, then open the platform/browser print dialog; explicit raster quality and permission checks |
+| Export images/text | PNG or JPEG at 96/150/300 DPI; multiple images in an ordered ZIP; selectable page text as UTF-8 |
+| Optimize a copy | Lossless compression of eligible unfiltered streams and unreachable-object cleanup; measured byte counts, protected PDF copies, honest no-reduction outcomes |
 | Undo/redo | Document changes, including annotations and page operations; saved-state tracking |
 | Save | Save an edited copy by default; subsequent Save can update that chosen copy; atomic file replacement |
 | Appearance | System, Light, Dark, Sepia, and High Contrast; saved locally with matching native light/dark chrome |
@@ -180,7 +183,10 @@ conservatively read-only for general editing; reopen with the owner password
 to edit content or export pages. **Forms** separately permits filling when the
 PDF grants `FILLABLE` access (`ANNOTABLE` for legacy revision-2 protection),
 without enabling page, text, annotation, or extraction edits.
-Text copying is disabled when the PDF disallows it. Encrypted
+Permitted read-only printing and image/text export remain
+available without enabling editing. Printing honors `PRINTABLE` and the
+high-quality-print permission; text/images honor `COPYABLE`. Owner access
+overrides these permission restrictions. Text copying is disabled when the PDF disallows it. Encrypted
 donor pages cannot be inserted into an unencrypted destination; when the
 destination is encrypted, inserted pages inherit its protection.
 
@@ -410,6 +416,12 @@ secure erasure.** Unreferenced PDF objects, other references, and in-memory
 undo snapshots may retain old values/payloads. Ordinary encrypted edits keep
 the original protection. The dedicated permanent raster-redaction workflow
 remains the route for its supported secure content-removal guarantee.
+
+PNG, JPEG, ZIP and TXT are deliberately **unencrypted** exports, not protected
+PDF saves. Exporting them from a protected PDF requires an explicit
+acknowledgment before content is prepared. A printer or Print-to-PDF driver
+likewise receives raster page appearances, not the encrypted source PDF or
+its signatures. PDF optimization retains existing passwords and permissions.
 
 ## Continuous scrolling
 
@@ -708,6 +720,102 @@ is normalized inherited `MediaBox` intersect inherited `CropBox`; page-local
 `UserUnit` supplies physical scale and does not change those coordinates.
 Cropping never rebases the original content or coordinate origin.
 
+## Printing, content exports and optimization
+
+Use **Print PDF**, **Export images or text**, or **Optimize PDF copy** in
+All tools. The native File menu offers the same workflows.
+**Command/Control+P** opens Folio's print controls, not a printout of the
+virtualized workspace.
+
+### Print selected pages or the whole PDF
+
+Choose All pages or a range such as `24, 2-3, 1`, then 96, 150 or 300 DPI and
+**Prepare print**. Preparation loads an isolated, revision-checked PDF snapshot
+and renders pages sequentially, including pages that have never been mounted
+on screen. Page crops, rotation and `UserUnit` physical scaling come from the
+real PDF.js viewport. The print-only surface contains page images, not app
+chrome, other tabs, note popups, password controls or editing overlays.
+
+This is **raster printing**, not vector/native-PDF printing. High-quality
+printing restrictions cap the choice at 150 DPI. Open the platform/browser
+print dialog only after preparation completes. Check paper size, scaling,
+orientation and browser headers/footers in that dialog; printer/driver
+capabilities still determine the final paper output. Browser/webview versions
+that cannot express the PDF's physical page sizes are refused explicitly.
+Unsupported native platforms and native print-command failures are errors,
+not reported as completed printing.
+Embedded previews without Folio's native printing operation must be opened
+in an ordinary desktop browser to print. Browser print calls that never
+acknowledge a print lifecycle are reported as blocked/unsupported, not success.
+
+Folio cannot know whether a driver actually printed, canceled or saved a file.
+The UI says **Print dialog requested**, not "Printed." Prepared images and
+their blob URLs remain alive until **Finished with print dialog** is explicitly
+chosen after the dialog/job finishes. Closing a PDF or quitting is guarded
+while a job is pending. Do not refresh or navigate away during a print job.
+Direct browser-menu printing without a prepared surface cannot print the app
+workspace.
+
+### Export page images or selectable text
+
+PNG uses lossless pixel encoding; JPEG uses the selected 60/80/90/100% quality
+and remains lossy even at 100%. Both support 96/150/300 DPI, white page
+backgrounds, and the same visible crops/rotations/physical dimensions as
+printing. One selected page produces an image file. Multiple pages produce
+one ZIP, in the selected order, with names such as `page-0024.jpg`.
+ZIP entries use stored, already-compressed image bytes, not an additional
+image recompression pass.
+
+TXT exports actual selectable page text as UTF-8, in renderer reading order,
+with `LF + form feed + LF` between selected pages. It adds no page headings,
+source filename, annotation bodies, images or form-field values. It does not
+perform OCR, preserve layout or infer missing text. Image-only/empty selections
+produce an explicit no-text message instead of a success-shaped empty file.
+
+Images and text lose PDF structure, encryption, permissions and signatures.
+Protected-source exports require explicit acknowledgment and `COPYABLE`
+permission (or owner access). Signed PDFs may still be printed or exported
+read-only when their permissions allow; exported pixels/text are not signed.
+
+### Optimize a separate PDF copy
+
+Choose **Measure optimization** before saving. Folio clones the current
+working PDF, compresses eligible streams that have no existing filters or
+decode parameters, and removes objects unreachable from the trailer/catalog.
+Existing compressed streams and image codecs are not decoded/re-encoded;
+there is no image downsampling, font substitution, flattening, metadata
+sanitization, PDF/A conversion or linearization. Reachable metadata,
+attachments, bookmarks, annotations and page content are retained.
+
+The result reports actual input, candidate and copy byte counts. If rewriting
+is not smaller, Folio offers only an **unchanged copy of the original working
+bytes**, not a larger "optimized" file. No compression ratio is promised.
+Existing encryption/passwords/permissions are preserved using protected
+serialization, never the decrypted rendering copy. Signed PDFs are rejected
+before any rewrite, even with owner access. The existing conservative editing
+permission policy also applies to optimization.
+
+All three workflows preserve source bytes, saved state, undo history and every
+tab on failure/cancel. Pending redactions, writing/form drafts and unfinished
+pen/area gestures block ordinary output. Native writes recheck job identity,
+document revision and draft state **after** the Save dialog, protect every
+tab's source/saved paths, and atomically create a new file without replacing
+existing files, folders or symlinks. Filename suggestions are sanitized.
+
+### Output resource limits
+
+Preparation is sequential, with one output job at a time. Exports allow up
+to **500 selected pages**; printing allows **200 pages and 100 megapixels**
+in the retained print snapshot. Each image is limited to **24 megapixels,
+16,384 pixels per dimension and 64 MiB encoded**. Prepared output is bounded
+to **128 MiB**, and text to **16 MiB including separators**. Oversized jobs
+fail explicitly; resolution is never silently reduced. Optimization is also
+limited to 200,000 PDF objects, 128 MiB encoded stream data, two million
+traversal items and 128 levels of inline nesting. Cancellation stops
+preparation without saving a partial file; native Save dialogs have their
+own Cancel control. A running bounded compression call finishes before its
+cancellation can be acknowledged, but cancellation prevents saving it.
+
 ## Appearance
 
 Use the **Appearance** palette button in the title bar. The default **System**
@@ -848,6 +956,12 @@ management through Session history and encrypted serialization.
 default protection preservation, and explicit AES-256 protection-copy exports.
 `document_utilities_desktop.rs` contains picker/save commands; the development
 bridge exposes only document-ID/revision requests and uploaded attachment bytes.
+`output.rs` owns permission-checked output jobs, sequential image/text staging,
+bounded ZIP construction, no-clobber copy writes and lossless optimization;
+`desktop_output.rs` adds the native save/print commands. Frontend output
+preparation, transport and the isolated print surface live in
+`src/lib/output.ts`, `outputBridge.ts` and `printSurface.ts`, with
+`components/OutputDialog.tsx` and print-only `src/output.css`.
 
 Reordering first materializes inherited resources, page boxes, and rotations
 before rebuilding the page tree. Deletion prunes unreachable objects and
@@ -958,6 +1072,62 @@ opening/owner passwords are `reader` / `owner`. Open these in native or
 preview, change properties/bookmarks/attachments, save/reopen, and try
 protection-copy export as both reader and owner. Wrong owner passwords must
 not create a copy or change the current document.
+
+Output coverage includes real compression/no-reduction byte counts,
+RC4/AES-128/AES-256 preservation, separate print/copy/owner permissions,
+signed-source rules, exact UTF-8/ZIP contents, pixel/byte/page limits,
+incomplete/stale/canceled jobs, draft gates and no-clobber cross-tab writes.
+
+Generate original synthetic output fixtures (never use private PDFs):
+
+```sh
+cargo run --manifest-path src-tauri/Cargo.toml --no-default-features \
+  --example output_fixtures -- /absolute/path/to/a/new/fixture-directory
+```
+
+The generator refuses to overwrite fixture files. Protected samples use
+opening password `user` and owner password `owner`. `output-signed-marker.pdf`
+contains an explicitly labeled synthetic signature marker, **not a valid
+cryptographic signature**.
+
+For an actual-renderer regression check, run the browser preview, finish any
+output dialog, then run in its development console:
+
+```js
+await import("/tests/output.browser.ts").then((tests) => tests.checkOutputRenderer())
+```
+
+Vite may reload once when first optimizing the test-only `pdf-lib` dependency;
+rerun the command after that reload. The check uses an in-memory 24-page PDF
+and verifies off-screen text/pixels, rotated crop/UserUnit dimensions, real
+PNG/JPEG encoding, print-surface cleanup, cancellation and stale revisions.
+It does not open a print dialog or save a user's document.
+
+Manual native/browser output checks:
+
+1. Open `output-24-pages.pdf`, stay on page 1 and prepare all pages at 150 DPI.
+   Only a viewport neighborhood is mounted, but the print snapshot has 24
+   images. Open the print dialog and inspect pages 1, 2, 3 and 24. The first
+   three physical sizes are 612x792, 400x680 and 600x450 points (minor driver
+   rounding may apply). Finish/cancel the dialog before clearing the snapshot.
+2. Export text for `24, 2, 1`; check that those three actual page strings occur
+   in order, separated only by form feeds. Export page 2 as PNG at 150 DPI:
+   it is 834x1417 pixels. Export `24, 1` as JPEG: the ZIP contains
+   `page-0024.jpg` then `page-0001.jpg`.
+3. Measure/save optimization, compare reported bytes with the file's actual
+   length, and reopen it. Optimize the already optimized copy: the UI reports
+   no reduction and any offered copy is byte-for-byte unchanged.
+4. Try `output-print-only.pdf` with `user`: 150-DPI print is available, 300-DPI
+   print/image/text export/editing are not. `owner` allows these outputs.
+   `output-copy-only.pdf` permits acknowledged image/text export but not
+   printing or optimization. `output-protected.pdf` optimized copies reopen
+   with both passwords. The signed marker permits read-only content output
+   but not optimization.
+5. Start a large preparation and cancel; create pending redactions or a
+   writing draft and attempt print/save; attempt an existing filename, an
+   active source/saved path or another tab's path in the native Save dialog.
+   Verify explicit refusal/cancellation, no partial file, unchanged tabs and
+   unchanged source/saved/undo state.
 
 The blue app mark is authored in `public/folio.svg`; native icons are generated
 with `npm run tauri -- icon public/folio.svg`.

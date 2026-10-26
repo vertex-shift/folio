@@ -1,0 +1,37 @@
+.output-settings .setting-field { font-size: 12px; }
+.output-settings .setting-field input[type="text"] { max-width: 210px; width: 210px; }
+.output-settings .setting-field select { max-width: 210px; }
+.output-scope { border: 0; padding: 0; margin: 20px 0; min-width: 0; }
+.output-scope legend { color: var(--strong); font-weight: 600; margin-bottom: 8px; }
+.output-scope-options { display: flex; gap: 20px; flex-wrap: wrap; }
+.output-scope-options label { display: flex; gap: 7px; align-items: center; }
+.output-scope input[type="radio"] { accent-color: var(--blue); }
+.output-disclosure { margin: 18px 0 12px; padding: 12px 14px; border: 1px solid var(--border); background: var(--panel); border-radius: var(--radius-control); }
+.output-disclosure .checkbox-setting { align-items: flex-start; padding: 8px 0 0; }
+.output-disclosure .checkbox-setting input { margin-top: 5px; flex-shrink: 0; }
+.output-progress { margin-top: 18px; display: grid; gap: 9px; }
+.output-progress > span { display: flex; align-items: center; gap: 8px; }
+.output-progress progress { width: 100%; height: 8px; accent-color: var(--blue); }
+.output-result { margin-top: 18px; }
+.output-result h3 { font-size: 13px; color: var(--strong); margin-bottom: 10px; }
+.output-sizes { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; margin: 14px 0; font-variant-numeric: tabular-nums; }
+.output-sizes dt { color: var(--muted); }
+.output-sizes dd { margin: 0; text-align: right; color: var(--strong); }
+.output-selection { overflow-wrap: anywhere; color: var(--muted); }
+.folio-print-surface { display: none; }
+@media print {
+  @page { margin: 0; }
+  html, body { margin: 0 !important; padding: 0 !important; width: auto !important; height: auto !important; min-height: 0 !important; overflow: visible !important; background: #fff !important; color: #000 !important; }
+  body > :not(.folio-print-surface) { display: none !important; }
+  .folio-print-surface[data-ready="true"] { display: block !important; margin: 0 !important; padding: 0 !important; }
+  .folio-print-sheet { margin: 0; padding: 0; border: 0; break-after: page; break-inside: avoid; overflow: hidden; box-sizing: border-box; }
+  .folio-print-sheet:last-child { break-after: auto; }
+  .folio-print-sheet img { display: block; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; max-width: none; max-height: none; }
+}
+@media (max-width: 479px) {
+  .output-settings .setting-field { align-items: flex-start; flex-direction: column; }
+  .output-settings .setting-field input[type="text"], .output-settings .setting-field select { width: 100%; max-width: 100%; }
+}
+.output-dialog { display: flex; flex-direction: column; overflow: hidden; }
+.output-dialog .dialog-header, .output-dialog .dialog-actions { flex-shrink: 0; }
+.output-dialog .dialog-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }

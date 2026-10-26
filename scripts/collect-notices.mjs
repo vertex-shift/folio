@@ -43,7 +43,7 @@ export function collectNotices(root) {
     "cms", "der", "der_derive", "const-oid", "spki", "x509-cert", "flagset", "zeroize", "zeroize_derive",
     "base64ct", "pem-rfc7468", "tls_codec", "tls_codec_derive",
     "image", "zune-jpeg", "zune-core", "byteorder-lite", "bytemuck", "moxcms", "pxfm",
-    "getrandom", "quick-xml"]);
+    "getrandom", "quick-xml", "crc32fast"]);
   for (const dependency of metadata.packages.filter((entry) => names.has(entry.name))) {
     const folder = dirname(dependency.manifest_path);
     const candidates = ["LICENSE", "LICENSE-MIT", "LICENSE-APACHE", "LICENSE-MIT.md", "LICENSE.md", "LICENSE.txt", "LICENSE.spdx", "COPYING"];

@@ -44,6 +44,6 @@ export default function PasswordDialog({
     <p className="muted">The password stays in memory for this open document. It is not stored in settings or sent to an external service.</p>
     <p className="muted">{challenge.importing
       ? "Inserted pages use the destination PDF's password protection. An encrypted source cannot be inserted into an unencrypted destination."
-      : "Saved copies and exports keep the existing password protection. Your original file stays unchanged."}</p>
+      : "Saved PDF copies keep the existing password protection. Image/text exports require a separate unencrypted-output acknowledgment. Your original file stays unchanged."}</p>
   </Dialog>;
 }

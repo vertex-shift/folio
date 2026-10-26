@@ -37,6 +37,7 @@ png = "0.18"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 getrandom = "0.3"
 quick-xml = "0.42"
+crc32fast = "1"
 tauri = { version = "2", optional = true, features = [] }
 tauri-plugin-opener = { version = "2", optional = true }
 rfd = { version = "0.17", optional = true }

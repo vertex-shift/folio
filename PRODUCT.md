@@ -113,6 +113,19 @@ The desktop app processes document contents locally.
   protection, not inferred from permissive opening-password access. Keep source
   bytes/history/protection unchanged, block pending drafts/marks, guard all open
   file paths, and label permission flags as cooperative rather than absolute DRM.
+- Output tools: print full documents or selected ranges from a bounded,
+  isolated raster snapshot, independent of virtualized pages. Export real
+  PNG/JPEG page pixels or selectable UTF-8 text; multiple images use one ZIP.
+  Honor print/high-quality-print/copy permissions independently of editing,
+  including owner access. Explicitly disclose unencrypted protected-source
+  image/text exports. Preserve print resources until the dialog/job is finished.
+- Lossless optimization: measure safe unfiltered-stream compression and
+  unreachable-object cleanup, then save a separate protected PDF copy.
+  Report actual before/after bytes and no-reduction outcomes; never rewrite
+  signed sources, silently downsample images, claim PDF/A/linearization or
+  guarantee a compression ratio. Output cancellation/failure preserves all
+  tabs, source bytes, saved state and history. Unapplied drafts/areas block
+  ordinary output, and native output copies never clobber existing paths.
 - User-requested modern polish and subtle animation: refine the existing
   document-first shell with coherent control shapes, cleaner surfaces,
   restrained elevation, and purposeful contextual feedback. Honor Reduce

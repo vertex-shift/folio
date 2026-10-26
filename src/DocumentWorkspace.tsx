@@ -9,6 +9,7 @@ import {
   ShieldCheck, Trash2, Undo2, X, FileKey2,
   Bookmark, FilePlus2, FileInput, FileOutput, Pencil, Type, SquarePen, ExternalLink, Eraser, ImagePlus, Hash, Stamp, Crop,
   Info, Paperclip,
+  Printer, FileDown, Minimize2,
 } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { version as appVersion } from "../package.json";
@@ -31,7 +32,9 @@ import DocumentPropertiesPanel from "./components/DocumentPropertiesPanel";
 import AttachmentsPanel from "./components/AttachmentsPanel";
 import ProtectionCopyDialog from "./components/ProtectionCopyDialog";
 import OcrPanel, { OcrJobProgress } from "./components/OcrPanel";
+import OutputDialog from "./components/OutputDialog";
 import { bridge, native, runtimeIssue } from "./lib/bridge";
+import { createDraftSynchronizer } from "./lib/draftProtection";
 import { documentUtilities } from "./lib/documentUtilitiesBridge";
 import { MAX_MANAGEMENT_SOURCE_BYTES, metadataChanged } from "./lib/documentUtilitiesModel";
 import type { AttachmentInfo, BookmarkInfo, CopyProtection, MetadataDraft } from "./lib/documentUtilitiesModel";
@@ -51,6 +54,7 @@ import type { OcrOptions, OcrOutcome, OcrPlan, OcrProgress } from "./lib/ocrType
 import type { DocumentInfo, Edit, ExistingTextRun, Mode, OpenOutcome, Panel, PasswordChallenge, PdfRect, Point, Quad, RedactionMark, RedactionPlan, ReplacementFont, Tool, Zoom } from "./lib/types";
 import "./authoring.css";
 import "./document-utilities.css";
+import type { OutputAction } from "./lib/output";
 
 type Action = { type: "open" | "example" | "close" }
   | { type: "create"; width: number; height: number };
@@ -113,6 +117,7 @@ export interface DocumentActivity {
   busy: boolean;
   pendingDraft: boolean;
   modal: boolean;
+  outputPending: boolean;
 }
 
 interface Props {
@@ -159,6 +164,9 @@ export default function DocumentWorkspace(props: Props) {
   const [ocrProgress, setOcrProgress] = useState<OcrProgress | null>(null);
   const [ocrCanceling, setOcrCanceling] = useState(false);
   const ocrJob = useRef<{ controller: AbortController; documentId: number; revision: number } | null>(null);
+  const [outputMode, setOutputMode] = useState<OutputAction | null>(null);
+  const gesturePages = useRef(new Set<number>());
+  const [gestureDraft, setGestureDraft] = useState(false);
   const redactionsRef = useRef(redactions);
   redactionsRef.current = redactions;
   const redactionCounter = useRef(0);
@@ -170,8 +178,9 @@ export default function DocumentWorkspace(props: Props) {
   const pendingWriting = modal?.type === "edit-existing"
     ? modal.text !== modal.expected || modal.font !== "original"
     : Boolean(modal && "text" in modal && modal.text.trim());
-  const writingDraftRef = useRef(pendingWriting || pendingMetadata);
-  writingDraftRef.current = pendingWriting || pendingMetadata;
+  const writingDraftRef = useRef(pendingWriting || pendingMetadata || gestureDraft);
+  writingDraftRef.current = pendingWriting || pendingMetadata || gestureDraft;
+  const [syncDraft] = useState(() => createDraftSynchronizer(bridge.draft));
   const [draggedPage, setDraggedPage] = useState<number | null>(null);
   const [overPage, setOverPage] = useState<number | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 800, height: 740 });
@@ -216,10 +225,10 @@ export default function DocumentWorkspace(props: Props) {
     },
     onDraftCleared: async () => {
       const current = infoRef.current;
-      if (current) await bridge.draft(current.id, writingDraftRef.current || redactionsRef.current.length > 0 || forms.pending());
+      if (current) await syncDraft(current.id, writingDraftRef.current || redactionsRef.current.length > 0 || forms.pending());
     },
   });
-  const pendingDraft = pendingWriting || pendingMetadata || redactions.length > 0 || authoring.pending || forms.count > 0;
+  const pendingDraft = pendingWriting || pendingMetadata || gestureDraft || redactions.length > 0 || authoring.pending || forms.count > 0;
   const pendingDraftRef = useRef(pendingDraft);
   pendingDraftRef.current = pendingDraft;
   const authoringDisabled = disabled || readOnly || redactions.length > 0 || forms.count > 0 || pendingMetadata;
@@ -241,8 +250,8 @@ export default function DocumentWorkspace(props: Props) {
   }), []);
 
   useEffect(() => {
-    props.onActivity(documentId, { busy: Boolean(busy), pendingDraft, modal: Boolean(modal) });
-  }, [documentId, busy, pendingDraft, modal, props.onActivity]);
+    props.onActivity(documentId, { busy: Boolean(busy) || gestureDraft, pendingDraft, modal: Boolean(modal) || Boolean(outputMode), outputPending: Boolean(outputMode) });
+  }, [documentId, busy, gestureDraft, pendingDraft, modal, outputMode, props.onActivity]);
 
   useEffect(() => () => props.onActivity(documentId, null), [documentId, props.onActivity]);
 
@@ -263,6 +272,15 @@ export default function DocumentWorkspace(props: Props) {
     infoRef.current = next;
     setInfo(next);
     props.onInfo(next);
+  }
+
+  function onGestureDraft(page: number, pending: boolean) {
+    if (pending) gesturePages.current.add(page);
+    else gesturePages.current.delete(page);
+    const active = gesturePages.current.size > 0;
+    writingDraftRef.current = pendingWriting || pendingMetadata || active;
+    pendingDraftRef.current = writingDraftRef.current || forms.pending() || authoring.hasDraft() || redactionsRef.current.length > 0;
+    setGestureDraft(active);
   }
 
   async function adopt(next: DocumentInfo) {
@@ -359,6 +377,7 @@ export default function DocumentWorkspace(props: Props) {
       case "close": {
         const current = infoRef.current;
         if (!current) throw new Error("This PDF tab is no longer open.");
+        await syncDraft(current.id, hasPendingContentEdits() || redactionsRef.current.length > 0);
         await props.onClose(current);
         break;
       }
@@ -445,6 +464,7 @@ export default function DocumentWorkspace(props: Props) {
       if (hasPendingContentEdits() || redactionsRef.current.length) {
         throw new Error("Apply or discard pending edits and clear redaction marks before using OCR.");
       }
+      await syncDraft(current.id, false);
       if (current.readOnlyReason) throw new Error(current.readOnlyReason);
       if (!current.copyAllowed) throw new Error("This PDF does not allow copying. Reopen with the owner password before using OCR.");
       const pages = parsePageRange(ocrRange, current.pageCount, MAX_OCR_PAGES);
@@ -686,9 +706,11 @@ export default function DocumentWorkspace(props: Props) {
       return;
     }
     if (redactionsRef.current.length || tool === "redact") { reviewRedactions(); return; }
+    if (writingDraftRef.current) { setError("Apply or cancel the current writing draft before saving."); return; }
     void run(native ? "Saving PDF..." : "Preparing download...", async () => {
       const current = infoRef.current;
       if (!current) throw new Error("Open a PDF before saving.");
+      await syncDraft(current.id, false);
       const saved = await bridge.save(current, copy);
       if (!saved) return;
       updateInfo(saved);
@@ -703,8 +725,10 @@ export default function DocumentWorkspace(props: Props) {
       setError("Apply or discard pending edits and clear redaction marks before signing the current PDF.");
       return;
     }
-    setError(null);
-    setModal({ type: "sign-copy", documentId: current.id, revision: current.revision });
+    void run("Preparing certificate signing...", async () => {
+      await syncDraft(current.id, false);
+      setModal({ type: "sign-copy", documentId: current.id, revision: current.revision });
+    });
   }
 
   function exportSignedCopy(identity: SigningIdentity, password: string) {
@@ -718,6 +742,7 @@ export default function DocumentWorkspace(props: Props) {
       if (redactionsRef.current.length || hasPendingContentEdits()) {
         throw new Error("Apply or discard pending edits and clear redaction marks before signing. The original has not been redacted.");
       }
+      await syncDraft(current.id, false);
       const output = await signatureBridge.export(current, identity, password);
       if (!output) {
         setToast("Signing canceled. Your original and unsaved work are unchanged.");
@@ -752,7 +777,7 @@ export default function DocumentWorkspace(props: Props) {
     if (pendingDraftRef.current) {
       throw new Error("Finish or discard pending writing, form, metadata, and redaction drafts before exporting. No copy was created.");
     }
-    await bridge.draft(current.id, pendingDraftRef.current);
+    await syncDraft(current.id, pendingDraftRef.current);
     if (infoRef.current?.id !== current.id || infoRef.current.revision !== current.revision) {
       throw new Error("The document changed. Review it and export again.");
     }
@@ -811,6 +836,27 @@ export default function DocumentWorkspace(props: Props) {
       at: entries.filter((entry) => entry.parent === parent).length });
   }
 
+  function requestOutput(kind: OutputAction) {
+    if (busyRef.current) { setToast("Wait for the current document action to finish."); return; }
+    if (redactionsRef.current.length || hasPendingContentEdits()) {
+      setError("Apply or discard pending edits and clear redaction marks before printing or exporting.");
+      return;
+    }
+    const current = infoRef.current;
+    if (!current) { setError("Open a PDF before printing or exporting."); return; }
+    if (kind === "print" && !current.permissions.printAllowed) {
+      setError("This PDF does not allow printing. Reopen it with the owner password."); return;
+    }
+    if (kind === "export" && !current.permissions.copyAllowed) {
+      setError("This PDF does not allow copying text or images. Reopen it with the owner password."); return;
+    }
+    if (kind === "optimize" && current.readOnlyReason) { setError(current.readOnlyReason); return; }
+    void run("Preparing output controls...", async () => {
+      await syncDraft(current.id, false);
+      setOutputMode(kind);
+    });
+  }
+
   function updateRedactions(next: RedactionMark[]) {
     redactionsRef.current = next;
     setRedactions(next);
@@ -844,17 +890,17 @@ export default function DocumentWorkspace(props: Props) {
       const current = infoRef.current;
       if (!current) throw new Error("Open a PDF before filling its fields.");
       const changes = forms.changes(current);
-      await bridge.draft(current.id, true);
+      await syncDraft(current.id, true);
       const next = await bridge.fillForms(current, changes);
       forms.discard();
       await adopt(next);
-      await bridge.draft(next.id, writingDraftRef.current || redactionsRef.current.length > 0 || authoring.hasDraft());
+      await syncDraft(next.id, writingDraftRef.current || redactionsRef.current.length > 0 || authoring.hasDraft());
       setToast("Form values and appearances applied. Undo is available; save a copy to keep them.");
     });
   }
 
   function hasPendingContentEdits() {
-    return writingDraftRef.current || forms.pending() || authoring.hasDraft();
+    return writingDraftRef.current || forms.pending() || authoring.hasDraft() || gesturePages.current.size > 0;
   }
 
   async function discardForms(action?: Action) {
@@ -862,7 +908,7 @@ export default function DocumentWorkspace(props: Props) {
     await run("Discarding unapplied form changes...", async () => {
       const current = infoRef.current;
       if (!current) throw new Error("This PDF tab is no longer open.");
-      await bridge.draft(current.id, writingDraftRef.current || redactionsRef.current.length > 0 || authoring.hasDraft());
+      await syncDraft(current.id, writingDraftRef.current || redactionsRef.current.length > 0 || authoring.hasDraft());
       forms.discard();
       setModal(null);
       discarded = true;
@@ -962,6 +1008,9 @@ export default function DocumentWorkspace(props: Props) {
       case "example": requestAction({ type: "example" }); break;
       case "save": save(false); break;
       case "save-copy": save(true); break;
+      case "print": requestOutput("print"); break;
+      case "export": requestOutput("export"); break;
+      case "optimize": requestOutput("optimize"); break;
       case "undo": history(false); break;
       case "redo": history(true); break;
       case "find": showPanel("search"); break;
@@ -973,7 +1022,7 @@ export default function DocumentWorkspace(props: Props) {
   actionRef.current = {
     open, save, history, find: () => showPanel("search"),
     action: requestAction, page: changePage, zoom: changeZoom, tool: chooseTool,
-    menu: handleMenu, hasModal: Boolean(modal) || props.blocked,
+    menu: handleMenu, hasModal: Boolean(modal) || Boolean(outputMode) || props.blocked,
     escape: () => { if (!busyRef.current) { setModal(null); setTool("select"); } },
   };
 
@@ -1004,11 +1053,11 @@ export default function DocumentWorkspace(props: Props) {
   useEffect(() => {
     if (!info) return;
     let active = true;
-    void bridge.draft(info.id, pendingDraft).catch((error: unknown) => {
+    void syncDraft(info.id, pendingDraft).catch((error: unknown) => {
       if (active) setError(`Native draft protection could not be updated: ${errorMessage(error)}`);
     });
     return () => { active = false; };
-  }, [info?.id, pendingDraft]);
+  }, [info?.id, pendingDraft, syncDraft]);
 
   useEffect(() => {
     if (props.active && panelOpen && panel === "search") searchRef.current?.focus();
@@ -1037,10 +1086,9 @@ export default function DocumentWorkspace(props: Props) {
       const actions = actionRef.current;
       const key = event.key.toLowerCase();
       const mod = event.metaKey || event.ctrlKey;
-      if (mod && key === "p" && (redactionsRef.current.length || forms.pending())) {
+      if (mod && key === "p") {
         event.preventDefault();
-        setError(forms.pending() ? "Apply or discard the form changes before printing the old PDF values."
-          : "Export the redacted copy instead of printing the original with pending marks.");
+        if (!actions.hasModal || gesturePages.current.size > 0) actions.menu("print");
         return;
       }
       if (actions.hasModal) return;
@@ -1138,6 +1186,7 @@ export default function DocumentWorkspace(props: Props) {
       </nav>
       <div className="command-actions">
         <IconButton label="Find in document (Command+F)" disabled={disabled} onClick={() => showPanel("search")}><Search size={18} /></IconButton>
+        <IconButton label="Print PDF (Command+P)" disabled={disabled} onClick={() => requestOutput("print")}><Printer size={18} /></IconButton>
         <span className="toolbar-divider" />
         <IconButton label="Undo (Command+Z)" disabled={disabled || authoring.pending || pendingMetadata || redactions.length > 0 || forms.count > 0 || !info?.canUndo} onClick={() => history(false)}><Undo2 size={18} /></IconButton>
         <IconButton label="Redo (Command+Shift+Z)" disabled={disabled || authoring.pending || pendingMetadata || redactions.length > 0 || forms.count > 0 || !info?.canRedo} onClick={() => history(true)}><Redo2 size={18} /></IconButton>
@@ -1208,6 +1257,16 @@ export default function DocumentWorkspace(props: Props) {
             <button disabled={disabled} onClick={() => showPanel("attachments")}><span className="tool-icon neutral"><Paperclip size={18} /></span><span>File attachments</span><ChevronRight size={14} className="list-arrow" /></button>
             <button disabled={disabled || pendingDraft || Boolean(info?.readOnlyReason?.match(/signed|certif/i))}
               onClick={() => { setError(null); setModal({ type: "protection-copy" }); }}><span className="tool-icon neutral"><LockKeyhole size={18} /></span><span>Export protection copy</span><ChevronRight size={14} className="list-arrow" /></button>
+            <div className="tool-list-divider" />
+            <button disabled={disabled} onClick={() => requestOutput("print")}>
+              <span className="tool-icon neutral"><Printer size={18} /></span><span>Print PDF</span><kbd>Cmd+P</kbd>
+            </button>
+            <button disabled={disabled} onClick={() => requestOutput("export")}>
+              <span className="tool-icon neutral"><FileDown size={18} /></span><span>Export images or text</span>
+            </button>
+            <button disabled={disabled || readOnly} onClick={() => requestOutput("optimize")}>
+              <span className="tool-icon neutral"><Minimize2 size={18} /></span><span>Optimize PDF copy</span>
+            </button>
             <div className="tool-list-divider" />
             <button disabled={disabled} onClick={() => showPanel("search")}>
               <span className="tool-icon neutral"><Search size={18} /></span><span>Find in document</span>
@@ -1416,6 +1475,7 @@ export default function DocumentWorkspace(props: Props) {
                 onNote={(point) => setModal({ type: "note", page: index, point, text: "" })}
                 onText={(rect) => setModal({ type: "text", page: index, rect, text: "" })}
                 onInk={(points) => draw(points, index)} onLink={navigateLink}
+                onGestureDraft={(pending) => onGestureDraft(index, pending)}
                 onEditExisting={(text, origin) => hitSourceText(text, origin, index)}
                 penColor={writingColor} penWidth={Number.isFinite(Number(penWidth)) ? Math.max(0.5, Math.min(12, Number(penWidth))) : 2}
                 onAnnotation={selectAnnotation} onError={notifyError}
@@ -1503,12 +1563,12 @@ export default function DocumentWorkspace(props: Props) {
     </div>
 
     <footer className="statusbar">
-      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : redactions.length ? <><span className="status-dot dirty" />{redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}</> : forms.count ? <><span className="status-dot dirty" />{forms.count} unapplied form {forms.count === 1 ? "field" : "fields"}</> : authoring.pending ? <><span className="status-dot dirty" />Unapplied page authoring</> : pendingMetadata ? <><span className="status-dot dirty" />Unapplied metadata draft</> : pendingWriting ? <><span className="status-dot dirty" />Uncommitted writing</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
+      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : redactions.length ? <><span className="status-dot dirty" />{redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}</> : forms.count ? <><span className="status-dot dirty" />{forms.count} unapplied form {forms.count === 1 ? "field" : "fields"}</> : authoring.pending ? <><span className="status-dot dirty" />Unapplied page authoring</> : pendingMetadata ? <><span className="status-dot dirty" />Unapplied metadata draft</> : pendingWriting || gestureDraft ? <><span className="status-dot dirty" />Uncommitted writing or area</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
       <div className="document-status">{info && <><span>{info.pageCount} {info.pageCount === 1 ? "page" : "pages"}</span><span className="status-separator" /><span>{formatBytes(info.byteLength)}</span></>}</div>
       <div className="privacy-status"><ShieldCheck size={12} /><span>{runtimeIssue ? "Desktop runtime unavailable" : native ? "Local files. No uploads." : "Preview uses the real Rust engine"}</span></div>
     </footer>
 
-    {error && !modal && !utilityPanel && !(panelOpen && (panel === "forms" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
+    {error && !modal && !outputMode && !utilityPanel && !(panelOpen && (panel === "forms" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
     {toast && !(panelOpen && (panel === "forms" || panel === "authoring" && authoring.draft)) && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
 
     {modal?.type === "protection-copy" && info && <ProtectionCopyDialog info={info} busy={Boolean(busy)} error={error}
@@ -1570,6 +1630,10 @@ export default function DocumentWorkspace(props: Props) {
       <p><strong>{modal.attachment.name}</strong> is data supplied by this PDF, not a trusted Folio resource.</p>
       <p>Choose a separate output location. Folio sanitizes the suggested filename and never opens or executes the file. Inspect it with trusted tools before using it.</p>
     </Dialog>}
+
+    <OutputDialog info={info} mode={outputMode} busy={Boolean(busy)} pendingDraft={pendingDraft} error={error}
+      current={() => infoRef.current} run={run} onClearError={() => setError(null)} onResourceError={notifyError}
+      onNotice={setToast} onClose={() => { setOutputMode(null); setError(null); }} />
 
     {modal?.type === "password" && <PasswordDialog challenge={modal.challenge} busy={Boolean(busy)} error={error}
       onCancel={() => cancelPassword(modal.challenge.requestId)}
@@ -1779,7 +1843,7 @@ export default function DocumentWorkspace(props: Props) {
     {modal?.type === "shortcuts" && <Dialog title="A few useful shortcuts" onClose={() => setModal(null)}>
       <dl className="shortcut-list">
         {[["New PDF", "Command + N"], ["Open PDFs", "Command + O"], ["Close PDF tab", "Command + W"], ["Next / previous tab", "Control + Tab / Shift + Tab"], ["Save", "Command + S"], ["Save a copy", "Command + Shift + S"],
-          ["Find in document", "Command + F"], ["Undo / redo", "Command + Z / Shift + Z"],
+          ["Find in document", "Command + F"], ["Print PDF", "Command + P"], ["Undo / redo", "Command + Z / Shift + Z"],
           ["Previous / next page", "Left / Right"], ["Zoom in / out", "Command + Plus / Minus"],
           ["Select / pan", "V / H"], ["Highlight / add note", "M / N"], ["Add text / pen", "T / D"], ["Edit existing text", "E"], ["Mark redaction areas", "R"]].map(([label, key]) =>
           <div key={label}><dt>{label}</dt><dd><kbd>{key}</kbd></dd></div>)}

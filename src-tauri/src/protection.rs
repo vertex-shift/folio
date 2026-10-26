@@ -8,6 +8,7 @@ use lopdf::{
     },
 };
 use serde::{Deserialize, Serialize};
+use std::io::{self, Write};
 
 use crate::document::{Error, MAX_DOCUMENT_BYTES, Result, invalid};
 
@@ -304,14 +305,40 @@ pub(crate) fn serialize(document: &Document) -> Result<Vec<u8>> {
     if let Some(state) = output.encryption_state.take() {
         output.encrypt(&state)?;
     }
-    let mut bytes = Vec::new();
-    output.save_to(&mut bytes)?;
-    if bytes.len() > MAX_DOCUMENT_BYTES {
+    let mut bytes = BoundedPdfBytes {
+        bytes: Vec::new(),
+        limit: MAX_DOCUMENT_BYTES,
+        exceeded: false,
+    };
+    let saved = output.save_to(&mut bytes);
+    if bytes.exceeded {
         return Err(invalid(
             "The output PDF exceeds the 128 MiB file-size limit.",
         ));
     }
-    Ok(bytes)
+    saved?;
+    Ok(bytes.bytes)
+}
+
+struct BoundedPdfBytes {
+    bytes: Vec<u8>,
+    limit: usize,
+    exceeded: bool,
+}
+
+impl Write for BoundedPdfBytes {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.exceeded || bytes.len() > self.limit - self.bytes.len() {
+            self.exceeded = true;
+            return Err(io::Error::other("The PDF output byte limit was reached."));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 pub(crate) fn protect_export(source: &Document, bytes: Vec<u8>) -> Result<Vec<u8>> {
@@ -326,4 +353,24 @@ pub(crate) fn protect_export(source: &Document, bytes: Vec<u8>) -> Result<Vec<u8
     }
     output.encryption_state = Some(state.clone());
     serialize(&output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serialization_stops_at_the_exact_byte_limit_without_growing_the_buffer() {
+        let mut bytes = BoundedPdfBytes {
+            bytes: Vec::new(),
+            limit: 4,
+            exceeded: false,
+        };
+        bytes.write_all(b"four").unwrap();
+        assert_eq!(bytes.bytes, b"four");
+        assert!(bytes.write_all(b"!").is_err());
+        assert!(bytes.exceeded);
+        assert_eq!(bytes.bytes, b"four");
+        assert!(bytes.write_all(b"more").is_err());
+    }
 }
