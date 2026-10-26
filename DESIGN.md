@@ -196,6 +196,32 @@ the document workspace so tab switching and virtualized pages do not erase
 uncommitted input. Keep the established appearance themes, focus treatment,
 reduced-motion behavior, and native/preview distinction.
 
+## Existing-image editing
+
+Edit existing images extends the same contextual tools panel at 300px, not
+the shell navigation. List actual page-content occurrences with pixel size,
+operation identity, selection state and readable read-only reasons. Match
+each item to a keyboard-focusable on-page outline; exclude annotation/widget
+appearances. Keep temporary selection/draft bounds document-blue on white
+paper, with a labeled corner resize handle, numeric physical-point alternatives
+and arrow-key movement. Never animate PDF geometry or pixel changes.
+
+Preserve the current footprint and orientation when choosing a replacement;
+label stretching when aspect ratios differ. Show a sanitized replacement
+thumbnail separately, not a false alpha composite over the original. The
+on-page outline previews bounds only; original pixels remain until Apply.
+Removal has an explicit marked-for-removal
+state followed by an explicit Remove image occurrence action. Keep errors and
+Apply/Discard in a fixed footer above the panel edge; scroll settings separately.
+Retain the complete draft through panel/tab changes and page virtualization.
+A workspace banner returns to unapplied image edits from another panel.
+
+Inherit system type, all five themes, semantic chrome colors, visible focus
+and reduced-motion behavior. Unsupported clips, transforms, transparency and
+optional content stay honestly read-only. Ordinary image replacement/removal
+does not securely erase old bytes or undo history; keep this distinction near
+the controls, rather than implying redaction.
+
 ## Protected document opening
 
 Use the existing focused dialog for password entry, not a new workspace or

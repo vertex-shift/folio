@@ -236,6 +236,74 @@ fn assert_placement(actual: Option<[f32; 4]>, expected: [f32; 4]) {
 }
 
 #[test]
+fn real_image_backed_checkbox_appearances_are_not_page_content_targets_and_survive_edits() {
+    let mut source = shared_nested();
+    let page = source.get_pages()[&1];
+    let stamp = source
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Annots")
+        .unwrap()
+        .as_array()
+        .unwrap()[0]
+        .as_reference()
+        .unwrap();
+    let appearance = source
+        .get_dictionary(stamp)
+        .unwrap()
+        .get(b"AP")
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .get(b"N")
+        .unwrap()
+        .clone();
+    let widget = source.add_object(dictionary! {
+        "Type" => "Annot", "Subtype" => "Widget", "FT" => "Btn",
+        "T" => Object::string_literal("Synthetic image checkbox"), "F" => 4,
+        "Rect" => numbers(&[80.0, 30.0, 100.0, 50.0]), "P" => page,
+        "V" => "Off", "AS" => "Off",
+        "AP" => dictionary! { "N" => dictionary! { "Off" => appearance.clone(), "Yes" => appearance.clone() } },
+    });
+    source
+        .get_dictionary_mut(page)
+        .unwrap()
+        .get_mut(b"Annots")
+        .unwrap()
+        .as_array_mut()
+        .unwrap()
+        .push(Object::Reference(widget));
+    source.catalog_mut().unwrap().set(
+        "AcroForm",
+        dictionary! { "Fields" => vec![Object::Reference(widget)] },
+    );
+    let (mut workspace, info) = open_workspace(source);
+    let original = Document::load_mem(workspace.document(info.id).unwrap().bytes()).unwrap();
+    let before_widget = original.get_object(widget).unwrap().clone();
+    let before_appearance = original.dereference(&appearance).unwrap().1.clone();
+    let images = occurrences(&workspace, info.id, 0);
+    assert_eq!(images.len(), 4);
+    assert!(images.iter().all(|image| image.editable));
+    apply(
+        &mut workspace,
+        info.id,
+        ImageChange::Remove {
+            page: 0,
+            path: images[0].path.clone(),
+        },
+    );
+    let saved = workspace.document(info.id).unwrap().bytes().to_vec();
+    let reopened =
+        Session::from_bytes(saved.clone(), "Image widget.pdf".into(), None, 100).unwrap();
+    assert_eq!(reopened.image_occurrences(0).unwrap().images.len(), 3);
+    assert_eq!(reopened.image_occurrences(1).unwrap().images.len(), 4);
+    assert_eq!(reopened.form_fields().unwrap().fields.len(), 1);
+    let pdf = Document::load_mem(&saved).unwrap();
+    assert_eq!(pdf.get_object(widget).unwrap(), &before_widget);
+    assert_eq!(pdf.dereference(&appearance).unwrap().1, &before_appearance);
+}
+
+#[test]
 fn replaces_one_nested_repeated_occurrence_without_touching_shared_pages_or_annotation_images() {
     let (mut workspace, info) = open_workspace(shared_nested());
     let original = workspace.document(info.id).unwrap().bytes().to_vec();
@@ -472,6 +540,39 @@ fn geometry_edits_use_crop_rotation_and_page_local_user_unit_and_preserve_reflec
             );
         }
     }
+}
+
+#[test]
+fn extreme_integer_origins_are_indexed_exactly_but_precision_losing_placements_are_atomic_errors() {
+    let mut source = direct(b"q 80 0 0 64 100000081 100000144 cm /Img Do Q");
+    let page = source.get_pages()[&1];
+    source.get_dictionary_mut(page).unwrap().set(
+        "MediaBox",
+        numbers(&[100000000.0, 100000000.0, 100001024.0, 100001024.0]),
+    );
+    source.get_dictionary_mut(page).unwrap().set(
+        "CropBox",
+        numbers(&[100000000.0, 100000000.0, 100001024.0, 100001024.0]),
+    );
+    let (mut workspace, info) = open_workspace(source);
+    let original = workspace.document(info.id).unwrap().bytes().to_vec();
+    let image = occurrences(&workspace, info.id, 0).remove(0);
+    assert_placement(image.placement, [81.0, 816.0, 80.0, 64.0]);
+    assert!(image.editable);
+    let error = workspace
+        .edit_image_occurrence(
+            info.id,
+            info.revision,
+            ImageChange::Place {
+                page: 0,
+                path: image.path,
+                placement: [85.0, 816.0, 80.0, 64.0],
+            },
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("precision"));
+    assert_eq!(workspace.document(info.id).unwrap().bytes(), original);
+    assert!(!current(&workspace, info.id).can_undo);
 }
 
 #[test]

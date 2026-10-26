@@ -1,6 +1,6 @@
 import { Check, Image, ImagePlus, LoaderCircle, MapPin, RefreshCw, Trash2 } from "lucide-react";
 import type { DocumentInfo } from "../../lib/types";
-import { draftPlacement, imageDraftPending, imagePath } from "./model";
+import { draftPlacement, imageDraftPending, imageGeometryChanged, imagePath } from "./model";
 import type { ImageEditDraft, ImageInspection, ImageOccurrence } from "./types";
 
 export default function ImageEditingPanel(props: {
@@ -14,7 +14,7 @@ export default function ImageEditingPanel(props: {
   const pending = imageDraftPending(draft);
   const locked = props.disabled || props.stale || !draft?.source.editable;
   let placementError: string | null = null;
-  if (draft?.source.editable && !draft.remove && !props.stale) {
+  if (draft?.source.editable && imageGeometryChanged(draft) && !draft.remove && !props.stale) {
     try { draftPlacement(draft, props.info.pages[draft.page].geometry); }
     catch (error) { placementError = error instanceof Error ? error.message : "The image placement is invalid."; }
   }

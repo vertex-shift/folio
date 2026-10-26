@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage } from "../../lib/geometry";
 import type { DocumentInfo } from "../../lib/types";
 import { imageEditingBridge } from "./bridge";
-import { assertImageDraft, imageDraftPending, imagePath, newImageDraft } from "./model";
+import { assertImageDraft, imageDraftPending, imagePath, inspectionKeys, newImageDraft } from "./model";
 import type { ImageEditDraft, ImageInspection, ImageOccurrence } from "./types";
 
 const emptyInspection: ImageInspection = { loading: false, result: null, error: null };
@@ -11,6 +11,7 @@ export function useImageEditing(info: DocumentInfo | null, page: number, enabled
   const [draft, setDraft] = useState<ImageEditDraft | null>(null);
   const [inspections, setInspections] = useState<Record<string, ImageInspection>>({});
   const requests = useRef(new Map<string, Promise<void>>());
+  const cachedKeys = useRef<string[]>([]);
   const picker = useRef<ImageEditDraft | null>(null);
   const latest = useRef({ info, draft });
   latest.current = { info, draft };
@@ -33,6 +34,8 @@ export function useImageEditing(info: DocumentInfo | null, page: number, enabled
     return () => { mounted.current = false; };
   }, []);
   useEffect(() => {
+    requests.current.clear();
+    cachedKeys.current = [];
     setInspections({});
     if (!pending()) update(null);
   }, [info?.id, info?.revision, pending, update]);
@@ -44,17 +47,22 @@ export function useImageEditing(info: DocumentInfo | null, page: number, enabled
     if (!info) return Promise.resolve();
     const prefix = prefixRef.current, key = `${prefix}${page}`;
     const existing = requests.current.get(key);
+    cachedKeys.current = inspectionKeys(cachedKeys.current, key);
+    for (const previous of requests.current.keys()) {
+      if (!cachedKeys.current.includes(previous)) requests.current.delete(previous);
+    }
     if (!retry && existing) return existing;
-    setInspections((previous) => ({ ...previous, [key]: { loading: true, result: null, error: null } }));
+    setInspections((previous) => ({ ...Object.fromEntries(Object.entries(previous).filter(([key]) => cachedKeys.current.includes(key))),
+      [key]: { loading: true, result: null, error: null } }));
     const request = imageEditingBridge.inspect(info, page).then((result) => {
-      if (mounted.current && prefixRef.current === prefix) {
+      if (mounted.current && prefixRef.current === prefix && cachedKeys.current.includes(key) && requests.current.get(key) === request) {
         setInspections((previous) => ({ ...previous, [key]: { loading: false, result, error: null } }));
       }
     }).catch((error: unknown) => {
-      if (mounted.current && prefixRef.current === prefix) {
+      if (mounted.current && prefixRef.current === prefix && cachedKeys.current.includes(key) && requests.current.get(key) === request) {
         setInspections((previous) => ({ ...previous, [key]: { loading: false, result: null, error: errorMessage(error) } }));
       }
-      requests.current.delete(key);
+      if (requests.current.get(key) === request) requests.current.delete(key);
     });
     requests.current.set(key, request);
     return request;

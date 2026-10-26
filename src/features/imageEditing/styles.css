@@ -14,7 +14,7 @@
 .image-occurrence strong, .image-occurrence span span { display: block; overflow-wrap: anywhere; font-size: 11px; line-height: 1.6; }
 .image-occurrence strong { color: var(--strong); font-size: 12px; font-weight: 600; }
 .image-occurrence span span { margin-top: 3px; color: var(--secondary); }
-.image-occurrence.selected { border-color: var(--blue); background: var(--blue-soft); }
+.image-occurrence.selected { border-color: var(--blue); background: var(--selected); }
 .image-edit-context { margin-top: 24px; margin-bottom: 16px; }
 .image-edit-context .text-button { margin-top: 6px; }
 .image-edit-settings > .button { width: 100%; }

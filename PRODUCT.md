@@ -72,9 +72,23 @@ The desktop app processes document contents locally.
   ranges. Watermarks/numbers are removable annotations, not security or dynamic
   page labels. Preserve document-scoped settings/placement drafts across tab
   switches and virtualization; guard ordinary save, close, quit, and mutations.
-  Cropping is not permanent redaction, and existing-image editing remains out
-  of scope. Keep cropped rendering, overlays, writing, thumbnails, and redacted
+  Cropping is not permanent redaction. Keep cropped rendering, overlays, writing, thumbnails, and redacted
   exports on a shared MediaBox/CropBox/rotation/UserUnit geometry contract.
+- Existing-image editing: inspect/select actual raster Image-XObject occurrences
+  in page content, including repeated nested Forms; replace one with a bounded
+  local PNG/JPEG, remove it, or move/resize supported placement through real
+  source-content mutations. Isolate shared resources and invocation chains,
+  preserve the footprint/orientation by default, and honor CropBox, rotation,
+  page-local UserUnit and enclosing Form bounds. Annotation/widget appearances
+  are not targets. Only fully visible axis-aligned placements, including
+  right-angle turns/reflections, are editable; refuse inline/stencil images,
+  optional content, oblique/skewed placement, source path/text clipping,
+  transparency groups and unsupported graphics states. Preserve replacement/
+  numeric drafts above virtualized pages and across tab/panel changes; include
+  them and live gestures in the single aggregate source/save/history/close/
+  quit/output/signing/OCR/comparison draft authority. Retain encryption and
+  transactional history. Removal/replacement is not secure redaction or proof
+  that old image objects, history or private bytes were erased.
 - Existing AcroForm filling: inspect bounded, inherited field trees and qualified
   names; fill supported text/multiline/comb/password, checkbox, radio, list, and
   combo fields. Preserve export/display distinctions, repeated widgets, read-only
@@ -224,7 +238,7 @@ The desktop app processes document contents locally.
   AATL/EUTL, or external certificate/document requests. Anchor removal invalidates
   all tabs' cached trust. Do not claim revocation, trusted timestamps, qualified
   signatures, or PAdES-LTV.
-- Certificate-based protection, paragraph reflow, arbitrary font/encoding support, existing-image editing,
+- Certificate-based protection, paragraph reflow, arbitrary font/encoding support, unrestricted existing-image editing,
   advanced form authoring, unsupported interactive forms, non-English OCR, general Office conversion, advanced
   certification/qualified signing and authoritative trust, cloud
   collaboration, and full Acrobat parity remain incomplete capabilities.

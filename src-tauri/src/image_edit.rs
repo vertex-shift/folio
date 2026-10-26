@@ -487,6 +487,25 @@ pub(crate) fn apply(
         }
         let adjustment = multiply(inverse(image.matrix)?, target);
         validate_matrix(adjustment)?;
+        let encoded = adjustment.map(|value| f64::from(value as f32));
+        let actual = multiply(image.matrix, encoded);
+        if !axis_aligned(actual) || inverse(actual).is_err() {
+            return Err(invalid(
+                "This placement would create an unstable source transform that cannot be edited reliably. Choose less extreme dimensions or coordinates.",
+            ));
+        }
+        let actual_placement = display_placement(&geometry, actual)
+            .ok_or_else(|| invalid("This image placement has unstable coordinate precision."))?;
+        if actual_placement
+            .iter()
+            .zip(placement)
+            .any(|(actual, requested)| (actual - requested).abs() > 0.01)
+            || !inside_clips(actual, &image.clips)
+        {
+            return Err(invalid(
+                "This placement cannot preserve 0.01 physical-point coordinate precision within the source transform and clip. Use a less extreme source geometry; the PDF is unchanged.",
+            ));
+        }
         if matches!(change, ImageChange::Place { .. })
             && adjustment
                 .iter()
@@ -545,7 +564,11 @@ pub(crate) fn apply(
 }
 
 fn number(value: &Object) -> Result<f64> {
-    let value = f64::from(value.as_float()?);
+    let value = match value {
+        Object::Integer(value) => *value as f64,
+        Object::Real(value) => f64::from(*value),
+        _ => return Err(invalid("A source drawing operand is not a number.")),
+    };
     if !value.is_finite() {
         return Err(invalid("A source drawing value is not finite."));
     }

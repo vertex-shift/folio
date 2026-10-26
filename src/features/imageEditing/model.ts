@@ -5,6 +5,10 @@ import type { ImageChange, ImageEditDraft, ImageOccurrence, ImagePlacement } fro
 export const imagePath = (path: number[]) => path.join(".");
 const fields = ["x", "y", "width", "height"] as const;
 
+export function inspectionKeys(previous: string[], key: string): string[] {
+  return [...previous.filter((value) => value !== key), key].slice(-8);
+}
+
 export function newImageDraft(info: DocumentInfo, page: number, source: ImageOccurrence): ImageEditDraft {
   if (!info.pages[page]) throw new Error("This image page is no longer available.");
   const [x, y, width, height] = source.placement?.map(String) ?? ["", "", "", ""];

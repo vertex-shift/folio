@@ -108,6 +108,7 @@ the tag before rerunning the workflow.
 | Write | Placed, editable `/FreeText` annotations with embedded Noto Sans; supported Latin, Greek, and Cyrillic text |
 | Draw | Standard `/Ink` annotations with selectable color and stroke width |
 | Insert images | User-selected PNG/JPEG image stamps with real RGB/alpha appearance streams, placement, size, and opacity controls |
+| Edit existing images | Inspect/select actual page-content Image-XObject occurrences; replace, remove, or move/resize the supported occurrence without changing shared images elsewhere |
 | Crop | Non-destructive visible-page CropBox cropping by physical margins or dragging; show full MediaBox or restore the original crop |
 | Watermark | Configurable, embedded-font text watermark on current, all, or explicitly chosen pages |
 | Number pages | Persistent positioned numbers, with starting number, prefix/suffix, and explicit page-range order |
@@ -994,8 +995,8 @@ converted to 8-bit RGB; 16-bit PNG samples are reduced to 8 bits. CMYK,
 higher-bit-depth/lossless/arithmetic JPEGs, animated PNGs, and other formats
 are explicitly unsupported. Limits are **16 MiB encoded**, **24 megapixels**,
 **8,192 pixels per side**, and **128 MiB of staged decoded images across tabs**.
-Inserted image stamps can be removed in Comments or undone. This does not
-offer editing, replacing, or moving arbitrary images already inside a PDF.
+Inserted image stamps can be removed in Comments or undone. They are separate
+from the existing page-content image editor below.
 
 **Crop:** drag the visible area to keep, or enter top/right/bottom/left margins.
 Current-page, all-page, and explicit page ranges are supported. Each selected
@@ -1038,6 +1039,67 @@ remain absolute, unrotated PDF default-user-space units. The visible rectangle
 is normalized inherited `MediaBox` intersect inherited `CropBox`; page-local
 `UserUnit` supplies physical scale and does not change those coordinates.
 Cropping never rebases the original content or coordinate origin.
+
+## Editing existing images
+
+Open **Edit existing images** in All tools or the writing panel. Select a
+numbered on-page image outline or its exact occurrence in the current-page
+list. The list inspects actual raster `/Image` XObject `Do` operations, including
+nested/repeated Form invocations; it never treats annotation, stamp or widget
+appearance images as ordinary page content. Unsupported occurrences expose
+their reason instead of a misleading editing control.
+
+Choose a local **PNG or JPEG** replacement, edit X/Y/width/height in physical
+points, drag the selected outline to move, or drag its corner to resize.
+Arrow keys move by 1 pt (Shift by 10 pt); the resize handle supports the same
+keys. Physical placement is measured from the rotated visible CropBox's
+top-left, with page-local UserUnit respected. A replacement preserves the
+source footprint and right-angle orientation/reflection by default; different
+aspect ratios stretch to that footprint. The sanitized thumbnail shows the
+replacement; the on-page outline previews bounds only, not a simulated alpha
+composite over the old pixels. Original PDF pixels remain until you choose
+**Apply image changes** to mutate source page content.
+**Mark selected occurrence for removal** followed by **Remove image occurrence**
+removes only that invocation.
+
+Each successful edit is one transactional, undoable source mutation. Shared
+image objects, content streams and repeated nested Forms are isolated by
+copy-on-write; other invocations, other pages, existing text/vector content
+and appearance streams stay unchanged. Saving/reopening retains the actual
+content change and existing password protection. Replacement decoding,
+EXIF orientation, RGB conversion, metadata stripping and true alpha/soft-mask
+handling reuse image insertion's bounded pipeline. Its **16 MiB**, **24 MP**,
+**8,192 px/side** and combined **128 MiB staged decoded pixels across tabs**
+limits also apply to replacement.
+
+Supported placements are finite, nonzero and axis-aligned in page space,
+including 90-degree turns and reflections. The entire image must fit inside
+the visible page and every enclosing Form BBox, both before and after edits.
+Inline images, stencil masks, optional-content layers, skew/oblique transforms,
+explicit path/text clipping, page/Form transparency groups, reference/OPI
+Forms, external/alternate images and unsupported alpha/blend/transfer/overprint
+graphics states remain read-only or produce an explicit inspection error.
+Dynamic XFA and signed/certified/general-edit-restricted PDFs are not editable.
+Per-page inspection is bounded to **2,000 occurrences**, **200,000 operations**,
+**16 nested Forms**, **16 MiB decoded content**, and 128 graphics/marked-content
+stack levels. Cyclic, malformed and unstable structures fail explicitly.
+Placement changes that cannot round-trip through PDF drawing numbers within
+0.01 physical point, or would cross a Form clip after serialization, are
+refused atomically instead of silently moving to a different position.
+
+Replacement bytes, removal and placement input stay in the document workspace
+across tabs, panels, scrolling and virtualization. Apply or explicitly discard
+them before source edits/history, Save, close/quit, output, OCR, signing or
+comparison. Live image gestures participate in the existing activity contract,
+with independent feature/page ownership so one overlay cannot clear another
+feature's gesture. Backend assets also guard output before the frontend draft
+update; document/revision and a monotonic mutation epoch reject stale assets,
+even when undo resurrects an old revision. Failures retain the draft and source.
+
+**Image removal/replacement is ordinary editing, not secure redaction.** Old
+image objects, original files, metadata and undo history may retain previous
+pixels or private data. No image-extraction filesystem API is exposed. Use
+the separate rasterized Redact export when permanent pixel removal is needed.
 
 ## Printing, content exports and optimization
 
@@ -1274,7 +1336,8 @@ package dependency.
 ## Important boundaries
 
 - **Not full Acrobat parity.** Run-level source-text replacement is supported,
-  but not paragraph reflow, existing-image editing, non-English OCR, general Office conversion or PDF creation beyond the explicit PNG/JPEG/UTF-8 subset,
+  but not paragraph reflow, unrestricted existing-image editing, non-English OCR,
+  general Office conversion or PDF creation beyond the explicit PNG/JPEG/UTF-8 subset,
   automatic AATL/EUTL/OS trust, cloud storage, collaboration, AI assistant,
   accessibility remediation, full conformance validation/preflight, or
   print-production workflows. The bounded technical inspection and fresh
@@ -1369,6 +1432,14 @@ page creation/import/extraction/duplication; `writing.rs` generates standard
 annotation appearances and embedded font maps.
 `text_edit.rs` indexes and replaces existing text-show operations, including
 nested Form invocations, with strict font decoding and isolated resource copies.
+`image_edit.rs` indexes supported source-image occurrences and mutates exact
+invocation paths. Both editors use `pdf_objects.rs` for copy-on-write content/
+Form/resource isolation; image insertion/replacement share `authoring_image.rs`
+for bounded, oriented and sanitized RGB/soft-mask embedding. The image UI,
+draft model and transport live in `src/features/imageEditing`; native commands
+live in `desktop_image_edit.rs`. Preview `/images`, `/images/edit`,
+`/images/replacement` and `/images/replacement/cancel` expose the same checked
+engine, accepting uploaded bytes rather than arbitrary image filesystem paths.
 `redaction.rs` plans crop/rotation/UserUnit-aware pixel masks, decodes bounded
 page PNGs, burns redactions, and constructs fresh image-only PDFs. The renderer
 submits one page at a time; original PDF objects never enter the output builder.
@@ -1482,6 +1553,24 @@ document/revision-scoped image staging, all crop rotations/nonzero origins/
 inherited boxes/UserUnit, crop reset after save/reorder, selected-page numbering,
 embedded watermark fonts, transactional batch failures, RC4/AES history and
 save/reopen, and cropped writing/source-text/redaction geometry.
+
+Existing-image regressions exercise occurrence-local replacement/removal/
+movement, shared page streams/resources, nested repeated Forms, appearance
+exclusion, crop/rotation/page-local UserUnit, reflections, alpha/orientation,
+atomic failures, stale/foreign assets, undo-resurrected revisions, restricted/
+signed sources and legacy RC4 save/history/reopen. Pure frontend tests cover
+draft protection, exact footprint defaults, numeric limits, the bounded
+eight-page inspection cache, and live placement.
+To run the real-engine/PDF.js/UI check with original synthetic fixtures:
+
+```sh
+node tests/imageEditing.e2e.mjs
+```
+
+The runner uses isolated loopback ports (prefer UI 1433/engine 19161), an
+isolated debug target and a caller-selected `FOLIO_IMAGE_EVIDENCE_DIR`.
+It never launches or stops a native Folio application or creates release
+bundles. Use `FOLIO_IMAGE_BROWSER` to select a compatible local Chromium.
 
 To generate original page-authoring fixtures, set `FOLIO_AUTHORING_FIXTURES` to
 an empty output directory and run:

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assertImageDraft, draftPlacement, gesturePlacement, imageChange, imageDraftPending, imageGeometryChanged, newImageDraft, withPlacement } from "../src/features/imageEditing/model.ts";
+import { assertImageDraft, draftPlacement, gesturePlacement, imageChange, imageDraftPending, imageGeometryChanged, inspectionKeys, newImageDraft, withPlacement } from "../src/features/imageEditing/model.ts";
 import type { ImageOccurrence } from "../src/features/imageEditing/types.ts";
 import type { DocumentInfo } from "../src/lib/types.ts";
 
@@ -26,6 +26,19 @@ test("selecting source images preserves exact footprint without making an accide
   assert.throws(() => newImageDraft(info, 2, source), /page/);
 });
 
+test("inspection caches retain only eight recent page snapshots and do not merge revisions or documents", () => {
+  let keys: string[] = [];
+  for (let page = 0; page < 20; page++) keys = inspectionKeys(keys, `42:7:0:${page}`);
+  assert.deepEqual(keys, Array.from({ length: 8 }, (_, index) => `42:7:0:${index + 12}`));
+  keys = inspectionKeys(keys, "42:7:0:12");
+  assert.equal(keys.at(-1), "42:7:0:12");
+  assert.equal(keys.length, 8);
+  keys = inspectionKeys(keys, "43:7:0:12");
+  assert.ok(keys.includes("42:7:0:12") && keys.includes("43:7:0:12"));
+  keys = inspectionKeys(keys, "42:8:1:12");
+  assert.equal(keys.at(-1), "42:8:1:12");
+});
+
 test("replacement and removal target the exact nested invocation, not a global image resource", () => {
   const draft = newImageDraft(info, 0, source);
   const replacement = { assetId: 12, width: 2, height: 3, name: "Synthetic portrait.png", previewUrl: "blob:synthetic" };
@@ -33,6 +46,9 @@ test("replacement and removal target the exact nested invocation, not a global i
   assert.deepEqual(imageChange(info, { ...draft, replacement, x: "40" }),
     { action: "replace", page: 0, path: [4, 2, 8], assetId: 12, placement: [40, 30, 160, 90] });
   assert.deepEqual(imageChange(info, { ...draft, replacement, remove: true, width: "" }), { action: "remove", page: 0, path: [4, 2, 8] });
+  const tiny = newImageDraft(info, 0, { ...source, placement: [20, 30, 0.05, 0.04] });
+  assert.deepEqual(imageChange(info, { ...tiny, replacement }), { action: "replace", page: 0, path: [4, 2, 8], assetId: 12, placement: null });
+  assert.throws(() => imageChange(info, { ...tiny, x: "21" }), /at least 0.1 pt/);
 });
 
 test("image placements validate actual rotated physical bounds instead of silently coercing invalid fields", () => {

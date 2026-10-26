@@ -57,7 +57,7 @@ import type { FormWidget } from "./lib/formsTypes";
 import ImageEditingPanel from "./features/imageEditing/ImageEditingPanel";
 import { useImageEditing } from "./features/imageEditing/useImageEditing";
 import { imageEditingBridge } from "./features/imageEditing/bridge";
-import { assertImageDraft, imageChange, withPlacement } from "./features/imageEditing/model";
+import { assertImageDraft, imageChange, imagePath, withPlacement } from "./features/imageEditing/model";
 import type { ImageOccurrence, ImagePlacement as SourceImagePlacement } from "./features/imageEditing/types";
 import "./features/imageEditing/styles.css";
 import { matchExistingText } from "./lib/existingText";
@@ -1047,9 +1047,11 @@ export default function DocumentWorkspace(props: Props) {
   function selectSourceImage(targetPage: number, image: ImageOccurrence) {
     if (!imageEditingAvailable()) return;
     try {
+      const changed = !images.draft || images.draft.page !== targetPage || imagePath(images.draft.source.path) !== imagePath(image.path);
       images.select(targetPage, image);
       setPage(targetPage); setError(null); setToast(null);
       setPanel("image-edit"); setMode("write");
+      if (changed) setPanelOpen(true);
     } catch (error) { setError(errorMessage(error)); }
   }
 
@@ -1615,9 +1617,10 @@ export default function DocumentWorkspace(props: Props) {
           onNotice={setToast} onArchive={requestArchive} />}
         {panel === "image-edit" && info && <ImageEditingPanel info={info} page={page} inspection={images.inspection(page)}
           draft={images.draft} disabled={imageEditingDisabled} stale={images.stale} error={error} notice={toast}
-          onSelect={selectSourceImage} onChange={images.change} onReplacement={chooseImageReplacement}
+          onSelect={selectSourceImage} onChange={(draft) => { images.change(draft); setError(null); setToast(null); }} onReplacement={chooseImageReplacement}
           onApply={applyImageChanges} onDiscard={discardImageDraft} retry={images.retry} onLocate={setPage}
           onTarget={() => {
+            setToast(null); setError(null);
             chooseTool("edit-image");
             if (window.matchMedia("(max-width: 899px)").matches) setPanelOpen(false);
           }} />}
