@@ -32,6 +32,12 @@ fn bytes(document: &mut Document) -> Vec<u8> {
 fn load(bytes: &[u8]) -> Document {
     Document::load_mem(bytes).unwrap()
 }
+fn evidence_file(name: &str, bytes: &[u8]) {
+    if let Ok(directory) = std::env::var("FOLIO_FORM_EVIDENCE_DIR") {
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(Path::new(&directory).join(name), bytes).unwrap();
+    }
+}
 fn key(id: ObjectId) -> String {
     format!("{}:{}", id.0, id.1)
 }
@@ -608,6 +614,8 @@ fn flatten_rebuilds_stale_and_missing_appearances_masks_passwords_and_preserves_
     let plan = session.flattened_form_info().unwrap();
     assert_eq!(plan.unsigned_signature_count, 1);
     let flat = session.flattened_form_copy().unwrap();
+    evidence_file("stale-source.pdf", session.bytes());
+    evidence_file("stale-static.pdf", &flat);
     let output = load(&flat);
     assert!(!output.catalog().unwrap().has(b"AcroForm"));
     assert!(
@@ -667,7 +675,7 @@ fn flatten_resolves_button_value_over_stale_state_and_preserves_bbox_matrix_and_
             "Type" => "XObject", "Subtype" => "Form", "BBox" => numbers(&[10.0, 20.0, 30.0, 60.0]),
             "Matrix" => numbers(&[0.0, 1.0, -1.0, 0.0, 70.0, -5.0]),
         },
-        b"q BT /Inherited 8 Tf 12 30 Td (ON VALUE) Tj ET Q".to_vec(),
+        b"q BT /Inherited 3 Tf 12 30 Td (ON VALUE) Tj ET Q".to_vec(),
     ));
     let off = document.add_object(Stream::new(
         dictionary! {
@@ -699,9 +707,52 @@ fn flatten_resolves_button_value_over_stale_state_and_preserves_bbox_matrix_and_
     document.catalog_mut().unwrap().set("AcroForm", form);
     let session =
         Session::from_bytes(bytes(&mut document), "Transforms.pdf".into(), None, 1).unwrap();
-    let output = load(&session.flattened_form_copy().unwrap());
+    let flat = session.flattened_form_copy().unwrap();
+    evidence_file("button-transform-source.pdf", session.bytes());
+    evidence_file("button-transform-static.pdf", &flat);
+    let output = load(&flat);
     let page = output.get_pages()[&1];
     let content = Content::decode(&output.get_page_content(page)).unwrap();
+    assert!(
+        !content
+            .operations
+            .iter()
+            .any(|operation| matches!(operation.operator.as_str(), "W" | "W*")),
+        "The fitted Form BBox must clip once, without an additional fractional-edge Rect clip"
+    );
+    let resources = output
+        .get_dictionary(page)
+        .unwrap()
+        .get(b"Resources")
+        .unwrap()
+        .as_dict()
+        .unwrap();
+    let appearance = resources
+        .get(b"XObject")
+        .unwrap()
+        .as_dict()
+        .unwrap()
+        .iter()
+        .next()
+        .unwrap()
+        .1;
+    let appearance = output
+        .dereference(appearance)
+        .unwrap()
+        .1
+        .as_stream()
+        .unwrap();
+    let bounds = appearance
+        .dict
+        .get(b"BBox")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_float().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(bounds, field.widgets[0].rect);
+    let content = Content::decode(&appearance.get_plain_content().unwrap()).unwrap();
     let matrix = &content
         .operations
         .iter()
@@ -719,21 +770,20 @@ fn flatten_resolves_button_value_over_stale_state_and_preserves_bbox_matrix_and_
     );
     let text = appearance_text(&output);
     assert!(text.contains("ON VALUE"), "{text}");
-    let mut original_matrix_found = false;
-    for object in output.objects.values() {
-        if let Ok(stream) = object.as_stream()
-            && let Ok(matrix) = stream.dict.get(b"Matrix")
-        {
-            let values = matrix
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|value| value.as_float().unwrap())
-                .collect::<Vec<_>>();
-            original_matrix_found |= values == vec![0.0, 1.0, -1.0, 0.0, 70.0, -5.0];
-        }
-    }
-    assert!(original_matrix_found);
+    let original_matrix = content
+        .operations
+        .iter()
+        .filter(|operation| operation.operator == "cm")
+        .nth(1)
+        .unwrap();
+    assert_eq!(
+        original_matrix
+            .operands
+            .iter()
+            .map(|value| value.as_float().unwrap())
+            .collect::<Vec<_>>(),
+        vec![0.0, 1.0, -1.0, 0.0, 70.0, -5.0]
+    );
 }
 
 fn encrypted(mut document: Document, aes256: bool, permissions: Permissions) -> Vec<u8> {
@@ -814,6 +864,22 @@ fn filling_only_user_password_cannot_author_or_flatten_and_authorized_saves_hist
         assert!(load(owner.bytes()).is_encrypted());
         let current = owner.bytes().to_vec();
         let flat = owner.flattened_form_copy().unwrap();
+        evidence_file(
+            if aes256 {
+                "aes256-authored.pdf"
+            } else {
+                "aes128-authored.pdf"
+            },
+            owner.bytes(),
+        );
+        evidence_file(
+            if aes256 {
+                "aes256-static.pdf"
+            } else {
+                "aes128-static.pdf"
+            },
+            &flat,
+        );
         for password in ["user", "owner"] {
             let flat = Document::load_mem_with_options(&flat, LoadOptions::with_password(password))
                 .unwrap();
@@ -1494,6 +1560,38 @@ fn writes_original_interoperability_evidence_when_requested() {
     password.default_value = Some(FieldValue::Text {
         text: "original-synthetic-password".into(),
     });
+    let mut radio = definition(ControlKind::Radio, "evidence_radio");
+    radio.default_value = Some(FieldValue::Button {
+        state: Some(state("Beta")),
+    });
+    let mut alpha = widget(0, 40.0, 180.0, 20.0, 20.0);
+    alpha.option = Some(0);
+    let mut beta = widget(0, 40.0, 210.0, 20.0, 20.0);
+    beta.option = Some(1);
+    let mut list = definition(ControlKind::List, "evidence_list");
+    list.multiple = true;
+    list.read_only = true;
+    list.default_value = Some(FieldValue::Choice {
+        indices: vec![0, 1],
+        custom: None,
+    });
+    let mut combo = definition(ControlKind::Combo, "evidence_combo");
+    combo.editable_choice = true;
+    combo.default_value = Some(FieldValue::Choice {
+        indices: vec![],
+        custom: Some("Custom choice".into()),
+    });
+    let mut comb = definition(ControlKind::Text, "evidence_comb");
+    comb.comb = true;
+    comb.max_length = 4;
+    comb.default_value = Some(FieldValue::Text {
+        text: "1234".into(),
+    });
+    let mut multiline = definition(ControlKind::Text, "evidence_multiline");
+    multiline.multiline = true;
+    multiline.default_value = Some(FieldValue::Text {
+        text: "Line one\nLine two".into(),
+    });
     session
         .design_form_fields(vec![
             create(text, placements),
@@ -1508,6 +1606,17 @@ fn writes_original_interoperability_evidence_when_requested() {
                 definition(ControlKind::Signature, "evidence_unsigned"),
                 vec![widget(2, 40.0, 170.0, 240.0, 40.0)],
             ),
+            create(radio, vec![alpha, beta]),
+            create(
+                list,
+                vec![
+                    widget(0, 40.0, 270.0, 240.0, 120.0),
+                    widget(3, 40.0, 270.0, 240.0, 120.0),
+                ],
+            ),
+            create(combo, vec![widget(1, 40.0, 250.0, 240.0, 40.0)]),
+            create(comb, vec![widget(2, 40.0, 250.0, 120.0, 40.0)]),
+            create(multiline, vec![widget(1, 40.0, 340.0, 240.0, 80.0)]),
         ])
         .unwrap();
     session.save_as(&path.join("authored.pdf")).unwrap();

@@ -375,6 +375,46 @@ fn selected_list_values_fit(
     Ok(())
 }
 
+fn page_appearance(
+    document: &Document,
+    stream: Stream,
+    rect: [f32; 4],
+    placement: [f32; 6],
+) -> Result<Stream> {
+    let original_matrix = matrix(document, &stream)?;
+    let mut bytes = Content {
+        operations: vec![
+            Operation::new("q", vec![]),
+            Operation::new("cm", placement.into_iter().map(Object::Real).collect()),
+            Operation::new(
+                "cm",
+                original_matrix.into_iter().map(Object::Real).collect(),
+            ),
+        ],
+    }
+    .encode()?;
+    bytes.push(b'\n');
+    bytes.extend(crate::pdf_objects::stream_bytes(
+        &stream,
+        MAX_APPEARANCE_BYTES,
+    )?);
+    bytes.extend(b"\nQ\n");
+    if bytes.len() > MAX_APPEARANCE_BYTES {
+        return Err(invalid(
+            "A flattened widget exceeds the 32 MiB appearance limit.",
+        ));
+    }
+    let mut dictionary = stream.dict;
+    for key in [b"Filter".as_slice(), b"DecodeParms", b"Length", b"DL"] {
+        dictionary.remove(key);
+    }
+    // Clip once in page coordinates, like a widget. Clipping both the fitted
+    // Form BBox and Rect multiplies fractional-edge antialias coverage.
+    dictionary.set("BBox", numbers(&rect));
+    dictionary.set("Matrix", numbers(&[1.0, 0.0, 0.0, 1.0, 0.0, 0.0]));
+    Ok(Stream::new(dictionary, bytes))
+}
+
 pub(crate) fn copy(source: &Document) -> Result<Vec<u8>> {
     let form = checked_form(source)?;
     let mut document = source.clone();
@@ -398,7 +438,7 @@ pub(crate) fn copy(source: &Document) -> Result<Vec<u8>> {
         .transpose()?
         .cloned()
         .unwrap_or_default();
-    let mut pages: BTreeMap<usize, Vec<(String, ObjectId, [f32; 6], [f32; 4])>> = BTreeMap::new();
+    let mut pages: BTreeMap<usize, Vec<(String, ObjectId)>> = BTreeMap::new();
     let mut budget = AppearanceBudget {
         bytes: 0,
         nodes: 0,
@@ -416,13 +456,13 @@ pub(crate) fn copy(source: &Document) -> Result<Vec<u8>> {
             let resources = validate_resources(&document, &stream, &fallback, &mut budget, 0)
                 .map_err(|error| field_error(field, error))?;
             stream.dict.set("Resources", resources);
-            let appearance = document.add_object(stream);
-            pages.entry(widget.page).or_default().push((
-                widget.id.clone(),
-                appearance,
-                placement,
-                widget.rect,
-            ));
+            let appearance = page_appearance(&document, stream, widget.rect, placement)
+                .map_err(|error| field_error(field, error))?;
+            let appearance = document.add_object(appearance);
+            pages
+                .entry(widget.page)
+                .or_default()
+                .push((widget.id.clone(), appearance));
         }
     }
     for (index, appearances) in pages {
@@ -439,7 +479,7 @@ pub(crate) fn copy(source: &Document) -> Result<Vec<u8>> {
         let original = page_content(&document, page)?;
         checked_content(&original)?;
         let mut operations = vec![];
-        for (index, (_, appearance, placement, rect)) in appearances.iter().enumerate() {
+        for (index, (_, appearance)) in appearances.iter().enumerate() {
             let mut suffix = index;
             let name = loop {
                 let name = format!("FolioStaticForm{suffix}");
@@ -451,18 +491,6 @@ pub(crate) fn copy(source: &Document) -> Result<Vec<u8>> {
             xobjects.set(name.as_bytes(), *appearance);
             operations.extend([
                 Operation::new("q", vec![]),
-                Operation::new(
-                    "re",
-                    vec![
-                        rect[0].into(),
-                        rect[1].into(),
-                        (rect[2] - rect[0]).into(),
-                        (rect[3] - rect[1]).into(),
-                    ],
-                ),
-                Operation::new("W", vec![]),
-                Operation::new("n", vec![]),
-                Operation::new("cm", placement.iter().copied().map(Object::Real).collect()),
                 Operation::new("Do", vec![Object::Name(name.into_bytes())]),
                 Operation::new("Q", vec![]),
             ]);
