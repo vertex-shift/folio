@@ -68,6 +68,14 @@ struct TextRunsRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FormFillRequest {
+    document_id: u64,
+    revision: u64,
+    changes: Vec<folio_core::forms::FieldChange>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RedactionRequest {
     document_id: u64,
     revision: u64,
@@ -309,6 +317,32 @@ fn handle(
                 &identity,
                 &password,
             )?));
+        }
+        (&Method::Post, "/forms") => {
+            let input: Revision = json_body(request)?;
+            return json(
+                workspace
+                    .check_revision(input.document_id, input.revision)?
+                    .form_fields()?,
+            );
+        }
+        (&Method::Post, "/forms/fill") => {
+            let mut bytes = Vec::new();
+            request
+                .as_reader()
+                .take(1024 * 1024 + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() > 1024 * 1024 {
+                return Err(Error::Invalid(
+                    "A form filling request exceeds the 1 MiB limit.".into(),
+                ));
+            }
+            // Do not include JSON parse details: a password-type field may be in the request.
+            let input: FormFillRequest = serde_json::from_slice(&bytes)
+                .map_err(|_| Error::Invalid("The form filling request is invalid.".into()))?;
+            workspace
+                .current_mut(input.document_id, input.revision)?
+                .fill_form_fields(input.changes)?
         }
         (&Method::Post, "/redaction/begin") => {
             let input: RedactionRequest = json_body(request)?;

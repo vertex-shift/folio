@@ -384,6 +384,37 @@ async fn export_signed_copy(
 }
 
 #[tauri::command]
+async fn form_fields(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+) -> std::result::Result<crate::forms::FormInfo, String> {
+    with_state(app, move |state| {
+        state
+            .workspace
+            .check_revision(document_id, revision)?
+            .form_fields()
+    })
+    .await
+}
+
+#[tauri::command]
+async fn fill_form_fields(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+    changes: Vec<crate::forms::FieldChange>,
+) -> std::result::Result<DocumentInfo, String> {
+    with_state(app, move |state| {
+        state
+            .workspace
+            .current_mut(document_id, revision)?
+            .fill_form_fields(changes)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn begin_redaction(
     app: AppHandle,
     document_id: u64,
@@ -700,6 +731,8 @@ pub fn run() {
             inspect_signatures,
             choose_signing_identity,
             export_signed_copy,
+            form_fields,
+            fill_form_fields,
             begin_redaction,
             stage_redaction_page,
             export_redacted_copy,

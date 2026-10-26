@@ -9,6 +9,7 @@ pub(crate) struct Loaded {
     pub document: Document,
     pub copy_allowed: bool,
     pub editable: bool,
+    pub fillable: bool,
 }
 
 fn password_error(error: lopdf::Error) -> Error {
@@ -57,6 +58,7 @@ pub(crate) fn load(bytes: &[u8], password: Option<&str>) -> Result<Loaded> {
             document,
             copy_allowed: true,
             editable: true,
+            fillable: true,
         });
     };
     let Some(password) = password else {
@@ -93,10 +95,17 @@ pub(crate) fn load(bytes: &[u8], password: Option<&str>) -> Result<Loaded> {
         || permissions.contains(required)
             && (state.revision() == 2 || permissions.contains(Permissions::ASSEMBLABLE));
     let copy_allowed = owner || permissions.contains(Permissions::COPYABLE);
+    let fillable = owner
+        || if state.revision() == 2 {
+            permissions.contains(Permissions::ANNOTABLE)
+        } else {
+            permissions.contains(Permissions::FILLABLE)
+        };
     Ok(Loaded {
         document,
         copy_allowed,
         editable,
+        fillable,
     })
 }
 

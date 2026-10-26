@@ -1,4 +1,5 @@
 pub mod document;
+pub mod forms;
 mod pages;
 mod protection;
 pub mod redaction;

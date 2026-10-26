@@ -150,6 +150,7 @@ pub struct Session {
     read_only_reason: Option<String>,
     password: Option<String>,
     copy_allowed: bool,
+    form_fill_allowed: bool,
 }
 
 impl Session {
@@ -196,12 +197,17 @@ impl Session {
             read_only_reason: if signed {
                 Some("Digitally signed PDF: read-only. Rewriting this file would invalidate its signatures.".to_owned())
             } else if !loaded.editable {
-                Some("This PDF's permissions are restricted. Reopen it with the owner password to edit or export pages.".to_owned())
+                Some(if loaded.fillable {
+                    "This PDF restricts general editing and page export. Permitted form fields remain fillable in Forms; use the owner password for other edits."
+                } else {
+                    "This PDF's permissions are restricted. Reopen it with the owner password to edit or export pages."
+                }.to_owned())
             } else {
                 None
             },
             password,
             copy_allowed: loaded.copy_allowed,
+            form_fill_allowed: !signed && loaded.fillable,
         };
         session.info()?;
         Ok(session)
@@ -354,6 +360,28 @@ impl Session {
         crate::text_edit::page_runs(&self.document, page)
     }
 
+    pub fn form_fields(&self) -> Result<crate::forms::FormInfo> {
+        crate::forms::inspect(
+            &self.document,
+            self.form_fill_allowed,
+            self.read_only_reason.as_deref(),
+        )
+    }
+
+    pub fn fill_form_fields(
+        &mut self,
+        changes: Vec<crate::forms::FieldChange>,
+    ) -> Result<DocumentInfo> {
+        if !self.form_fill_allowed {
+            return Err(invalid(
+                self.read_only_reason
+                    .as_deref()
+                    .unwrap_or("This PDF does not permit form filling."),
+            ));
+        }
+        self.commit_change(|next| crate::forms::fill(next, changes))
+    }
+
     pub(crate) fn redaction_plan(
         &self,
         job_id: u64,
@@ -388,6 +416,13 @@ impl Session {
 
     fn mutate(&mut self, change: impl FnOnce(&mut Document) -> Result<()>) -> Result<DocumentInfo> {
         self.ensure_writable()?;
+        self.commit_change(change)
+    }
+
+    fn commit_change(
+        &mut self,
+        change: impl FnOnce(&mut Document) -> Result<()>,
+    ) -> Result<DocumentInfo> {
         let mut next = self.document.clone();
         change(&mut next)?;
         annotations(&next)?;
