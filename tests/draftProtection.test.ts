@@ -1,6 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createDraftSynchronizer } from "../src/lib/draftProtection.ts";
+import { createDraftSynchronizer, hasDocumentDrafts } from "../src/lib/draftProtection.ts";
+
+test("aggregate projections retain every independent draft when another feature clears", () => {
+  const clear = { writing: false, formFilling: false, formDesign: false, pageAuthoring: false, redaction: false };
+  assert.equal(hasDocumentDrafts(clear), false);
+  for (const domain of Object.keys(clear)) {
+    assert.equal(hasDocumentDrafts({ ...clear, [domain]: true }), true, domain);
+  }
+  assert.equal(hasDocumentDrafts({ ...clear, formDesign: true, formFilling: false }), true);
+  assert.equal(hasDocumentDrafts({ ...clear, formDesign: false, formFilling: true }), true);
+  assert.equal(hasDocumentDrafts({ ...clear, writing: true, formDesign: false }), true);
+  assert.equal(hasDocumentDrafts({ ...clear, pageAuthoring: true, formDesign: false }), true);
+  assert.equal(hasDocumentDrafts({ ...clear, redaction: true, formDesign: false }), true);
+});
 
 test("draft projections are ordered and duplicate state updates share the same acknowledgment", async () => {
   const writes: { documentId: number; pending: boolean; resolve(): void }[] = [];

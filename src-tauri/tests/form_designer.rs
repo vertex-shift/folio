@@ -1254,6 +1254,117 @@ fn exact_design_batch_and_widget_limits_are_enforced_transactionally() {
     assert_eq!(session.bytes(), before);
 }
 
+#[test]
+fn inherited_empty_choice_defaults_and_new_partial_names_preserve_parent_semantics() {
+    let mut document = inherited_fixture();
+    let form = document
+        .catalog()
+        .unwrap()
+        .get(b"AcroForm")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let parent = document
+        .get_dictionary(form)
+        .unwrap()
+        .get(b"Fields")
+        .unwrap()
+        .as_array()
+        .unwrap()[0]
+        .as_reference()
+        .unwrap();
+    let first = document
+        .get_dictionary(parent)
+        .unwrap()
+        .get(b"Kids")
+        .unwrap()
+        .as_array()
+        .unwrap()[0]
+        .as_reference()
+        .unwrap();
+    document.get_dictionary_mut(first).unwrap().remove(b"T");
+    let mut session =
+        Session::from_bytes(bytes(&mut document), "Unnamed leaf.pdf".into(), None, 1).unwrap();
+    let selected = field(&session, "person");
+    let mut definition = props(&session, "person");
+    definition.name = "second".into();
+    let before = session.bytes().to_vec();
+    assert!(
+        session
+            .design_form_fields(vec![Change::Update {
+                id: selected.id.clone(),
+                definition
+            }])
+            .is_err()
+    );
+    assert_eq!(session.bytes(), before);
+    let mut definition = props(&session, "person");
+    definition.name = "renamed".into();
+    session
+        .design_form_fields(vec![Change::Update {
+            id: selected.id.clone(),
+            definition,
+        }])
+        .unwrap();
+    assert_eq!(field(&session, "person.renamed").id, selected.id);
+    assert_eq!(field(&session, "person.second").value, selected.value);
+
+    let mut document = inherited_fixture();
+    let form = document
+        .catalog()
+        .unwrap()
+        .get(b"AcroForm")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let parent = document
+        .get_dictionary(form)
+        .unwrap()
+        .get(b"Fields")
+        .unwrap()
+        .as_array()
+        .unwrap()[0]
+        .as_reference()
+        .unwrap();
+    let dictionary = document.get_dictionary_mut(parent).unwrap();
+    dictionary.set("FT", "Ch");
+    dictionary.set("Ff", 1 << 17);
+    dictionary.set("Opt", vec![text_string("a"), text_string("b")]);
+    dictionary.set("V", text_string("a"));
+    dictionary.set("DV", text_string("a"));
+    let mut session = Session::from_bytes(
+        bytes(&mut document),
+        "Inherited choices.pdf".into(),
+        None,
+        1,
+    )
+    .unwrap();
+    let mut definition = props(&session, "person.first");
+    definition.default_value = Some(FieldValue::Choice {
+        indices: vec![],
+        custom: None,
+    });
+    let id = field(&session, "person.first").id;
+    session
+        .design_form_fields(vec![Change::Update { id, definition }])
+        .unwrap();
+    assert_eq!(props(&session, "person.first").default_value, None);
+    assert_eq!(
+        props(&session, "person.second").default_value,
+        Some(FieldValue::Choice {
+            indices: vec![0],
+            custom: None
+        })
+    );
+    assert_eq!(
+        field(&session, "person.first").value,
+        Some(FieldValue::Choice {
+            indices: vec![0],
+            custom: None
+        })
+    );
+}
+
 // Set FOLIO_FORM_EVIDENCE_DIR to retain original synthetic outputs for the
 // independent PDF.js/pdf-lib evidence runner; ordinary tests write no artifacts.
 #[test]

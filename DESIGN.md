@@ -381,6 +381,21 @@ Errors preserve drafts; save/history/source mutations and exit protection
 must not quietly ignore them. Explain the embedded-font and unsupported
 script/calculation/XFA boundaries without adding placeholder controls.
 
+Design form fields extends the contextual tools panel at 310px, with native
+labeled controls, a fixed Apply/Discard footer and practical physical-point
+geometry. Separate logical-field properties from individual page widgets.
+Use blue, keyboard-focusable page targets and clearly labeled draft outlines;
+click places a widget and dragging changes its rectangle, never PDF pixels.
+Numeric geometry provides the complete keyboard alternative. Preserve all five
+palettes and reduced-motion behavior without adding document animation.
+New signature controls say Unsigned signature field and are empty slots, not
+drawn-signature claims. Designer settings live in DocumentWorkspace through
+virtualization and panel/tab changes; all pending states share the existing
+aggregate draft projection and synchronizer. Errors preserve input. Static-copy
+export uses a focused confirmation of counts, masking, interactivity loss and
+unsupported features; it never claims secure sanitization or replaces the
+interactive original. Current values and defaults remain distinct.
+
 Properties and attachments extend the existing 274px contextual panel, not
 the shell's navigation hierarchy. Descriptive metadata uses labeled fields
 with explicit Apply/Discard actions. Retain drafts at DocumentWorkspace level,

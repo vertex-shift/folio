@@ -62,6 +62,7 @@ export default function FormsPanel(props: {
   actionError: string | null; notice: string | null;
   disabled: boolean; retry(): void; onChange(id: string, value: FormValue): void;
   onApply(): void; onDiscard(): void; onLocate(widget: FormWidget): void;
+  onDesign(): void; onFlatten(): void;
 }) {
   const [filter, setFilter] = useState("");
   const [currentPage, setCurrentPage] = useState(false);
@@ -72,6 +73,7 @@ export default function FormsPanel(props: {
   return <div className="forms-panel">
     <div className="form-intro">
       <p>Fill existing PDF fields, then apply your changes together. Save a copy to keep them.</p>
+      <button className="text-button" disabled={props.disabled} onClick={props.onDesign}>Design form fields</button>
       <label className="search-field"><Search size={15} /><input ref={filterRef} aria-label="Filter form fields" value={filter}
         onChange={(event) => setFilter(event.target.value)} placeholder="Find a field" /></label>
       <label className="checkbox-setting"><input type="checkbox" checked={currentPage}
@@ -84,7 +86,7 @@ export default function FormsPanel(props: {
     {props.form?.reason && <p className="form-notice" role="status">{props.form.reason}</p>}
     <div className="panel-scroll form-fields">
       {!props.loading && !props.error && !props.form?.fields.length && <div className="panel-empty"><FileInput size={28} />
-        <h3>No AcroForm fields</h3><p>This PDF has no existing interactive fields to fill. Use Add text for a static form.</p></div>}
+        <h3>No AcroForm fields</h3><p>Create interactive controls in Design form fields, or use Add text for static writing.</p></div>}
       {Boolean(props.form?.fields.length) && !fields.length && <div className="panel-empty"><Search size={26} />
         <h3>No matching fields</h3><p>Change the filter or show all pages.</p></div>}
       {fields.map((field) => {
@@ -130,6 +132,7 @@ export default function FormsPanel(props: {
       <button className="button primary" disabled={props.disabled || props.loading || props.stale || !props.form?.fillable || !props.count} onClick={props.onApply}>
         <Check size={15} />Apply form changes</button>
       <button className="text-button" disabled={props.disabled || !props.count} onClick={props.onDiscard}>Discard unapplied changes</button>
+      <button className="text-button" disabled={props.disabled || props.count > 0 || !props.form?.fields.length} onClick={props.onFlatten}>Export separate static form copy</button>
     </div>
   </div>;
 }

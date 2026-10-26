@@ -752,8 +752,11 @@ fn set_default(
     value: Option<&FieldValue>,
     form: &Form,
 ) -> Result<()> {
+    let value = value
+        .map(|value| default_object(field, value))
+        .transpose()?
+        .filter(|value| !matches!(value, Object::Null));
     if let Some(value) = value {
-        let value = default_object(field, value)?;
         document.get_dictionary_mut(field.id)?.set("DV", value);
     } else {
         let ancestors = field_ancestors(document, field.id)?
@@ -1029,21 +1032,18 @@ fn update(document: &mut Document, form: &Form, id: String, definition: Definiti
             "Changing an existing control's type is not supported. Create a new field instead.",
         ));
     }
-    let old = self::definition(document, field)?;
-    let prefix = if field.info.name == old.name {
-        ""
-    } else {
-        field
-            .info
-            .name
-            .strip_suffix(&old.name)
-            .ok_or_else(|| invalid("The field namespace is ambiguous."))?
-    };
-    ensure_unique(
-        form,
-        &format!("{prefix}{}", definition.name),
-        Some(field.id),
-    )?;
+    let ancestors = field_ancestors(document, field.id)?;
+    let mut namespace = vec![];
+    for ancestor in ancestors.iter().rev() {
+        if let Some(value) = optional(document, document.get_dictionary(*ancestor)?, b"T")? {
+            let partial = text(document, value, &mut 0)?;
+            if !partial.is_empty() {
+                namespace.push(partial);
+            }
+        }
+    }
+    namespace.push(definition.name.clone());
+    ensure_unique(form, &namespace.join("."), Some(field.id))?;
     let mut value = field.info.value.clone();
     if let Some(FieldValue::Choice {
         indices,
@@ -1471,6 +1471,6 @@ pub(crate) fn apply(document: &mut Document, changes: Vec<Change>) -> Result<()>
             }
         }
     }
-    read(document)?;
+    check_names(&read(document)?)?;
     Ok(())
 }

@@ -34,7 +34,7 @@ import ProtectionCopyDialog from "./components/ProtectionCopyDialog";
 import OcrPanel, { OcrJobProgress } from "./components/OcrPanel";
 import OutputDialog from "./components/OutputDialog";
 import { bridge, native, runtimeIssue } from "./lib/bridge";
-import { createDraftSynchronizer } from "./lib/draftProtection";
+import { createDraftSynchronizer, hasDocumentDrafts } from "./lib/draftProtection";
 import { documentUtilities } from "./lib/documentUtilitiesBridge";
 import { MAX_MANAGEMENT_SOURCE_BYTES, metadataChanged } from "./lib/documentUtilitiesModel";
 import type { AttachmentInfo, BookmarkInfo, CopyProtection, MetadataDraft } from "./lib/documentUtilitiesModel";
@@ -44,6 +44,12 @@ import { useSearch } from "./lib/useSearch";
 import { useExistingText } from "./lib/useExistingText";
 import { useAuthoring } from "./lib/useAuthoring";
 import { useForms } from "./lib/useForms";
+import FormDesignerPanel from "./features/formsDesigner/FormDesignerPanel";
+import { useFormDesigner } from "./features/formsDesigner/useFormDesigner";
+import { formDesignerBridge } from "./features/formsDesigner/bridge";
+import { widgetPlacement } from "./features/formsDesigner/model";
+import { decimal } from "./lib/authoring";
+import type { ControlKind, FlattenInfo } from "./features/formsDesigner/types";
 import type { FormWidget } from "./lib/formsTypes";
 import { matchExistingText } from "./lib/existingText";
 import { PAGE_SIZES, parsePageRange, parseWritingNumber, rgbFromHex } from "./lib/pages";
@@ -54,6 +60,7 @@ import type { OcrOptions, OcrOutcome, OcrPlan, OcrProgress } from "./lib/ocrType
 import type { DocumentInfo, Edit, ExistingTextRun, Mode, OpenOutcome, Panel, PasswordChallenge, PdfRect, Point, Quad, RedactionMark, RedactionPlan, ReplacementFont, Tool, Zoom } from "./lib/types";
 import "./authoring.css";
 import "./document-utilities.css";
+import "./features/formsDesigner/styles.css";
 import type { OutputAction } from "./lib/output";
 import type { SourceState } from "./features/comparison/model";
 
@@ -73,6 +80,7 @@ type Modal = { type: "shortcuts" | "about" }
   | { type: "redaction-leave"; action: Action }
   | { type: "sign-copy"; documentId: number; revision: number }
   | { type: "form-discard"; action?: Action }
+  | { type: "static-form-copy"; documentId: number; revision: number; plan: FlattenInfo; acknowledged: boolean }
   | { type: "bookmark-create"; documentId: number; revision: number; text: string; page: string; parent: string | null; at: number; entries: BookmarkInfo[] }
   | { type: "bookmark-rename"; documentId: number; revision: number; id: string; text: string }
   | { type: "bookmark-delete"; entry: BookmarkInfo }
@@ -101,6 +109,7 @@ const panelLabels: Record<Panel, string> = {
   signatures: "Digital signatures",
   authoring: "Page authoring",
   forms: "Fill form fields",
+  "form-designer": "Design form fields",
   properties: "Document properties", attachments: "File attachments",
   ocr: "Recognize scanned text",
 };
@@ -154,6 +163,7 @@ export default function DocumentWorkspace(props: Props) {
   const [matchCase, setMatchCase] = useState(false);
   const [activeResult, setActiveResult] = useState(0);
   const [selectedAnnotation, setSelectedAnnotation] = useState<string | null>(null);
+  const [designerWidget, setDesignerWidget] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -218,10 +228,12 @@ export default function DocumentWorkspace(props: Props) {
   const search = useSearch(pdf, info, query, matchCase, panelOpen && panel === "search");
   const existingText = useExistingText(info, page, tool === "edit-text" || panelOpen && panel === "edit");
   const forms = useForms(info, panelOpen && panel === "forms");
+  const designer = useFormDesigner(info, panel === "form-designer" || tool === "form-widget");
+  const pendingDesign = Boolean(designer.draft?.dirty);
   const readOnly = Boolean(info?.readOnlyReason);
   const disabled = Boolean(busy) || !info;
   const authoring = useAuthoring({ info, page, current: () => infoRef.current,
-    blocked: () => busyRef.current || redactionsRef.current.length > 0 || forms.pending() || writingDraftRef.current,
+    blocked: () => busyRef.current || redactionsRef.current.length > 0 || forms.pending() || designer.pending() || writingDraftRef.current,
     run, adopt, onError: setError, onToast: setToast,
     onSelect: (kind) => {
       setMode("write"); setPanel("authoring"); setPanelOpen(true);
@@ -229,15 +241,16 @@ export default function DocumentWorkspace(props: Props) {
     },
     onDraftCleared: async () => {
       const current = infoRef.current;
-      if (current) await syncDraft(current.id, writingDraftRef.current || redactionsRef.current.length > 0 || forms.pending());
+      if (current) await syncDraft(current.id, draftProjection());
     },
   });
-  const pendingDraft = pendingWriting || pendingMetadata || gestureDraft || redactions.length > 0 || authoring.pending || forms.count > 0;
+  const pendingDraft = hasDocumentDrafts({ writing: pendingWriting || pendingMetadata || gestureDraft,
+    formFilling: forms.count > 0, formDesign: pendingDesign, pageAuthoring: authoring.pending, redaction: redactions.length > 0 });
   const pendingDraftRef = useRef(pendingDraft);
   pendingDraftRef.current = pendingDraft;
-  const authoringDisabled = disabled || readOnly || redactions.length > 0 || forms.count > 0 || pendingMetadata;
+  const authoringDisabled = disabled || readOnly || redactions.length > 0 || forms.count > 0 || pendingMetadata || pendingDesign;
   const editDisabled = authoringDisabled || authoring.pending;
-  const redactDisabled = disabled || readOnly || authoring.pending || forms.count > 0 || pendingMetadata;
+  const redactDisabled = disabled || readOnly || authoring.pending || forms.count > 0 || pendingMetadata || pendingDesign;
   const managementTooLarge = Boolean(info && info.byteLength > MAX_MANAGEMENT_SOURCE_BYTES);
   const managementEditDisabled = editDisabled || managementTooLarge;
   const utilityPanel = panelOpen && ["properties", "attachments", "bookmarks"].includes(panel);
@@ -291,12 +304,15 @@ export default function DocumentWorkspace(props: Props) {
     else gesturePages.current.delete(page);
     const active = gesturePages.current.size > 0;
     writingDraftRef.current = pendingWriting || pendingMetadata || active;
-    pendingDraftRef.current = writingDraftRef.current || forms.pending() || authoring.hasDraft() || redactionsRef.current.length > 0;
+    pendingDraftRef.current = draftProjection();
     setGestureDraft(active);
   }
 
   async function adopt(next: DocumentInfo) {
     const previous = infoRef.current;
+    if (designer.pending() && (previous?.id !== next.id || previous.revision !== next.revision)) {
+      throw new Error("Apply or explicitly discard the form-design draft before changing this PDF.");
+    }
     if (forms.pending() && (previous?.id !== next.id || previous.revision !== next.revision)) {
       throw new Error("Apply or explicitly discard the pending form changes before changing this PDF.");
     }
@@ -389,7 +405,7 @@ export default function DocumentWorkspace(props: Props) {
       case "close": {
         const current = infoRef.current;
         if (!current) throw new Error("This PDF tab is no longer open.");
-        await syncDraft(current.id, hasPendingContentEdits() || redactionsRef.current.length > 0);
+        await syncDraft(current.id, draftProjection());
         await props.onClose(current);
         break;
       }
@@ -415,6 +431,11 @@ export default function DocumentWorkspace(props: Props) {
     if (authoring.hasDraft() && action.type === "close") {
       setError("Apply or discard the Page authoring draft before closing this PDF tab.");
       setPanel("authoring"); setPanelOpen(true);
+      return;
+    }
+    if (designer.pending() && action.type === "close") {
+      showPanel("form-designer");
+      setError("Apply or discard the form-design draft before closing this PDF tab.");
       return;
     }
     if (action.type !== "close") {
@@ -459,6 +480,8 @@ export default function DocumentWorkspace(props: Props) {
     if (next === "comments") setMode("comment");
     if (next === "signatures") setTool("select");
     if (next === "forms") { setTool("select"); if (mode === "write") setMode("read"); }
+    if (next === "form-designer") { setTool("select"); setMode("write"); }
+    else if (tool === "form-widget") setTool("select");
   }
 
   function showOcr() {
@@ -476,7 +499,7 @@ export default function DocumentWorkspace(props: Props) {
       if (hasPendingContentEdits() || redactionsRef.current.length) {
         throw new Error("Apply or discard pending edits and clear redaction marks before using OCR.");
       }
-      await syncDraft(current.id, false);
+      await syncDraft(current.id, draftProjection());
       if (current.readOnlyReason) throw new Error(current.readOnlyReason);
       if (!current.copyAllowed) throw new Error("This PDF does not allow copying. Reopen with the owner password before using OCR.");
       const pages = parsePageRange(ocrRange, current.pageCount, MAX_OCR_PAGES);
@@ -548,6 +571,11 @@ export default function DocumentWorkspace(props: Props) {
       setError("Apply or discard your form changes before editing other PDF content.");
       return;
     }
+    if (designer.pending() && !["select", "hand", "form-widget"].includes(next)) {
+      showPanel("form-designer");
+      setError("Apply or discard the form-design draft before editing other PDF content.");
+      return;
+    }
     if (pendingMetadata && !["select", "hand"].includes(next)) {
       setError("Apply or discard the metadata draft before editing this PDF.");
       return;
@@ -570,6 +598,9 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function changeMode(next: Mode) {
+    if (designer.pending() && (next === "write" || next === "organize")) {
+      showPanel("form-designer"); setError("Apply or discard the form-design draft before changing editing modes."); return;
+    }
     if (authoring.hasDraft() && next !== "read") {
       setError("Apply or discard the Page authoring draft before changing editing modes.");
       return;
@@ -590,6 +621,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function edit(change: Edit, label: string, onSuccess?: () => void) {
+    if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before changing this PDF."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before changing this PDF."); return; }
     if (forms.pending()) { showPanel("forms"); setError("Apply or discard the pending form changes before editing this PDF."); return; }
     if (redactionsRef.current.length) { setError("Clear pending redaction marks before editing the original PDF."); return; }
@@ -615,6 +647,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function selectSourceText(run: ExistingTextRun, targetPage = pageRef.current) {
+    if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before editing source text."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before editing source text."); return; }
     if (forms.pending()) { showPanel("forms"); setError("Apply or discard the pending form changes before editing PDF text."); return; }
     if (redactionsRef.current.length) { setError("Clear pending redaction marks before editing the original PDF."); return; }
@@ -651,6 +684,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function importPages(file?: File) {
+    if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before inserting pages."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before inserting pages."); return; }
     if (forms.pending()) { showPanel("forms"); setError("Apply or discard form changes before inserting pages."); return; }
     if (redactionsRef.current.length) { setError("Clear redaction marks before inserting pages."); return; }
@@ -695,6 +729,7 @@ export default function DocumentWorkspace(props: Props) {
       document.execCommand(redo ? "redo" : "undo");
       return;
     }
+    if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before undoing or redoing PDF changes."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before undoing or redoing PDF changes."); return; }
     if (forms.pending()) { showPanel("forms"); setError("Apply or discard the form changes before undoing or redoing document edits."); return; }
     if (redactionsRef.current.length) { setError("Clear redaction marks before undoing or redoing changes to the original."); return; }
@@ -707,6 +742,9 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function save(copy = true) {
+    if (designer.pending()) {
+      showPanel("form-designer"); setError("Apply or discard the form-design draft before saving. It is not yet in the PDF."); return;
+    }
     if (authoring.hasDraft() || writingDraftRef.current) {
       setError("Apply or discard pending writing and Page authoring drafts before saving.");
       if (authoring.hasDraft()) { setPanel("authoring"); setPanelOpen(true); }
@@ -722,7 +760,7 @@ export default function DocumentWorkspace(props: Props) {
     void run(native ? "Saving PDF..." : "Preparing download...", async () => {
       const current = infoRef.current;
       if (!current) throw new Error("Open a PDF before saving.");
-      await syncDraft(current.id, false);
+      await syncDraft(current.id, draftProjection());
       const saved = await bridge.save(current, copy);
       if (!saved) return;
       updateInfo(saved);
@@ -738,7 +776,7 @@ export default function DocumentWorkspace(props: Props) {
       return;
     }
     void run("Preparing certificate signing...", async () => {
-      await syncDraft(current.id, false);
+      await syncDraft(current.id, draftProjection());
       setModal({ type: "sign-copy", documentId: current.id, revision: current.revision });
     });
   }
@@ -754,7 +792,7 @@ export default function DocumentWorkspace(props: Props) {
       if (redactionsRef.current.length || hasPendingContentEdits()) {
         throw new Error("Apply or discard pending edits and clear redaction marks before signing. The original has not been redacted.");
       }
-      await syncDraft(current.id, false);
+      await syncDraft(current.id, draftProjection());
       const output = await signatureBridge.export(current, identity, password);
       if (!output) {
         setToast("Signing canceled. Your original and unsaved work are unchanged.");
@@ -769,7 +807,7 @@ export default function DocumentWorkspace(props: Props) {
     const draft = metadataDraft;
     if (!draft || !metadataChanged(draft)) return;
     void run("Applying descriptive metadata...", async () => {
-      if (forms.pending() || authoring.hasDraft() || pendingWriting) {
+      if (forms.pending() || designer.pending() || authoring.hasDraft() || pendingWriting) {
         throw new Error("Apply or discard the other pending document edits before applying metadata.");
       }
       const current = infoRef.current;
@@ -789,7 +827,7 @@ export default function DocumentWorkspace(props: Props) {
     if (pendingDraftRef.current) {
       throw new Error("Finish or discard pending writing, form, metadata, and redaction drafts before exporting. No copy was created.");
     }
-    await syncDraft(current.id, pendingDraftRef.current);
+    await syncDraft(current.id, draftProjection());
     if (infoRef.current?.id !== current.id || infoRef.current.revision !== current.revision) {
       throw new Error("The document changed. Review it and export again.");
     }
@@ -864,7 +902,7 @@ export default function DocumentWorkspace(props: Props) {
     }
     if (kind === "optimize" && current.readOnlyReason) { setError(current.readOnlyReason); return; }
     void run("Preparing output controls...", async () => {
-      await syncDraft(current.id, false);
+      await syncDraft(current.id, draftProjection());
       setOutputMode(kind);
     });
   }
@@ -876,6 +914,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function markRedaction(rect: PdfRect, targetPage = pageRef.current) {
+    if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before marking redactions."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before marking redactions."); return; }
     if (forms.pending()) { showPanel("forms"); setError("Apply or discard form changes before marking redactions."); return; }
     const current = infoRef.current;
@@ -893,6 +932,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function applyForms() {
+    if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before filling fields."); return; }
     if (authoring.hasDraft() || writingDraftRef.current) {
       setError("Apply or discard pending writing and Page authoring before applying form changes.");
       return;
@@ -906,13 +946,23 @@ export default function DocumentWorkspace(props: Props) {
       const next = await bridge.fillForms(current, changes);
       forms.discard();
       await adopt(next);
-      await syncDraft(next.id, writingDraftRef.current || redactionsRef.current.length > 0 || authoring.hasDraft());
+      await syncDraft(next.id, draftProjection());
       setToast("Form values and appearances applied. Undo is available; save a copy to keep them.");
     });
   }
 
   function hasPendingContentEdits() {
-    return writingDraftRef.current || forms.pending() || authoring.hasDraft() || gesturePages.current.size > 0;
+    return writingDraftRef.current || forms.pending() || designer.pending() || authoring.hasDraft() || gesturePages.current.size > 0;
+  }
+
+  function draftProjection(exclude?: "formFilling" | "formDesign") {
+    return hasDocumentDrafts({
+      writing: writingDraftRef.current || gesturePages.current.size > 0,
+      formFilling: exclude !== "formFilling" && forms.pending(),
+      formDesign: exclude !== "formDesign" && designer.pending(),
+      pageAuthoring: authoring.hasDraft(),
+      redaction: redactionsRef.current.length > 0,
+    });
   }
 
   async function discardForms(action?: Action) {
@@ -920,7 +970,7 @@ export default function DocumentWorkspace(props: Props) {
     await run("Discarding unapplied form changes...", async () => {
       const current = infoRef.current;
       if (!current) throw new Error("This PDF tab is no longer open.");
-      await syncDraft(current.id, writingDraftRef.current || redactionsRef.current.length > 0 || authoring.hasDraft());
+      await syncDraft(current.id, draftProjection("formFilling"));
       forms.discard();
       setModal(null);
       discarded = true;
@@ -933,6 +983,101 @@ export default function DocumentWorkspace(props: Props) {
     setMode("read"); setTool("select"); setSelectedAnnotation(null);
     workspaceRef.current?.querySelector<HTMLElement>(`[data-page-slot="${widget.page + 1}"]`)?.scrollIntoView({ block: "start", inline: "nearest" });
     if (window.matchMedia("(max-width: 899px)").matches) setPanelOpen(false);
+  }
+
+  function designerAvailable() {
+    if (busyRef.current) return false;
+    if (draftProjection("formDesign")) {
+      setError("Apply or discard other writing, filling, metadata, authoring and redaction drafts before designing fields.");
+      return false;
+    }
+    return true;
+  }
+
+  function createDesignerField(kind: ControlKind) {
+    if (!designerAvailable()) return;
+    setError(null); setToast(null); setDesignerWidget(0);
+    designer.choose(kind, pageRef.current);
+  }
+
+  function selectDesignerField(id: string, widgetId?: string) {
+    if (!designerAvailable()) return;
+    if (designer.pending() && designer.draft?.fieldId !== id) {
+      setError("Apply or discard the form-design draft before selecting another field.");
+      return;
+    }
+    designer.select(id);
+    const widgets = designer.designer?.fields.find(({ field }) => field.id === id)?.field.widgets;
+    setDesignerWidget(widgetId ? Math.max(0, widgets?.findIndex((widget) => widget.id === widgetId) ?? 0) : 0);
+    setError(null);
+  }
+
+  function placeDesignerWidget(targetPage: number, placement: [number, number, number, number]) {
+    if (!designerAvailable()) return;
+    const current = infoRef.current, draft = designer.draft;
+    if (!current || !draft || draft.documentId !== current.id || draft.revision !== current.revision) {
+      setError("The form-design draft is stale. It is kept; discard it before placing a widget in this revision."); return;
+    }
+    const index = Math.min(designerWidget, draft.widgets.length - 1), previous = draft.widgets[index];
+    if (!previous || !placement.every(Number.isFinite)) { setError("Choose a valid widget and dimensions in the form designer."); return; }
+    const next = { ...previous, page: String(targetPage + 1), x: decimal(placement[0]), y: decimal(placement[1]),
+      width: decimal(placement[2]), height: decimal(placement[3]) };
+    designer.change({ ...draft, widgets: draft.widgets.map((widget, at) => at === index ? next : widget) });
+    try { widgetPlacement(next, current); setError(null); }
+    catch (error) { setError(errorMessage(error)); }
+  }
+
+  function applyDesigner() {
+    if (!designerAvailable()) return;
+    void run("Applying form design...", async () => {
+      const current = infoRef.current;
+      if (!current) throw new Error("Open a PDF before designing fields.");
+      const changes = designer.changes(current);
+      await syncDraft(current.id, true);
+      const next = await formDesignerBridge.apply(current, changes);
+      designer.discard();
+      setTool("select"); setDesignerWidget(0);
+      await adopt(next);
+      await syncDraft(next.id, draftProjection());
+      setToast("Form design applied to the PDF. Undo is available; save a copy to keep it.");
+    });
+  }
+
+  function discardDesigner() {
+    void run("Discarding form-design draft...", async () => {
+      const current = infoRef.current;
+      if (!current) throw new Error("This PDF tab is no longer open.");
+      await syncDraft(current.id, draftProjection("formDesign"));
+      designer.discard(); setTool("select"); setDesignerWidget(0);
+      setToast("Design draft discarded. Already applied PDF edits are unchanged.");
+    });
+  }
+
+  function reviewStaticFormCopy() {
+    if (busyRef.current) return;
+    void run("Reviewing static form copy...", async () => {
+      const source = await utilityExportSource();
+      const plan = await formDesignerBridge.inspectStaticCopy(source);
+      if (infoRef.current?.id !== source.id || infoRef.current.revision !== source.revision) {
+        throw new Error("The PDF changed. Review the current form before exporting.");
+      }
+      setModal({ type: "static-form-copy", documentId: source.id, revision: source.revision, plan, acknowledged: false });
+    });
+  }
+
+  function exportStaticFormCopy() {
+    const requested = modal;
+    void run("Exporting separate static form copy...", async () => {
+      const source = await utilityExportSource();
+      if (requested?.type !== "static-form-copy" || !requested.acknowledged
+          || source.id !== requested.documentId || source.revision !== requested.revision) {
+        throw new Error("The document changed. Close this dialog and review the static copy again.");
+      }
+      const output = await formDesignerBridge.exportStaticCopy(source);
+      if (!output) { setToast("Static-copy export canceled. Your source and unsaved work are unchanged."); return; }
+      setModal(null);
+      setToast("Static form copy exported. This tab still shows the interactive original; its unsaved work and history are unchanged.");
+    });
   }
 
   function reviewRedactions() {
@@ -1216,6 +1361,9 @@ export default function DocumentWorkspace(props: Props) {
     {forms.count > 0 && <div className="protected-banner form-draft-banner" role="status"><ClipboardList size={15} />
       {forms.count} unapplied form {forms.count === 1 ? "change" : "changes"}. Save requires applying or discarding these values.
       <button className="text-button" onClick={() => showPanel("forms")}>Review fields</button></div>}
+    {pendingDesign && <div className="protected-banner designer-draft-banner" role="status"><ClipboardList size={15} />
+      Unapplied form-design draft. Save requires applying or discarding it.
+      <button className="text-button" onClick={() => showPanel("form-designer")}>Review design</button></div>}
     {ocrProgress && <OcrJobProgress progress={ocrProgress} canceling={ocrCanceling} onCancel={cancelOcr} />}
 
     <div className="workspace">
@@ -1241,6 +1389,9 @@ export default function DocumentWorkspace(props: Props) {
             </button>
             <button disabled={disabled} onClick={() => showPanel("forms")}>
               <span className="tool-icon blue"><ClipboardList size={19} /></span><span>Fill form fields</span><ChevronRight size={14} className="list-arrow" />
+            </button>
+            <button disabled={disabled} onClick={() => showPanel("form-designer")}>
+              <span className="tool-icon blue"><ClipboardList size={19} /></span><span>Design form fields</span><ChevronRight size={14} className="list-arrow" />
             </button>
             <button className={tool === "redact" ? "chosen" : ""} disabled={redactDisabled} onClick={() => chooseTool("redact")}>
               <span className="tool-icon neutral"><Eraser size={19} /></span><span>Redact a PDF</span><ChevronRight size={14} className="list-arrow" />
@@ -1312,8 +1463,21 @@ export default function DocumentWorkspace(props: Props) {
           draft={forms.draft} count={forms.count} loading={forms.loading} error={forms.error}
           actionError={error} notice={toast}
           fieldErrors={forms.fieldErrors} stale={forms.stale} retry={forms.retry}
-          disabled={disabled || redactions.length > 0 || authoring.pending || pendingWriting || pendingMetadata} onChange={forms.change} onApply={applyForms}
-          onDiscard={() => { setError(null); setModal({ type: "form-discard" }); }} onLocate={locateFormWidget} />}
+          disabled={disabled || redactions.length > 0 || authoring.pending || pendingWriting || pendingMetadata || pendingDesign} onChange={forms.change} onApply={applyForms}
+          onDiscard={() => { setError(null); setModal({ type: "form-discard" }); }} onLocate={locateFormWidget}
+          onDesign={() => showPanel("form-designer")} onFlatten={reviewStaticFormCopy} />}
+        {panel === "form-designer" && info && <FormDesignerPanel info={info} page={page} designer={designer.designer}
+          draft={designer.draft} widgetIndex={designerWidget} loading={designer.loading} stale={designer.stale}
+          error={error ?? designer.error} notice={toast}
+          disabled={disabled || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || redactions.length > 0}
+          retry={designer.retry} onNew={createDesignerField} onSelect={selectDesignerField} onChange={designer.change}
+          onWidget={setDesignerWidget} onTarget={() => {
+            if (!designerAvailable()) return;
+            setTool("form-widget");
+            setToast("Click to move the selected widget, or drag a new box to move and resize it. Apply the design when ready.");
+            if (window.matchMedia("(max-width: 899px)").matches) setPanelOpen(false);
+          }} onLocate={(page) => setPage(page)} onApply={applyDesigner} onDiscard={discardDesigner}
+          onFlatten={reviewStaticFormCopy} onFill={() => showPanel("forms")} />}
         {panel === "bookmarks" && <BookmarksPanel info={info} page={page} disabled={disabled} editDisabled={managementEditDisabled}
           onNavigate={navigateLink} onAdd={addBookmark}
           onRename={(entry) => {
@@ -1323,7 +1487,7 @@ export default function DocumentWorkspace(props: Props) {
           onRemove={(entry) => { setError(null); setModal({ type: "bookmark-delete", entry }); }}
           onMove={(entry, parent, at) => edit({ type: "bookmark_move", id: entry.id, parent, at }, "Organizing bookmarks...", () => setToast("Bookmark moved. Its destination and children are unchanged."))} />}
         {panel === "properties" && <DocumentPropertiesPanel info={info} draft={metadataDraft}
-          disabled={disabled || readOnly || managementTooLarge || redactions.length > 0 || forms.count > 0 || authoring.pending} onDraft={(draft) => setMetadataDraft(metadataChanged(draft) ? draft : null)}
+          disabled={disabled || readOnly || managementTooLarge || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign} onDraft={(draft) => setMetadataDraft(metadataChanged(draft) ? draft : null)}
           onApply={applyMetadata} onDiscard={() => setMetadataDraft(null)} />}
         {panel === "attachments" && <AttachmentsPanel info={info} editDisabled={managementEditDisabled} exportDisabled={disabled || pendingDraft}
           onAdd={() => addAttachment()}
@@ -1347,6 +1511,7 @@ export default function DocumentWorkspace(props: Props) {
           <button className="button secondary existing-text-launch" disabled={editDisabled} onClick={() => chooseTool("edit-text")}><SquarePen size={15} />Edit existing text</button>
           <button className="button secondary existing-text-launch" disabled={authoringDisabled}
             onClick={() => authoring.choose(authoring.draft?.kind ?? "image")}><ImagePlus size={15} />Page authoring</button>
+          <button className="button secondary existing-text-launch" disabled={disabled} onClick={() => showPanel("form-designer")}><ClipboardList size={15} />Design form fields</button>
           <div className="writing-tool-buttons">
             <button className={`button ${tool === "text" ? "primary" : "secondary"}`} disabled={editDisabled} onClick={() => chooseTool("text")}><Type size={16} />Add text</button>
             <button className={`button ${tool === "ink" ? "primary" : "secondary"}`} disabled={editDisabled} onClick={() => chooseTool("ink")}><Pencil size={16} />Pen</button>
@@ -1483,6 +1648,13 @@ export default function DocumentWorkspace(props: Props) {
                 tool={tool} disabled={tool === "image" || tool === "crop" ? authoringDisabled : tool === "redact" ? redactDisabled : editDisabled} annotations={info.annotations.filter((annotation) => annotation.page === index)}
                 authoringDraft={authoring.draft} onAuthoringPoint={(point) => authoring.place(index, point)}
                 onAuthoringCrop={(margins) => authoring.crop(index, margins)}
+                formDesigner={panelOpen && panel === "form-designer" || tool === "form-widget" ? {
+                  fields: designer.designer?.fields ?? [], draft: designer.draft, widgetIndex: designerWidget,
+                  active: tool === "form-widget",
+                  disabled: disabled || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || redactions.length > 0,
+                  onSelect: selectDesignerField, onPlace: placeDesignerWidget,
+                  onGesture: (pending) => onGestureDraft(index, pending),
+                } : undefined}
                 redactions={redactions.filter((mark) => mark.page === index)} onRedaction={(rect) => markRedaction(rect, index)}
                 selectedAnnotation={selectedAnnotation}
                 query={panel === "search" && panelOpen ? query : ""} matchCase={matchCase}
@@ -1660,6 +1832,19 @@ export default function DocumentWorkspace(props: Props) {
 
     {modal?.type === "sign-copy" && info && <SigningDialog info={info} busy={Boolean(busy)} error={error}
       onClose={() => setModal(null)} onExport={exportSignedCopy} />}
+    {modal?.type === "static-form-copy" && <Dialog title="Export a separate static form copy?" error={error} busy={Boolean(busy)}
+      onClose={() => setModal(null)} actions={<>
+        <button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Keep interactive original</button>
+        <button className="button primary" disabled={Boolean(busy) || !modal.acknowledged} onClick={exportStaticFormCopy}><FileOutput size={15} />Export static copy</button>
+      </>}>
+      <p><strong>{modal.plan.fieldCount} fields / {modal.plan.widgetCount} widgets</strong> will become persistent page content in a separate PDF.
+        Interactive controls and their field actions are removed from the copy.</p>
+      {modal.plan.unsignedSignatureCount > 0 && <p>{modal.plan.unsignedSignatureCount} empty signature slot(s) will become unsigned static outlines, not digital signatures.</p>}
+      {modal.plan.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+      <label className="checkbox-setting"><input type="checkbox" checked={modal.acknowledged} disabled={Boolean(busy)}
+        onChange={(event) => setModal({ ...modal, acknowledged: event.target.checked })} />
+        I understand this is a static copy, not secure sanitization, and will inspect it before sharing.</label>
+    </Dialog>}
     {modal?.type === "form-discard" && <Dialog title="Discard unapplied form changes?" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
       actions={<><button className="button secondary" disabled={Boolean(busy)} onClick={() => setModal(null)}>Keep filling</button>
         <button className="button danger" disabled={Boolean(busy)} onClick={() => void discardForms(modal.action)}>

@@ -72,6 +72,19 @@ The desktop app processes document contents locally.
   from silently exporting older values. Mask password-type fields without
   implying file encryption. Signature fields stay non-fillable here; scripts,
   actions, calculations, XFA, and signed/certified forms are not executed/rewritten.
+- AcroForm design: create supported text, checkbox, radio, list, combo and empty
+  digital-signature fields; edit partial names, labels, defaults, constraints
+  and page-widget geometry, or remove supported fields/widgets. Preserve logical
+  IDs, inherited defaults and repeated values, general-edit permissions,
+  encryption and history. Keep drafts above virtualized pages in the existing
+  aggregate save/history/close/quit/output/signing/OCR protection. Empty signature
+  slots remain unsigned and do not lock other fields.
+- Export separate static form copies with genuine persistent page appearances,
+  not HTML overlays. Rebuild current text/choice values, mask passwords, capture
+  button appearance transforms/resources, remove widgets and field actions, and
+  preserve source/history/protection. Reject unsupported or hidden values instead
+  of silently omitting them. This is not sanitization, redaction, PDF/A or
+  signature preservation; existing form/XFA page-operation guards remain.
 - Redaction: mark page rectangles and export a separate, fresh image-only PDF.
   Permanently replace marked pixels with opaque black before lossless image
   encoding; copy no original PDF objects, text layer, attachments, or metadata.
@@ -162,7 +175,7 @@ The desktop app processes document contents locally.
   Do not claim trusted chains, revocation, trusted timestamps, qualified
   signatures, or PAdES-LTV; make no external certificate/document requests.
 - Certificate-based protection, paragraph reflow, arbitrary font/encoding support, existing-image editing,
-  form authoring, unsupported interactive forms, non-English OCR, Office conversion, advanced
+  advanced form authoring, unsupported interactive forms, non-English OCR, Office conversion, advanced
   signing/trust validation, cloud
   collaboration, and full Acrobat parity remain incomplete capabilities.
 - New annotations, imported pages, and created/extracted documents must remain

@@ -1,0 +1,50 @@
+.tools-panel.panel-form-designer { width: 310px; }
+.form-designer-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.designer-intro { padding: 0 16px 14px; border-bottom: 1px solid var(--line); }
+.designer-intro p, .designer-settings p, .designer-commit p { font-size: 11px; line-height: 1.7; color: var(--secondary); overflow-wrap: anywhere; }
+.designer-intro p { margin-bottom: 12px; }
+.designer-field { display: flex; flex-direction: column; gap: 6px; margin-block: 12px; min-width: 0; color: var(--secondary); font-size: 11px; }
+.form-designer-panel input:not([type="checkbox"]), .form-designer-panel select, .form-designer-panel textarea { width: 100%; min-width: 0; min-height: 34px; padding: 6px 8px; border: 1px solid var(--control-border); border-radius: var(--radius-control); background: var(--input-bg); color: var(--ink); font-size: 12px; }
+.form-designer-panel input[type="number"] { font-variant-numeric: tabular-nums; }
+.form-designer-panel textarea { resize: vertical; }
+.designer-settings { padding: 16px; }
+.designer-context { margin-bottom: 18px; }
+.designer-context h3 { font-size: 13px; color: var(--strong); }
+.designer-context p { margin-top: 4px; }
+.designer-group { border: 0; padding: 0 0 18px; margin: 0 0 20px; min-width: 0; border-bottom: 1px solid var(--line); }
+.designer-group legend { padding: 0; margin-bottom: 3px; color: var(--strong); font-weight: 600; font-size: 12px; }
+.designer-group .checkbox-setting { margin-block: 12px; line-height: 1.5; }
+.designer-group > p { margin-top: 10px; }
+.designer-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 10px; }
+.designer-grid .designer-field { margin-top: 6px; }
+.designer-option { padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+.designer-widget { margin-block: 12px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-control); }
+.designer-widget.selected { border-color: var(--blue); }
+.designer-widget-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.designer-widget-heading .text-button { font-size: 11px; min-width: 0; overflow-wrap: anywhere; }
+.designer-notice { padding: 10px; background: var(--warning-bg); color: var(--warning-ink) !important; border-radius: var(--radius-control); font-size: 11px; line-height: 1.7; }
+.designer-notice p { color: inherit; }
+.designer-support { margin-block: 20px; font-size: 11px; color: var(--secondary); }
+.designer-support summary { cursor: pointer; font-weight: 600; color: var(--strong); line-height: 1.7; }
+.designer-support p { margin-top: 10px; }
+.designer-copy-actions { display: flex; flex-direction: column; gap: 10px; padding-top: 18px; border-top: 1px solid var(--line); }
+.designer-commit { padding: 14px 16px; border-top: 1px solid var(--line); }
+.designer-commit p { margin-bottom: 10px; }
+.designer-commit .button { width: 100%; }
+.designer-commit .text-button { margin-top: 8px; font-size: 11px; }
+.designer-commit .inline-error { max-height: 140px; overflow-y: auto; color: var(--danger-ink); }
+.designer-commit .designer-success { color: var(--success-ink); }
+.form-designer-overlay { position: absolute; inset: 0; z-index: 9; pointer-events: none; }
+.form-designer-overlay.capturing { pointer-events: auto; cursor: crosshair; touch-action: none; user-select: none; -webkit-user-select: none; }
+.designer-field-target, .designer-widget-preview { position: absolute; border: 1px dashed #225ae6; background: #225ae60a; border-radius: 0; text-align: left; padding: 0; }
+.designer-field-target { pointer-events: auto; cursor: pointer; }
+.designer-field-target:focus-visible { outline: 2px solid #225ae6; outline-offset: 3px; }
+.designer-field-target:hover:not(:disabled) { background: #225ae61a; }
+.designer-field-target span, .designer-widget-preview span { position: absolute; left: 0; bottom: 100%; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 4px; color: #fff; background: #174cc6; font-size: 10px; line-height: 1.5; }
+.designer-widget-preview { pointer-events: none; border-style: solid; }
+.designer-widget-preview.drawing { border-style: dashed; }
+.tool-form-widget .textLayer { pointer-events: none; user-select: none; -webkit-user-select: none; }
+.designer-draft-banner { gap: 8px; }
+@media (max-width: 899px) {
+  .tools-panel.panel-form-designer { width: min(310px, calc(100vw - 44px)); }
+}

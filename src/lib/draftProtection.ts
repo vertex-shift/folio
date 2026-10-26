@@ -1,5 +1,17 @@
 type DraftWriter = (documentId: number, pending: boolean) => Promise<void>;
 
+export interface DocumentDraftProjection {
+  writing: boolean;
+  formFilling: boolean;
+  formDesign: boolean;
+  pageAuthoring: boolean;
+  redaction: boolean;
+}
+
+export function hasDocumentDrafts(projection: DocumentDraftProjection): boolean {
+  return Object.values(projection).some(Boolean);
+}
+
 interface DraftUpdate {
   documentId: number;
   pending: boolean;
