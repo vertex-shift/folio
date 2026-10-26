@@ -296,6 +296,7 @@ pub(super) fn supported(document: &Document, field: &Field) -> Result<()> {
             ));
         }
         let mut by_state = HashMap::new();
+        let mut labels_by_state = HashMap::new();
         for (index, widget) in field.widgets.iter().enumerate() {
             let on = button_state(document, *widget)?;
             let export = exports
@@ -307,6 +308,22 @@ pub(super) fn supported(document: &Document, field: &Field) -> Result<()> {
                 return Err(invalid(
                     "Repeated button widgets disagree on their export values.",
                 ));
+            }
+            if field.info.kind == FieldKind::Radio {
+                let dictionary = document.get_dictionary(*widget)?;
+                let label = optional(document, dictionary, b"Contents")?
+                    .map(|value| text(document, value, &mut 0))
+                    .transpose()?
+                    .filter(|value| !value.trim().is_empty())
+                    .or(export.clone())
+                    .unwrap_or(state_label(&on, &mut 0)?);
+                if let Some(previous) = labels_by_state.insert(on.clone(), label.clone())
+                    && previous != label
+                {
+                    return Err(invalid(
+                        "Repeated radio on-states have different captions. This ambiguous group cannot be authored or flattened.",
+                    ));
+                }
             }
             *states.entry(on).or_insert(0) += 1;
         }
@@ -569,9 +586,10 @@ fn validate_definition(definition: &Definition) -> Result<()> {
         ));
     }
     let mut seen = HashSet::new();
+    let choice = matches!(definition.kind, ControlKind::List | ControlKind::Combo);
     for option in &definition.options {
-        single_line(&option.label, 256, "Option label", false)?;
-        single_line(&option.export_value, 256, "Option export value", false)?;
+        single_line(&option.label, 256, "Option label", choice)?;
+        single_line(&option.export_value, 256, "Option export value", choice)?;
         if !seen.insert(option.export_value.clone()) {
             return Err(invalid("Option export values must be unique."));
         }
@@ -898,7 +916,9 @@ fn update_button_labels(
         let on = button_state(document, *widget)?;
         let option = definition.options.iter().find(|option| option.export_value.as_bytes() == on)
             .ok_or_else(|| invalid("Existing button export states cannot be changed or removed. Create a new group instead."))?;
-        Ok((*widget, text_string(&option.label), text_string(&option.export_value)))
+        let changed = field.info.options.iter().find(|option| option.id == state_key(&on))
+            .is_none_or(|previous| previous.label != option.label);
+        Ok((*widget, text_string(&option.label), text_string(&option.export_value), changed))
     }).collect::<Result<Vec<_>>>()?;
     let states = field
         .info
@@ -916,10 +936,12 @@ fn update_button_labels(
             "Existing button options may be relabeled, but their export-state identities must remain unchanged.",
         ));
     }
-    for (widget, label, _) in &labels {
-        document
-            .get_dictionary_mut(*widget)?
-            .set("Contents", label.clone());
+    for (widget, label, _, changed) in &labels {
+        if *changed {
+            document
+                .get_dictionary_mut(*widget)?
+                .set("Contents", label.clone());
+        }
     }
     // Opt holds submission exports, not display captions. Preserve existing
     // mappings, including inherited exports different from appearance states.
@@ -928,7 +950,7 @@ fn update_button_labels(
             "Opt",
             labels
                 .into_iter()
-                .map(|(_, _, export)| export)
+                .map(|(_, _, export, _)| export)
                 .collect::<Vec<_>>(),
         );
     }
@@ -1277,13 +1299,12 @@ fn remove_widget(document: &mut Document, field: &Field, widget_id: &str) -> Res
             .iter()
             .filter(|widget| **widget != id)
             .any(|widget| button_state(document, *widget).is_ok_and(|on| on == state));
-        let referenced = [b"V".as_slice(), b"DV"].iter().any(|key| {
-            optional(document, &field.attributes, key)
-                .ok()
-                .flatten()
-                .and_then(|value| value.as_name().ok())
-                == Some(state.as_slice())
-        });
+        let mut referenced = false;
+        for key in [b"V".as_slice(), b"DV"] {
+            if let Some(value) = optional(document, &field.attributes, key)? {
+                referenced |= value.as_name()? == state.as_slice();
+            }
+        }
         if !remaining && referenced {
             return Err(invalid(
                 "This radio widget holds the current/default selection. Change those values before removing its last matching widget.",

@@ -1345,7 +1345,7 @@ export default function DocumentWorkspace(props: Props) {
           <button key={item.mode} className={mode === item.mode ? "selected" : ""}
             aria-label={item.label} title={item.label}
             aria-current={mode === item.mode ? "page" : undefined}
-            disabled={disabled || (item.mode === "organize" || item.mode === "write") && forms.count > 0 || item.mode === "organize" && redactions.length > 0} onClick={() => changeMode(item.mode)}>
+            disabled={disabled || (item.mode === "organize" || item.mode === "write") && (forms.count > 0 || pendingDesign) || item.mode === "organize" && redactions.length > 0} onClick={() => changeMode(item.mode)}>
             <item.icon size={16} /><span>{item.label}</span>
           </button>)}
       </nav>
@@ -1353,8 +1353,8 @@ export default function DocumentWorkspace(props: Props) {
         <IconButton label="Find in document (Command+F)" disabled={disabled} onClick={() => showPanel("search")}><Search size={18} /></IconButton>
         <IconButton label="Print PDF (Command+P)" disabled={disabled} onClick={() => requestOutput("print")}><Printer size={18} /></IconButton>
         <span className="toolbar-divider" />
-        <IconButton label="Undo (Command+Z)" disabled={disabled || authoring.pending || pendingMetadata || redactions.length > 0 || forms.count > 0 || !info?.canUndo} onClick={() => history(false)}><Undo2 size={18} /></IconButton>
-        <IconButton label="Redo (Command+Shift+Z)" disabled={disabled || authoring.pending || pendingMetadata || redactions.length > 0 || forms.count > 0 || !info?.canRedo} onClick={() => history(true)}><Redo2 size={18} /></IconButton>
+        <IconButton label="Undo (Command+Z)" disabled={disabled || authoring.pending || pendingMetadata || pendingDesign || redactions.length > 0 || forms.count > 0 || !info?.canUndo} onClick={() => history(false)}><Undo2 size={18} /></IconButton>
+        <IconButton label="Redo (Command+Shift+Z)" disabled={disabled || authoring.pending || pendingMetadata || pendingDesign || redactions.length > 0 || forms.count > 0 || !info?.canRedo} onClick={() => history(true)}><Redo2 size={18} /></IconButton>
         <button className="button primary save-button" aria-label={saveLabel} title={saveLabel} disabled={disabled || redactionIntent && !redactions.length} onClick={() => save(true)}>
           {redactionIntent ? <FileOutput size={15} /> : <Copy size={15} />}<span>{saveLabel}</span>
         </button>
@@ -1423,7 +1423,7 @@ export default function DocumentWorkspace(props: Props) {
             <button disabled={authoringDisabled} onClick={() => authoring.choose(authoring.draft?.kind ?? "image")}>
               <span className="tool-icon blue"><ImagePlus size={19} /></span><span>Page authoring</span><ChevronRight size={14} className="list-arrow" />
             </button>
-            <button className={mode === "organize" ? "chosen" : ""} disabled={disabled || redactions.length > 0 || forms.count > 0 || authoring.pending} onClick={() => changeMode("organize")}>
+            <button className={mode === "organize" ? "chosen" : ""} disabled={disabled || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign} onClick={() => changeMode("organize")}>
               <span className="tool-icon teal"><LayoutGrid size={19} /></span><span>Organize pages</span><ChevronRight size={14} className="list-arrow" />
             </button>
             <button disabled={disabled} onClick={() => showPanel("properties")}><span className="tool-icon neutral"><Info size={18} /></span><span>Document properties</span><ChevronRight size={14} className="list-arrow" /></button>
@@ -1688,7 +1688,7 @@ export default function DocumentWorkspace(props: Props) {
               <IconButton label={item.label} active={tool === item.tool}
                 disabled={disabled || readOnly && !["select", "hand"].includes(item.tool)
                   || redactions.length > 0 && !["select", "hand", "redact"].includes(item.tool)
-                  || forms.count > 0 && !["select", "hand"].includes(item.tool)}
+                  || (forms.count > 0 || pendingDesign) && !["select", "hand"].includes(item.tool)}
                 onClick={() => chooseTool(item.tool)}><item.icon size={19} />
                 {item.tool === "highlight" && <span className="highlighter-swatch" />}
               </IconButton>
@@ -1741,7 +1741,7 @@ export default function DocumentWorkspace(props: Props) {
               <Thumbnail pdf={pdf} page={index} /><span className="thumbnail-number">{index + 1}</span>
             </button>)}
         </div>
-        <button className="rail-organize" disabled={disabled || redactions.length > 0 || forms.count > 0} onClick={() => changeMode("organize")}><LayoutGrid size={14} />Organize pages</button>
+        <button className="rail-organize" disabled={disabled || redactions.length > 0 || forms.count > 0 || pendingDesign} onClick={() => changeMode("organize")}><LayoutGrid size={14} />Organize pages</button>
       </aside>}
       <nav className="utility-rail" aria-label="Document panels">
         <IconButton label="Toggle page thumbnails" active={railOpen && mode !== "organize"} disabled={disabled} onClick={() => { setRailOpen((open) => !open); if (mode === "organize") setMode("read"); }}><FileText size={18} /></IconButton>
@@ -1763,8 +1763,8 @@ export default function DocumentWorkspace(props: Props) {
       <div className="privacy-status"><ShieldCheck size={12} /><span>{runtimeIssue ? "Desktop runtime unavailable" : native ? "Local files. No uploads." : "Preview uses the real Rust engine"}</span></div>
     </footer>
 
-    {error && !modal && !outputMode && !utilityPanel && !(panelOpen && (panel === "forms" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
-    {toast && !(panelOpen && (panel === "forms" || panel === "authoring" && authoring.draft)) && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
+    {error && !modal && !outputMode && !utilityPanel && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
+    {toast && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "authoring" && authoring.draft)) && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
 
     {modal?.type === "protection-copy" && info && <ProtectionCopyDialog info={info} busy={Boolean(busy)} error={error}
       onClose={() => setModal(null)} onSubmit={exportProtectionCopy} />}

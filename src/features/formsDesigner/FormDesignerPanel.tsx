@@ -66,7 +66,7 @@ export default function FormDesignerPanel(props: {
         <option value="" disabled>Create a field...</option>
         {Object.entries(controlLabels).map(([kind, label]) => <option value={kind} key={kind}>{label}</option>)}
       </select>
-      <label className="designer-field">Existing logical field<select value={draft?.fieldId ?? ""} disabled={props.disabled || props.loading || Boolean(draft?.dirty)}
+      <label className="designer-field">Existing logical field<select aria-label="Existing logical field" value={draft?.fieldId ?? ""} disabled={props.disabled || props.loading || Boolean(draft?.dirty)}
         onChange={(event) => props.onSelect(event.target.value)}>
         <option value="" disabled>{designer?.fields.length ? "Choose a field..." : "No existing fields"}</option>
         {designer?.fields.map(({ field, editable }) => <option key={field.id} value={field.id} disabled={!editable}>
@@ -109,7 +109,7 @@ export default function FormDesignerPanel(props: {
                 <label className="designer-field">Font size (PDF units, 0 = fit)<input type="number" min="0" max="256" step="0.5"
                   value={definition.fontSize} onChange={(event) => change({ fontSize: event.target.value })} /></label>
               </>}
-              {["text", "list", "combo"].includes(definition.kind) && <label className="designer-field">Text alignment<select value={definition.alignment}
+              {["text", "list", "combo"].includes(definition.kind) && <label className="designer-field">Text alignment<select aria-label="Text alignment" value={definition.alignment}
                 onChange={(event) => change({ alignment: Number(event.target.value) })}>
                 <option value="0">Left</option><option value="1">Center</option><option value="2">Right</option>
               </select></label>}

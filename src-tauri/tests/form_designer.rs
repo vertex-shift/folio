@@ -1432,6 +1432,143 @@ fn inherited_empty_choice_defaults_and_new_partial_names_preserve_parent_semanti
 }
 
 #[test]
+fn unrelated_properties_do_not_overwrite_distinct_repeated_checkbox_captions() {
+    let mut session = Session::blank(612.0, 792.0, 1).unwrap();
+    session
+        .design_form_fields(vec![create(
+            definition(ControlKind::Checkbox, "repeated"),
+            vec![
+                widget(0, 40.0, 40.0, 20.0, 20.0),
+                widget(0, 40.0, 80.0, 20.0, 20.0),
+            ],
+        )])
+        .unwrap();
+    let selected = field(&session, "repeated");
+    let mut document = load(session.bytes());
+    for (widget, caption) in selected
+        .widgets
+        .iter()
+        .zip(["First caption", "Second caption"])
+    {
+        document
+            .get_dictionary_mut(object_key(&widget.id))
+            .unwrap()
+            .set("Contents", text_string(caption));
+    }
+    let mut session = Session::from_bytes(
+        bytes(&mut document),
+        "Repeated captions.pdf".into(),
+        None,
+        1,
+    )
+    .unwrap();
+    let mut definition = props(&session, "repeated");
+    definition.label = "New logical field label".into();
+    session
+        .design_form_fields(vec![Change::Update {
+            id: selected.id,
+            definition,
+        }])
+        .unwrap();
+    let document = load(session.bytes());
+    for (widget, caption) in selected
+        .widgets
+        .iter()
+        .zip(["First caption", "Second caption"])
+    {
+        assert_eq!(
+            decode_text_string(
+                document
+                    .get_dictionary(object_key(&widget.id))
+                    .unwrap()
+                    .get(b"Contents")
+                    .unwrap()
+            )
+            .unwrap(),
+            caption
+        );
+    }
+}
+
+#[test]
+fn choice_placeholder_exports_survive_property_edits_without_becoming_a_different_value() {
+    let mut session = Session::blank(612.0, 792.0, 1).unwrap();
+    let mut choice = definition(ControlKind::Combo, "placeholder");
+    choice.options[0].export_value.clear();
+    choice.options[0].label = "Choose a value".into();
+    choice.default_value = Some(FieldValue::Choice {
+        indices: vec![0],
+        custom: None,
+    });
+    session
+        .design_form_fields(vec![create(
+            choice,
+            vec![widget(0, 40.0, 40.0, 220.0, 32.0)],
+        )])
+        .unwrap();
+    let original = field(&session, "placeholder");
+    let mut definition = props(&session, "placeholder");
+    definition.label = "Updated accessible label".into();
+    definition.options[0].label = "Pick a value".into();
+    session
+        .design_form_fields(vec![Change::Update {
+            id: original.id.clone(),
+            definition,
+        }])
+        .unwrap();
+    let changed = field(&session, "placeholder");
+    assert_eq!(changed.id, original.id);
+    assert_eq!(changed.value, original.value);
+    assert_eq!(changed.options[0].export_value, "");
+    assert_eq!(
+        props(&session, "placeholder").default_value,
+        Some(FieldValue::Choice {
+            indices: vec![0],
+            custom: None
+        })
+    );
+}
+
+#[test]
+fn malformed_radio_defaults_do_not_silently_authorize_widget_removal() {
+    let mut session = Session::blank(612.0, 792.0, 1).unwrap();
+    let mut alpha = widget(0, 40.0, 40.0, 20.0, 20.0);
+    alpha.option = Some(0);
+    let mut beta = widget(0, 40.0, 70.0, 20.0, 20.0);
+    beta.option = Some(1);
+    session
+        .design_form_fields(vec![create(
+            definition(ControlKind::Radio, "radio"),
+            vec![alpha, beta],
+        )])
+        .unwrap();
+    let field = field(&session, "radio");
+    let mut document = load(session.bytes());
+    document
+        .get_dictionary_mut(object_key(&field.id))
+        .unwrap()
+        .set("DV", 7);
+    let mut session = Session::from_bytes(
+        bytes(&mut document),
+        "Malformed default.pdf".into(),
+        None,
+        1,
+    )
+    .unwrap();
+    let before = session.bytes().to_vec();
+    assert!(
+        session
+            .design_form_fields(vec![Change::RemoveWidget {
+                id: field.id,
+                widget_id: field.widgets[0].id.clone()
+            }])
+            .is_err()
+    );
+    assert_eq!(session.bytes(), before);
+    assert!(!session.info().unwrap().can_undo);
+}
+
+#[test]
 fn unsigned_signature_slots_keep_signer_compatible_mk_rotation_when_created_and_moved() {
     let mut document = geometry_document();
     let mut session = Session::from_bytes(
@@ -1577,6 +1714,8 @@ fn writes_original_interoperability_evidence_when_requested() {
     });
     let mut combo = definition(ControlKind::Combo, "evidence_combo");
     combo.editable_choice = true;
+    combo.options[0].export_value.clear();
+    combo.options[0].label = "Choose a value".into();
     combo.default_value = Some(FieldValue::Choice {
         indices: vec![],
         custom: Some("Custom choice".into()),
