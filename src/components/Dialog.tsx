@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { X } from "lucide-react";
 
 export default function Dialog({
-  title, children, actions, onClose, busy, error,
+  title, children, actions, onClose, busy, error, className,
 }: {
   title: string;
   children: ReactNode;
@@ -11,6 +11,7 @@ export default function Dialog({
   onClose(): void;
   busy?: boolean;
   error?: string | null;
+  className?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
@@ -29,7 +30,7 @@ export default function Dialog({
   return <div className="modal-backdrop" onMouseDown={(event) => {
     if (event.target === event.currentTarget && !busy) onClose();
   }}>
-    <div className="dialog" ref={ref} role="dialog" aria-modal="true" aria-labelledby="dialog-title"
+    <div className={`dialog${className ? ` ${className}` : ""}`} ref={ref} role="dialog" aria-modal="true" aria-labelledby="dialog-title"
       onKeyDown={(event) => {
         if (event.key === "Escape" && !busy) { event.preventDefault(); close.current(); }
         if (event.key !== "Tab") return;

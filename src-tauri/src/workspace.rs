@@ -189,6 +189,51 @@ impl Workspace {
         Ok(())
     }
 
+    pub fn check_signing(&self, id: u64, revision: u64) -> Result<&Session> {
+        let session = self.check_revision(id, revision)?;
+        if self.drafts.contains(&id)
+            || self
+                .redactions
+                .values()
+                .any(|job| job.plan.document_id == id)
+        {
+            return Err(Error::Invalid(
+                "Apply or cancel pending writing and clear pending redaction marks before signing. A signature must not export an unapplied or unredacted original.".into(),
+            ));
+        }
+        session.ensure_signable()?;
+        Ok(session)
+    }
+
+    pub fn signed_copy(
+        &self,
+        id: u64,
+        revision: u64,
+        identity: &[u8],
+        password: &str,
+    ) -> Result<Vec<u8>> {
+        self.check_signing(id, revision)?
+            .signed_copy(identity, password)
+    }
+
+    pub fn export_signed_copy(
+        &self,
+        id: u64,
+        revision: u64,
+        identity: &[u8],
+        password: &str,
+        path: &Path,
+    ) -> Result<()> {
+        self.ensure_output_available(id, path)?;
+        self.check_signing(id, revision)?
+            .ensure_separate_output(path)?;
+        let bytes = self.signed_copy(id, revision, identity, password)?;
+        self.ensure_output_available(id, path)?;
+        self.check_signing(id, revision)?
+            .ensure_separate_output(path)?;
+        crate::document::atomic_write(path, &bytes)
+    }
+
     pub fn request_open_paths(&mut self, paths: Vec<PathBuf>) -> Vec<OpenOutcome> {
         paths
             .into_iter()

@@ -294,6 +294,96 @@ async fn page_text_runs(
 }
 
 #[tauri::command]
+async fn inspect_signatures(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+) -> std::result::Result<crate::signatures::SignatureReport, String> {
+    with_state(app, move |state| {
+        state
+            .workspace
+            .check_revision(document_id, revision)?
+            .signature_report()
+    })
+    .await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SigningIdentityFile {
+    name: String,
+    path: String,
+}
+
+#[tauri::command]
+async fn choose_signing_identity(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+) -> std::result::Result<Option<SigningIdentityFile>, String> {
+    with_state(app.clone(), move |state| {
+        state.workspace.check_signing(document_id, revision)?;
+        Ok(())
+    })
+    .await?;
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .set_title("Choose a local signing identity")
+        .add_filter("PKCS#12 signing identity", &["p12", "pfx"])
+        .pick_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    with_state(app, move |state| {
+        state.workspace.check_signing(document_id, revision)?;
+        Ok(Some(SigningIdentityFile {
+            name: file.file_name(),
+            path: file.path().to_string_lossy().into_owned(),
+        }))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn export_signed_copy(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+    identity_path: String,
+    password: String,
+) -> std::result::Result<Option<String>, String> {
+    let password = zeroize::Zeroizing::new(password);
+    let name = with_state(app.clone(), move |state| {
+        let session = state.workspace.check_signing(document_id, revision)?;
+        let stem = std::path::Path::new(&session.name)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        Ok(format!("{stem}-signed.pdf"))
+    })
+    .await?;
+    let Some(file) = rfd::AsyncFileDialog::new()
+        .set_title("Export a cryptographically signed PDF copy")
+        .add_filter("PDF document", &["pdf"])
+        .set_file_name(name)
+        .save_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    let path = pdf_output_path(file.path().to_path_buf())?;
+    with_state(app, move |state| {
+        state.workspace.check_signing(document_id, revision)?;
+        let identity = crate::signatures::read_identity_file(std::path::Path::new(&identity_path))?;
+        state
+            .workspace
+            .export_signed_copy(document_id, revision, &identity, &password, &path)?;
+        Ok(Some(path.to_string_lossy().into_owned()))
+    })
+    .await
+}
+
+#[tauri::command]
 async fn begin_redaction(
     app: AppHandle,
     document_id: u64,
@@ -607,6 +697,9 @@ pub fn run() {
             document_bytes,
             edit_document,
             page_text_runs,
+            inspect_signatures,
+            choose_signing_identity,
+            export_signed_copy,
             begin_redaction,
             stage_redaction_page,
             export_redacted_copy,

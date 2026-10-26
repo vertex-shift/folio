@@ -39,6 +39,11 @@ tauri-plugin-opener = { version = "2", optional = true }
 rfd = { version = "0.17", optional = true }
 tiny_http = { version = "0.12", optional = true }
 percent-encoding = { version = "2", optional = true }
+openssl = { version = "0.10.81", features = ["vendored"] }
+cms = "0.2.3"
+der = "0.7.10"
+x509-cert = "0.2.5"
+zeroize = "1"
 
 [build-dependencies]
 tauri-build = { version = "2", optional = true, features = [] }

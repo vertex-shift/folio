@@ -25,6 +25,11 @@ open src-tauri/target/release/bundle/macos/Folio.app
 ```
 
 The generated app needs neither Acrobat nor a separately installed PDF engine.
+PDF signature operations use a statically bundled OpenSSL 3 library, not an
+external `openssl` executable. Building that dependency requires a C compiler,
+Perl, and make on Unix; Windows MSVC builds need Visual Studio C++ tools,
+Windows-native Perl (such as Strawberry Perl), and nmake. CI selects
+Strawberry Perl on Windows and installs Perl on Linux.
 Local application builds use an ad-hoc signature, not a Developer ID signature
 or notarization for public distribution. An Intel or universal build requires the corresponding Rust
 target and separate validation; it is not implied by this Apple Silicon build.
@@ -90,6 +95,7 @@ the tag before rerunning the workflow.
 | --- | --- |
 | Open PDFs | Multiple PDFs in independent tabs through the native picker, drag-and-drop, Finder association, or browser picker |
 | Protected PDFs | Password prompt for supported standard RC4/AES PDFs; preserve passwords and permissions on saved copies and exports |
+| Digital signatures | Local detached-CMS integrity inspection and certificate details; export separate unsigned, unencrypted copies signed with a local PKCS#12 identity; identity trust is not checked |
 | Read | Continuous vertical scrolling, real PDF rendering, selectable/copyable text, lazy thumbnails, synchronized page navigation, zoom, fit page/width, hand panning |
 | Navigate | Document bookmarks and internal links; web/email links require confirmation before opening outside Folio |
 | Create | New blank US Letter or A4 PDFs, in portrait or landscape |
@@ -173,6 +179,77 @@ Folio does not create, remove, or change passwords. Certificate-based security
 and unsupported encryption filters are rejected explicitly rather than silently
 removing protection. Errors while reading a malformed file leave the current
 document unchanged.
+
+## Cryptographic PDF signatures
+
+Choose **Digital signatures** in All tools or the right utility rail. Inspection
+checks supported detached CMS signatures against the PDF's original byte spans,
+without rewriting it. Each result separates **signed-byte integrity**,
+**whole-file versus earlier-revision coverage**, **current certificate dates**,
+and **identity trust not checked**. Certificate subject, issuer, serial number,
+SHA-256 fingerprint, date bounds, and signature/digest algorithms are available
+in the details disclosure.
+
+**Intact bytes do not mean a trusted signer.** No system/root trust store or
+certificate-chain validation is used. Self-signed and unknown certificates are
+never shown as trusted. Certificate dates use this computer's current time,
+not an authenticated historical signing time. Folio makes no revocation,
+trusted-timestamp, qualified-signature, certification-policy, or PAdES-LTV
+assurance and makes no TSA, OCSP, or other external certificate requests.
+Later appended bytes are explicitly **not covered**, even if the older signed
+revision's CMS signature is intact.
+
+For **Export signed copy**, choose a local `.p12`/`.pfx` identity (maximum
+4 MiB), enter its password, review the current PDF, and sign a separate output.
+The native Save dialog cannot overwrite this document's source/saved file or
+another open tab's file. Browser preview sends the selected identity only to
+its loopback Rust engine and downloads a new PDF; it accepts no server file
+paths. Keys and passwords are used only in memory, never saved in preferences
+or logged. The password field clears after submission; native/preview
+identity buffers and Rust password buffers are zeroized on drop.
+
+New signatures use SHA-256 and a currently valid RSA 2048-8192-bit or NIST
+P-256/P-384/P-521 ECDSA certificate, with a matching private key and appropriate
+key usage when that extension is present. This is an invisible standard
+signature field with detached `adbe.pkcs7.detached` CMS, not an annotation or
+drawn signature image. **Current unsaved PDF edits are included.** Export does
+not mark the working document saved, clear its history, or replace the unsigned
+original shown in the window. Open the exported copy to inspect it; signed
+PDFs remain read-only for ordinary editing, extraction, and page import.
+
+Pending writing and redaction marks block signing. Redaction overlays are
+not removed content: first export and inspect the redacted PDF, then open
+that separate copy and sign it.
+
+The explicit supported subset is:
+
+- Verification: ordinary indirect signature dictionaries with a single
+  hexadecimal Contents gap, exactly four direct ByteRange integers, a complete
+  signed PDF revision, an embedded unambiguous signer certificate, and one
+  detached CMS signer. Supports `adbe.pkcs7.detached` and
+  `ETSI.CAdES.detached` content-integrity checks with SHA-256/384/512 and
+  RSA PKCS#1 v1.5 or supported ECDSA keys. This is not a claim of CAdES/PAdES
+  profile conformance.
+- Export: unsigned, unencrypted PDFs without existing signature fields, XFA,
+  certification policies, incremental/hybrid cross-references, or structural
+  repairs. A normal AcroForm can retain its existing non-signature fields.
+  No co-signing, certification, encrypted signing, or changes to prior signatures.
+- Unsupported verification includes encryption, compressed/direct signature
+  dictionaries, repaired cross-references, DocMDP/FieldMDP transforms,
+  multiple CMS signers, attached CMS content, unsigned CMS attributes
+  (including timestamps/countersignatures), embedded CMS revocation lists,
+  non-X.509 certificate choices, RSA-PSS, EdDSA, weak/unknown
+  digests or keys, and missing external certificates. Malformed bounds,
+  duplicate dictionary keys, mismatched Contents gaps, trailing nonzero CMS
+  padding, and failed cryptographic checks cannot produce an intact result.
+- Limits: 64 signatures per inspection, 256 KiB per CMS Contents value,
+  64 embedded certificates, and a 32 KiB CMS reservation for new signatures.
+  An oversized chain is rejected before any export is written.
+
+The implementation uses RustCrypto `cms`/`der`/`x509-cert` for structural
+checks and the Rust `openssl` bindings with vendored OpenSSL 3 for PKCS#12
+and CMS cryptography. No external executable or test private key is shipped.
+This feature is unrelated to macOS application signing or notarization.
 
 ## Continuous scrolling
 
@@ -340,13 +417,13 @@ package dependency.
 
 - **Not full Acrobat parity.** Run-level source-text replacement is supported,
   but not paragraph reflow, existing-image editing, OCR, Office conversion, PDF creation from arbitrary inputs,
-  cryptographic signing,
-  certificate validation, cloud storage, collaboration, AI assistant,
+  trusted certificate-chain validation, cloud storage, collaboration, AI assistant,
   accessibility remediation, preflight, or print-production workflows.
 - Supported password-protected PDFs retain their existing protection; setting,
   changing, or removing passwords and certificate-based security are not
-  supported. Existing signatures are detected conservatively and force
-  read-only mode; they are **not cryptographically verified**.
+  supported. Existing signatures remain read-only; the Digital signatures
+  panel verifies the supported CMS subset above, not identity trust or all
+  signature formats.
 - Interactive forms are rendered but cannot yet be filled or authored.
   Deleting, duplicating, importing, or extracting pages in PDFs with form
   fields or XFA is refused. Duplicate pages with popup/reply annotations
@@ -430,6 +507,9 @@ nested Form invocations, with strict font decoding and isolated resource copies.
 `redaction.rs` plans crop/rotation/UserUnit-aware pixel masks, decodes bounded
 page PNGs, burns redactions, and constructs fresh image-only PDFs. The renderer
 submits one page at a time; original PDF objects never enter the output builder.
+`signatures/` performs strict signature-object/byte-range and CMS checks,
+local certificate inspection, and signed-copy construction. Both bridges use
+the same Session/Workspace revision, pending-draft, and separate-output guards.
 
 Reordering first materializes inherited resources, page boxes, and rotations
 before rebuilding the page tree. Deletion prunes unreachable objects and

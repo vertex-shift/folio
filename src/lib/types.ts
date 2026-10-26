@@ -107,7 +107,7 @@ export type Edit =
 
 export type Tool = "select" | "hand" | "highlight" | "note" | "text" | "ink" | "edit-text" | "redact";
 export type Mode = "read" | "write" | "comment" | "organize";
-export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write" | "edit" | "redact";
+export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write" | "edit" | "redact" | "signatures";
 export type Zoom = { mode: "page" | "width" } | { mode: "custom"; scale: number };
 
 export interface SearchResult {

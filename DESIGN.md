@@ -201,6 +201,27 @@ Opening PDFs is additive, not a destructive navigation requiring discard.
 Close decisions name the affected PDF; quitting reviews unsaved inactive tabs
 as well. An empty workspace still offers opening and document creation.
 
+## PDF digital signatures
+
+Digital signatures extends the existing tools panel and utility rail without
+adding a workspace mode. Its scrollable inspection list separates signed-byte
+integrity, earlier-revision coverage, and certificate dates from an always
+explicit unchecked-identity warning. Green means intact bytes only, never a
+trusted signer. Unsupported and later-change states use the warning palette;
+failed integrity checks use the error palette. Certificate details disclose
+subject/issuer, current date bounds, serial, algorithms, and a selectable
+SHA-256 fingerprint for manual comparison.
+
+Signed-copy export uses the protected dialog for local identity selection,
+masked password entry, and explicit review acknowledgment. Clear submitted
+passwords and keep errors actionable without losing the chosen identity.
+Explain invisible CMS signing, included unsaved edits, unchanged originals,
+unsupported input types, and absent chain/revocation/timestamp assurance.
+Pending writing/redaction blocks export rather than signing an unapplied
+original. The exported file is separate; success must not imply that the
+working tab is signed or saved. Reuse all themes, focus, responsive overlays,
+existing panel/dialog motion, and reduced-motion behavior.
+
 PDF page typography is rendered from the file itself. The generated example
 PDF uses standard PDF fonts; it is not the interface's typography source.
 The existing-text edit hover uses a translucent document-blue overlay, not

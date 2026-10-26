@@ -81,8 +81,18 @@ The desktop app processes document contents locally.
   Motion, suppress fast busy flashes, and add no motion dependency.
 - Preserve the original file by default; expose unsaved changes and failures.
 - Existing digital signatures must not be invalidated silently.
+- Cryptographic signatures: inspect the supported detached CMS subset locally,
+  with strict ByteRange/Contents/revision checks. Keep signed-byte integrity,
+  later changes, certificate dates, and unchecked identity trust distinct.
+  Export separate unsigned, unencrypted copies using local PKCS#12 identities
+  and SHA-256/RSA or supported ECDSA. Include current working edits, preserve
+  source/history, guard all open-tab output paths, and block pending drafts.
+  Keep keys/passwords in memory only. Reject unsupported structures, encryption,
+  certification/co-signing, algorithms, and timestamp/countersignature formats.
+  Do not claim trusted chains, revocation, trusted timestamps, qualified
+  signatures, or PAdES-LTV; make no external certificate/document requests.
 - Password creation/removal/changes, certificate-based protection, paragraph reflow, arbitrary font/encoding support, existing-image editing,
-  interactive forms, OCR, Office conversion, cryptographic signing, cloud
+  interactive forms, OCR, Office conversion, advanced signing/trust validation, cloud
   collaboration, and full Acrobat parity remain incomplete capabilities.
 - New annotations, imported pages, and created/extracted documents must remain
   real, interoperable PDFs after save/reopen. Unsupported forms, signed donors,

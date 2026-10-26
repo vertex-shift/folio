@@ -177,12 +177,7 @@ impl Session {
         if document.get_pages().is_empty() {
             return Err(invalid("This PDF has no readable pages."));
         }
-        let signed = document.objects.values().any(|object| {
-            object.as_dict().is_ok_and(|dict| {
-                dict.get(b"Type").and_then(Object::as_name).ok() == Some(b"Sig")
-                    || (dict.has(b"ByteRange") && dict.has(b"Contents"))
-            })
-        });
+        let signed = crate::signatures::has_signatures(&document);
         let password = document
             .was_encrypted()
             .then(|| password.unwrap_or("").to_owned());
@@ -257,6 +252,26 @@ impl Session {
 
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    pub fn signature_report(&self) -> Result<crate::signatures::SignatureReport> {
+        let mut report =
+            crate::signatures::inspect(&self.document, &self.bytes, self.id, self.revision)?;
+        if report.signing_blocked_reason.is_none() {
+            report.signing_blocked_reason =
+                self.ensure_writable().err().map(|error| error.to_string());
+        }
+        Ok(report)
+    }
+
+    pub fn ensure_signable(&self) -> Result<()> {
+        crate::signatures::ensure_signable(&self.document)?;
+        self.ensure_writable()
+    }
+
+    pub fn signed_copy(&self, identity: &[u8], password: &str) -> Result<Vec<u8>> {
+        self.ensure_signable()?;
+        crate::signatures::signed_copy(&self.document, identity, password)
     }
 
     pub fn render_bytes(&self) -> Result<Vec<u8>> {

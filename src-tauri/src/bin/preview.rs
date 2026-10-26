@@ -94,6 +94,15 @@ struct OpenRequest {
     request_id: u64,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SignRequest {
+    document_id: u64,
+    revision: u64,
+    identity: Vec<u8>,
+    password: String,
+}
+
 enum Payload {
     Json(serde_json::Value),
     Pdf(Vec<u8>),
@@ -263,6 +272,42 @@ fn handle(
                 .text_runs(input.page)?;
             return Ok(Payload::Json(serde_json::to_value(runs).map_err(
                 |error| Error::Invalid(format!("Could not serialize source text: {error}")),
+            )?));
+        }
+        (&Method::Post, "/signatures/inspect") => {
+            let input: Revision = json_body(request)?;
+            return json(
+                workspace
+                    .check_revision(input.document_id, input.revision)?
+                    .signature_report()?,
+            );
+        }
+        (&Method::Post, "/signatures/export") => {
+            let limit = folio_core::signatures::MAX_IDENTITY_BYTES * 4 + 8192;
+            if request.body_length().is_some_and(|length| length > limit) {
+                return Err(Error::Invalid(
+                    "The signing request exceeds its size limit.".into(),
+                ));
+            }
+            let mut body = zeroize::Zeroizing::new(Vec::new());
+            request
+                .as_reader()
+                .take(limit as u64 + 1)
+                .read_to_end(&mut body)?;
+            if body.len() > limit {
+                return Err(Error::Invalid(
+                    "The signing request exceeds its size limit.".into(),
+                ));
+            }
+            let input: SignRequest = serde_json::from_slice(&body)
+                .map_err(|_| Error::Invalid("The signing request is malformed.".into()))?;
+            let identity = zeroize::Zeroizing::new(input.identity);
+            let password = zeroize::Zeroizing::new(input.password);
+            return Ok(Payload::Pdf(workspace.signed_copy(
+                input.document_id,
+                input.revision,
+                &identity,
+                &password,
             )?));
         }
         (&Method::Post, "/redaction/begin") => {

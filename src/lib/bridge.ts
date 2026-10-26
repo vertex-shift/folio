@@ -16,7 +16,7 @@ const runtime = await resolveRuntime({
 export const native = runtime.native;
 export const runtimeIssue = runtime.issue;
 
-async function previewResponse(route: string, options: RequestInit = {}): Promise<Response> {
+export async function previewResponse(route: string, options: RequestInit = {}): Promise<Response> {
   if (runtimeIssue) throw new Error(runtimeIssue);
   if (!import.meta.env.DEV) {
     throw new Error("Native document operations require the Folio desktop application.");
@@ -49,20 +49,20 @@ async function previewResponse(route: string, options: RequestInit = {}): Promis
   return response;
 }
 
-async function previewJson<T>(route: string, options: RequestInit = {}): Promise<T> {
+export async function previewJson<T>(route: string, options: RequestInit = {}): Promise<T> {
   const response = await previewResponse(route, options);
   return response.json() as Promise<T>;
 }
 
-function revision(info: DocumentInfo) {
+export function revision(info: DocumentInfo) {
   return { documentId: info.id, revision: info.revision };
 }
 
-function post(value: object): RequestInit {
+export function post(value: object): RequestInit {
   return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) };
 }
 
-function downloadPdf(bytes: Uint8Array, name: string) {
+export function downloadPdf(bytes: Uint8Array, name: string) {
   const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }));
   const link = document.createElement("a");
   link.href = url; link.download = name;

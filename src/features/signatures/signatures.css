@@ -1,0 +1,49 @@
+.tools-panel.panel-signatures { width: 300px; }
+.signatures-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.signature-review { min-height: 0; }
+.signature-intro { padding: 0 20px 18px; }
+.signature-intro p { color: var(--secondary); font-size: 12px; line-height: 1.8; margin-bottom: 12px; }
+.signature-intro .button { margin-top: 2px; }
+.signature-progress { display: flex; align-items: center; gap: 8px; padding: 16px 20px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.signature-failure { margin: 0 20px 18px; }
+.signature-warning { background: var(--warning-bg); color: var(--warning-ink); padding: 14px 20px; font-size: 12px; line-height: 1.8; }
+.signature-entry { padding: 18px 20px 22px; border-top: 1px solid var(--line); }
+.signature-entry > p { font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.signature-status { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.5; font-weight: 650; }
+.signature-status svg { margin-top: 1px; }
+.signature-intact { color: var(--success-ink); }
+.signature-warning.signature-status { color: var(--warning-ink); padding: 0; background: none; font-size: 13px; }
+.signature-invalid { color: var(--error-ink); }
+.signature-entry .signature-number { margin: 6px 0 12px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.signature-facts { margin: 14px 0 0; font-size: 11px; line-height: 1.8; }
+.signature-facts > div { margin-top: 10px; }
+.signature-facts dt { color: var(--muted); }
+.signature-facts dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.signature-entry .signature-identity-warning { display: flex; align-items: flex-start; gap: 7px; padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--line); color: var(--warning-ink); font-weight: 600; }
+.signature-identity-warning svg { margin-top: 3px; }
+.signature-entry .signature-subject { margin-top: 8px; color: var(--strong); }
+.signature-entry .signature-date { margin-top: 6px; font-size: 11px; color: var(--secondary); }
+.signature-entry .signature-date-warning { color: var(--error-ink); font-weight: 600; }
+.signature-certificate { margin-top: 16px; }
+.signature-certificate summary { color: var(--blue-ink); font-size: 11px; line-height: 1.8; cursor: pointer; padding-block: 3px; }
+.signature-certificate summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.signature-fingerprint { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; }
+.signature-limitations { border-top: 1px solid var(--line); padding: 16px 20px 22px; font-size: 11px; line-height: 1.8; color: var(--muted); }
+.signature-export-actions { flex-shrink: 0; padding: 16px 20px 20px; border-top: 1px solid var(--line); }
+.signature-export-actions > p { color: var(--secondary); font-size: 11px; line-height: 1.8; margin-bottom: 12px; overflow-wrap: anywhere; }
+.signature-export-actions > .button { width: 100%; }
+.signature-document-name { overflow-wrap: anywhere; }
+.signature-dialog { display: flex; flex-direction: column; overflow: hidden; }
+.signature-dialog > .dialog-header, .signature-dialog > .dialog-actions { flex-shrink: 0; }
+.signature-dialog > .dialog-body { min-height: 0; overflow-y: auto; }
+.signature-identity-picker { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 20px 0; }
+.signature-identity-picker > span { color: var(--secondary); font-size: 12px; overflow-wrap: anywhere; max-width: 100%; }
+.signature-password { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--secondary); }
+.signature-password input { width: 100%; min-height: 36px; border: 1px solid var(--control-border); border-radius: var(--radius-control); background: var(--input-bg); padding: 7px 10px; }
+.dialog .signature-password-hint { display: flex; align-items: flex-start; gap: 7px; color: var(--muted); font-size: 11px; margin-top: 10px; line-height: 1.8; }
+.signature-password-hint svg { margin-top: 3px; }
+.signature-acknowledgment { margin-top: 20px; line-height: 1.7; align-items: flex-start; }
+.signature-acknowledgment input { margin-top: 4px; flex-shrink: 0; }
+@media (max-width: 899px) {
+  .tools-panel.panel-signatures { width: min(320px, calc(100vw - 55px)); }
+}

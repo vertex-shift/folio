@@ -6,7 +6,7 @@ import {
   Keyboard, LayoutGrid, LoaderCircle, LockKeyhole, MessageSquare,
   MessageSquarePlus, Minus, MousePointer2, PanelLeft, PanelLeftClose,
   PanelRightClose, Plus, Redo2, RotateCcw, RotateCw, ScanLine, Search,
-  ShieldCheck, Trash2, Undo2, X,
+  ShieldCheck, Trash2, Undo2, X, FileKey2,
   Bookmark, FilePlus2, FileInput, FileOutput, Pencil, Type, SquarePen, ExternalLink, Eraser,
 } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
@@ -20,6 +20,10 @@ import ContinuousPages from "./components/ContinuousPages";
 import BookmarksPanel from "./components/BookmarksPanel";
 import ExistingTextPanel from "./components/ExistingTextPanel";
 import RedactionPanel from "./components/RedactionPanel";
+import SignaturesPanel from "./features/signatures/SignaturesPanel";
+import SigningDialog from "./features/signatures/SigningDialog";
+import { signatureBridge } from "./features/signatures/bridge";
+import type { SigningIdentity } from "./features/signatures/types";
 import { bridge, native, runtimeIssue } from "./lib/bridge";
 import { errorMessage, formatBytes, pageFromInput } from "./lib/geometry";
 import { loadPdf } from "./lib/pdf";
@@ -45,6 +49,7 @@ type Modal = { type: "shortcuts" | "about" }
   | { type: "redaction-export"; dpi: 150 | 300; acknowledged: boolean }
   | { type: "redaction-clear" }
   | { type: "redaction-leave"; action: Action }
+  | { type: "sign-copy"; documentId: number; revision: number }
   | { type: "external"; url: string };
 
 type SourceTextModal = {
@@ -65,6 +70,7 @@ const quickTools = [
 const panelLabels: Record<Panel, string> = {
   tools: "Document tools", search: "Find in document", comments: "Comments",
   bookmarks: "Bookmarks", write: "Writing tools", edit: "Edit existing text", redact: "Redact a PDF",
+  signatures: "Digital signatures",
 };
 
 function typingTarget(target: EventTarget | null): boolean {
@@ -335,6 +341,7 @@ export default function DocumentWorkspace(props: Props) {
     setPanelOpen(true);
     if (mode === "organize") setMode("read");
     if (next === "comments") setMode("comment");
+    if (next === "signatures") setTool("select");
   }
 
   function chooseTool(next: Tool) {
@@ -481,6 +488,38 @@ export default function DocumentWorkspace(props: Props) {
       if (!saved) return;
       updateInfo(saved);
       setToast(native ? "PDF saved." : "PDF downloaded. Browser preview does not overwrite local files.");
+    });
+  }
+
+  function reviewSigning() {
+    const current = infoRef.current;
+    if (!current || busyRef.current) return;
+    if (redactionsRef.current.length || writingDraftRef.current) {
+      setError("Apply or cancel writing and clear pending redaction marks before signing the current PDF.");
+      return;
+    }
+    setError(null);
+    setModal({ type: "sign-copy", documentId: current.id, revision: current.revision });
+  }
+
+  function exportSignedCopy(identity: SigningIdentity, password: string) {
+    const requested = modal;
+    void run("Signing a separate PDF copy...", async () => {
+      const current = infoRef.current;
+      if (!current || requested?.type !== "sign-copy"
+          || current.id !== requested.documentId || current.revision !== requested.revision) {
+        throw new Error("The document changed. Close the signing dialog and review the current PDF again.");
+      }
+      if (redactionsRef.current.length || writingDraftRef.current) {
+        throw new Error("Apply or cancel pending writing and clear redaction marks before signing. The original has not been redacted.");
+      }
+      const output = await signatureBridge.export(current, identity, password);
+      if (!output) {
+        setToast("Signing canceled. Your original and unsaved work are unchanged.");
+        return;
+      }
+      setModal(null);
+      setToast("Signed copy exported. This window still shows the unsigned original; open the exported PDF to inspect it.");
     });
   }
 
@@ -788,6 +827,9 @@ export default function DocumentWorkspace(props: Props) {
             <button className={tool === "redact" ? "chosen" : ""} disabled={redactDisabled} onClick={() => chooseTool("redact")}>
               <span className="tool-icon neutral"><Eraser size={19} /></span><span>Redact a PDF</span><ChevronRight size={14} className="list-arrow" />
             </button>
+            <button disabled={disabled} onClick={() => showPanel("signatures")}>
+              <span className="tool-icon teal"><FileKey2 size={19} /></span><span>Digital signatures</span><ChevronRight size={14} className="list-arrow" />
+            </button>
             <button className={tool === "highlight" ? "chosen" : ""} disabled={editDisabled} onClick={() => chooseTool("highlight")}>
               <span className="tool-icon amber"><Highlighter size={19} /></span><span>Highlight text</span><ChevronRight size={14} className="list-arrow" />
             </button>
@@ -815,6 +857,8 @@ export default function DocumentWorkspace(props: Props) {
           <button className="shortcuts-link" onClick={() => setModal({ type: "shortcuts" })}><Keyboard size={16} />Keyboard shortcuts</button>
         </>}
         {panel === "bookmarks" && <BookmarksPanel pdf={pdf} disabled={disabled} onNavigate={navigateLink} />}
+        {panel === "signatures" && info && <SignaturesPanel info={info} active={props.active}
+          disabled={disabled} pendingDraft={pendingDraft} onSign={reviewSigning} />}
         {panel === "edit" && <ExistingTextPanel key={`${info?.id}:${info?.revision}:${page}`}
           runs={existingText.runs} loading={existingText.loading} error={existingText.error} retry={existingText.retry}
           page={page} disabled={editDisabled} onSelect={selectSourceText} />}
@@ -1039,6 +1083,7 @@ export default function DocumentWorkspace(props: Props) {
         <IconButton label="Toggle page thumbnails" active={railOpen && mode !== "organize"} disabled={disabled} onClick={() => { setRailOpen((open) => !open); if (mode === "organize") setMode("read"); }}><FileText size={18} /></IconButton>
         <IconButton label="Show comments" active={panelOpen && panel === "comments"} disabled={disabled} onClick={() => showPanel("comments")}><MessageSquare size={18} />{Boolean(info?.annotations.length) && <span className="utility-dot" />}</IconButton>
         <IconButton label="Show bookmarks" active={panelOpen && panel === "bookmarks"} disabled={disabled} onClick={() => showPanel("bookmarks")}><Bookmark size={18} /></IconButton>
+        <IconButton label="Show digital signatures" active={panelOpen && panel === "signatures"} disabled={disabled} onClick={() => showPanel("signatures")}><FileKey2 size={18} /></IconButton>
         <IconButton label="Search document" active={panelOpen && panel === "search"} disabled={disabled} onClick={() => showPanel("search")}><Search size={18} /></IconButton>
         <span className="utility-spacer" />
         <IconButton label="Rotate current page clockwise" disabled={editDisabled} onClick={() => edit({ type: "rotate", page, degrees: 90 }, "Rotating page...")}><RotateCw size={18} /></IconButton>
@@ -1060,6 +1105,9 @@ export default function DocumentWorkspace(props: Props) {
         const requestId = modal.challenge.requestId;
         void run("Unlocking PDF...", async () => finishOpen(await bridge.unlock(requestId, password)));
       }} />}
+
+    {modal?.type === "sign-copy" && info && <SigningDialog info={info} busy={Boolean(busy)} error={error}
+      onClose={() => setModal(null)} onExport={exportSignedCopy} />}
 
     {modal?.type === "redaction-export" && <Dialog title="Export a permanently redacted copy?" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
       actions={redactionProgress ? <button className="button secondary"
@@ -1261,7 +1309,7 @@ export default function DocumentWorkspace(props: Props) {
     {modal?.type === "about" && <Dialog title="Meet Folio." onClose={() => setModal(null)}>
       <div className="about-brand"><img src="/folio.svg" width="52" height="52" alt="" /><div><h3>A little less paperwork.</h3><p>Version {appVersion} - macOS-first MVP</p></div></div>
       <p>An independently built PDF workspace. Tauri connects this interface to a Rust document engine; PDF.js renders the pages.</p>
-      <p>Create, read, search, replace supported existing text runs, add text or drawings, redact to sanitized image-only copies, review, combine, and extract PDF pages. Open password-protected PDFs and retain their protection when saving. Paragraph reflow, interactive forms, OCR, Office conversion, setting or changing passwords, and cryptographic signing are not included.</p>
+      <p>Create, read, search, replace supported existing text runs, add text or drawings, redact to sanitized image-only copies, review, combine, and extract PDF pages. Open password-protected PDFs and retain their protection when saving. Inspect supported CMS signatures and sign separate unsigned, unencrypted copies with a local PKCS#12 certificate. Identity trust and revocation are not checked. Paragraph reflow, interactive forms, OCR, Office conversion, and setting or changing passwords are not included.</p>
       <p className="muted">Not affiliated with Adobe. No code, fonts, icons, or artwork have been extracted from Acrobat. Open-source dependencies carry their own licenses. Files stay on this device. This is an MVP, not a full Acrobat replacement.</p>
       {!native && <div className="preview-explanation"><FileText size={17} /><p><strong>You are in browser preview.</strong>The same Rust engine processes your edits through a loopback-only development bridge. Use the desktop app for native open/save dialogs.</p></div>}
     </Dialog>}
