@@ -218,7 +218,7 @@ export async function renderOutputText(
       check();
       await stage(plan.jobId, index, bytes);
     } finally {
-      if (!finished) await reader.cancel();
+      if (!finished) await reader.cancel(new Error("Text output preparation stopped."));
       reader.releaseLock();
       page.cleanup();
     }

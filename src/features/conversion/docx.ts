@@ -25,7 +25,16 @@ export async function extractDocxPages(
     signal.throwIfAborted();
     check();
     progress({ page: index + 1, count: plan.pages.length });
+    signal.throwIfAborted();
+    check();
     const page = await pdf.getPage(sourcePage + 1);
+    try {
+      signal.throwIfAborted();
+      check();
+    } catch (error) {
+      page.cleanup();
+      throw error;
+    }
     const stream: ReadableStream<TextContent> = page.streamTextContent();
     const reader = stream.getReader();
     const parts: Uint8Array[] = [];
@@ -33,7 +42,11 @@ export async function extractDocxPages(
     let hasText = false;
     let finished = false;
     let cancelFailure: unknown;
-    const cancel = () => { void reader.cancel().catch((error: unknown) => { cancelFailure = error; }); };
+    const cancelReason = new Error("DOCX text extraction stopped.");
+    let cancellation: Promise<void> | null = null;
+    // PDF.js requires an Error reason; cleanup must await this same cancellation.
+    const stop = () => cancellation ??= reader.cancel(cancelReason).catch((error: unknown) => { cancelFailure = error; });
+    const cancel = () => { void stop(); };
     signal.addEventListener("abort", cancel, { once: true });
     try {
       for (;;) {
@@ -65,7 +78,7 @@ export async function extractDocxPages(
     } finally {
       signal.removeEventListener("abort", cancel);
       try {
-        if (!finished) await reader.cancel();
+        if (!finished || cancellation) await stop();
         if (cancelFailure) throw new Error("DOCX extraction stream cleanup failed.", { cause: cancelFailure });
       } finally {
         reader.releaseLock();
