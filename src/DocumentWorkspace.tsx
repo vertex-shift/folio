@@ -30,6 +30,7 @@ import FormsPanel from "./components/FormsPanel";
 import DocumentPropertiesPanel from "./components/DocumentPropertiesPanel";
 import AttachmentsPanel from "./components/AttachmentsPanel";
 import ProtectionCopyDialog from "./components/ProtectionCopyDialog";
+import OcrPanel, { OcrJobProgress } from "./components/OcrPanel";
 import { bridge, native, runtimeIssue } from "./lib/bridge";
 import { documentUtilities } from "./lib/documentUtilitiesBridge";
 import { MAX_MANAGEMENT_SOURCE_BYTES, metadataChanged } from "./lib/documentUtilitiesModel";
@@ -45,6 +46,8 @@ import { matchExistingText } from "./lib/existingText";
 import { PAGE_SIZES, parsePageRange, parseWritingNumber, rgbFromHex } from "./lib/pages";
 import { destinationPage, safeExternalUrl } from "./lib/navigation";
 import { MAX_REDACTION_MARKS, renderRedactionPages } from "./lib/redaction";
+import { MAX_OCR_PAGES, recognizeOcrPages } from "./lib/ocr";
+import type { OcrOptions, OcrOutcome, OcrPlan, OcrProgress } from "./lib/ocrTypes";
 import type { DocumentInfo, Edit, ExistingTextRun, Mode, OpenOutcome, Panel, PasswordChallenge, PdfRect, Point, Quad, RedactionMark, RedactionPlan, ReplacementFont, Tool, Zoom } from "./lib/types";
 import "./authoring.css";
 import "./document-utilities.css";
@@ -94,6 +97,7 @@ const panelLabels: Record<Panel, string> = {
   authoring: "Page authoring",
   forms: "Fill form fields",
   properties: "Document properties", attachments: "File attachments",
+  ocr: "Recognize scanned text",
 };
 
 function typingTarget(target: EventTarget | null): boolean {
@@ -148,6 +152,13 @@ export default function DocumentWorkspace(props: Props) {
   const [metadataDraft, setMetadataDraft] = useState<MetadataDraft | null>(null);
   const pendingMetadata = metadataChanged(metadataDraft);
   const [redactions, setRedactions] = useState<RedactionMark[]>([]);
+  const [ocrRange, setOcrRange] = useState("");
+  const [ocrDpi, setOcrDpi] = useState<OcrOptions["dpi"]>(300);
+  const [ocrPolicy, setOcrPolicy] = useState<OcrOptions["existingText"]>("skip");
+  const [ocrOutcome, setOcrOutcome] = useState<OcrOutcome | null>(null);
+  const [ocrProgress, setOcrProgress] = useState<OcrProgress | null>(null);
+  const [ocrCanceling, setOcrCanceling] = useState(false);
+  const ocrJob = useRef<{ controller: AbortController; documentId: number; revision: number } | null>(null);
   const redactionsRef = useRef(redactions);
   redactionsRef.current = redactions;
   const redactionCounter = useRef(0);
@@ -234,6 +245,19 @@ export default function DocumentWorkspace(props: Props) {
   }, [documentId, busy, pendingDraft, modal, props.onActivity]);
 
   useEffect(() => () => props.onActivity(documentId, null), [documentId, props.onActivity]);
+
+  useEffect(() => {
+    const job = ocrJob.current;
+    if (job && (!props.active || props.document?.id !== job.documentId || props.document.revision !== job.revision)) {
+      job.controller.abort();
+    }
+  }, [props.active, props.document?.id, props.document?.revision]);
+
+  useEffect(() => () => ocrJob.current?.controller.abort(), []);
+
+  useEffect(() => {
+    if (ocrOutcome && ocrOutcome.document.revision !== info?.revision) setOcrOutcome(null);
+  }, [info?.revision, ocrOutcome]);
 
   function updateInfo(next: DocumentInfo) {
     infoRef.current = next;
@@ -404,6 +428,81 @@ export default function DocumentWorkspace(props: Props) {
     if (next === "comments") setMode("comment");
     if (next === "signatures") setTool("select");
     if (next === "forms") { setTool("select"); if (mode === "write") setMode("read"); }
+  }
+
+  function showOcr() {
+    if (busyRef.current) return;
+    if (!ocrRange.trim()) setOcrRange(String(pageRef.current + 1));
+    setTool("select");
+    setMode("write");
+    showPanel("ocr");
+  }
+
+  function startOcr() {
+    void run("Recognizing scanned text...", async () => {
+      const current = infoRef.current;
+      if (!current || !pdf) throw new Error("Wait for the PDF to finish loading before recognizing text.");
+      if (hasPendingContentEdits() || redactionsRef.current.length) {
+        throw new Error("Apply or discard pending edits and clear redaction marks before using OCR.");
+      }
+      if (current.readOnlyReason) throw new Error(current.readOnlyReason);
+      if (!current.copyAllowed) throw new Error("This PDF does not allow copying. Reopen with the owner password before using OCR.");
+      const pages = parsePageRange(ocrRange, current.pageCount, MAX_OCR_PAGES);
+      const controller = new AbortController();
+      ocrJob.current = { controller, documentId: current.id, revision: current.revision };
+      setOcrOutcome(null);
+      setOcrCanceling(false);
+      setOcrProgress({ stage: "preparing", page: pages[0], completed: 0, total: pages.length, fraction: 0 });
+      let plan: OcrPlan | undefined;
+      let outcome: OcrOutcome | undefined;
+      let failure: unknown;
+      let cleanupFailure: unknown;
+      try {
+        plan = await bridge.beginOcr(current, { pages, dpi: ocrDpi, language: "eng", existingText: ocrPolicy });
+        controller.signal.throwIfAborted();
+        await recognizeOcrPages(pdf, plan, bridge.stageOcrPage, (progress) => {
+          setOcrProgress((previous) => previous?.stage === progress.stage && previous.page === progress.page
+            && previous.completed === progress.completed && Math.floor(previous.fraction * 100) === Math.floor(progress.fraction * 100)
+            ? previous : progress);
+        }, controller.signal);
+        controller.signal.throwIfAborted();
+        if (!activeRef.current || infoRef.current?.id !== current.id || infoRef.current.revision !== current.revision
+          || writingDraftRef.current || redactionsRef.current.length) {
+          throw new Error("The document or pending drafts changed during OCR. No text was added.");
+        }
+        ocrJob.current = null;
+        const total = plan.pages.filter((page) => !page.skipped).length;
+        setOcrProgress({ stage: "committing", page: pages[pages.length - 1], completed: total, total, fraction: 1 });
+        outcome = await bridge.commitOcr(plan.jobId);
+      } catch (error) { failure = error; }
+      if (plan) {
+        try { await bridge.cancelOcr(plan.jobId); }
+        catch (error) { cleanupFailure = error; }
+      }
+      ocrJob.current = null;
+      setOcrProgress(null);
+      setOcrCanceling(false);
+      if (outcome) {
+        if (outcome.document.revision !== current.revision) await adopt(outcome.document);
+        setOcrOutcome(outcome);
+        setToast(outcome.wordCount ? "Searchable text added. Review the result, then save a copy to keep it."
+          : "OCR finished without adding text. See the recognition summary.");
+        if (cleanupFailure) setError(`OCR completed, but staging cleanup failed: ${errorMessage(cleanupFailure)}`);
+      } else if (cleanupFailure) {
+        throw new Error(`No OCR text was committed. Staging cleanup failed: ${errorMessage(cleanupFailure)}`);
+      } else if (controller.signal.aborted) {
+        setToast("OCR canceled. The working PDF is unchanged.");
+      } else if (failure) {
+        throw failure;
+      }
+    });
+  }
+
+  function cancelOcr() {
+    const job = ocrJob.current;
+    if (!job) return;
+    setOcrCanceling(true);
+    job.controller.abort();
   }
 
   function chooseTool(next: Tool) {
@@ -1055,6 +1154,7 @@ export default function DocumentWorkspace(props: Props) {
     {forms.count > 0 && <div className="protected-banner form-draft-banner" role="status"><ClipboardList size={15} />
       {forms.count} unapplied form {forms.count === 1 ? "change" : "changes"}. Save requires applying or discarding these values.
       <button className="text-button" onClick={() => showPanel("forms")}>Review fields</button></div>}
+    {ocrProgress && <OcrJobProgress progress={ocrProgress} canceling={ocrCanceling} onCancel={cancelOcr} />}
 
     <div className="workspace">
       {panelOpen && <aside key={panel} className={`tools-panel panel-${panel}`} aria-label={panel === "tools" ? "PDF tools" : panelLabels[panel]}>
@@ -1085,6 +1185,9 @@ export default function DocumentWorkspace(props: Props) {
             </button>
             <button disabled={disabled} onClick={() => showPanel("signatures")}>
               <span className="tool-icon teal"><FileKey2 size={19} /></span><span>Digital signatures</span><ChevronRight size={14} className="list-arrow" />
+            </button>
+            <button disabled={editDisabled || info?.copyAllowed === false} onClick={showOcr}>
+              <span className="tool-icon blue"><ScanLine size={19} /></span><span>Recognize scanned text</span><ChevronRight size={14} className="list-arrow" />
             </button>
             <button className={tool === "highlight" ? "chosen" : ""} disabled={editDisabled} onClick={() => chooseTool("highlight")}>
               <span className="tool-icon amber"><Highlighter size={19} /></span><span>Highlight text</span><ChevronRight size={14} className="list-arrow" />
@@ -1159,6 +1262,11 @@ export default function DocumentWorkspace(props: Props) {
           onRemove={(id) => updateRedactions(redactionsRef.current.filter((mark) => mark.id !== id))}
           onClear={() => { setError(null); setModal({ type: "redaction-clear" }); }} onExport={reviewRedactions}
           onDraw={() => setPanelOpen(false)} />}
+        {panel === "ocr" && <OcrPanel range={ocrRange} dpi={ocrDpi} policy={ocrPolicy}
+          pageCount={info?.pageCount ?? 0} disabled={disabled || !pdf}
+          blockedReason={info?.readOnlyReason ?? (info?.copyAllowed === false ? "This PDF does not allow copying. Reopen it with the owner password."
+            : pendingDraft ? "Finish or cancel writing/form drafts and clear pending redaction marks before using OCR." : null)}
+          outcome={ocrOutcome} onRange={setOcrRange} onDpi={setOcrDpi} onPolicy={setOcrPolicy} onStart={startOcr} />}
         {panel === "write" && <div className="panel-scroll writing-settings">
           <p>Add text annotations or freehand marks. To replace original page text, choose Edit existing text.</p>
           <button className="button secondary existing-text-launch" disabled={editDisabled} onClick={() => chooseTool("edit-text")}><SquarePen size={15} />Edit existing text</button>
@@ -1196,7 +1304,8 @@ export default function DocumentWorkspace(props: Props) {
             {!query.trim() && <div className="panel-empty"><Search size={28} /><h3>Find your place.</h3><p>Search for a word or phrase to jump to the part that matters.</p></div>}
             {query.trim() && !search.loading && !search.results.length && !search.error &&
               <div className="panel-empty"><Search size={28} /><h3>{search.noText ? "No searchable text" : "No matches found"}</h3>
-                <p>{search.noText ? "Scanned pages need OCR, which is outside this first release." : "Try a different word, or turn off Match case."}</p></div>}
+                <p>{search.noText ? "Recognize scanned pages offline to add searchable text." : "Try a different word, or turn off Match case."}</p>
+                {search.noText && <button className="button secondary" disabled={editDisabled || info?.copyAllowed === false} onClick={showOcr}>Recognize scanned text</button>}</div>}
             {search.results.map((result, index) =>
               <button key={`${result.page}-${result.index}`} className={`search-result ${activeResult === index ? "selected" : ""}`} onClick={() => chooseResult(index)}>
                 <span>Page {result.page + 1}</span><p>{result.before}<mark>{result.match}</mark>{result.after}</p>

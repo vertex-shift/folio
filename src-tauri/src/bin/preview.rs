@@ -107,6 +107,27 @@ struct RedactionJob {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OcrRequest {
+    document_id: u64,
+    revision: u64,
+    options: folio_core::ocr::Options,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OcrPageRequest {
+    job_id: u64,
+    result: folio_core::ocr::PageResult,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OcrJob {
+    job_id: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct UnlockRequest {
     request_id: u64,
     password: String,
@@ -479,6 +500,23 @@ fn handle(
             return Ok(Payload::Json(serde_json::to_value(plan).map_err(
                 |error| Error::Invalid(format!("Could not serialize the redaction plan: {error}")),
             )?));
+        }
+        (&Method::Post, "/ocr/begin") => {
+            let input: OcrRequest = json_body(request)?;
+            return json(workspace.begin_ocr(input.document_id, input.revision, input.options)?);
+        }
+        (&Method::Post, "/ocr/page") => {
+            let input: OcrPageRequest = json_body(request)?;
+            workspace.stage_ocr_page(input.job_id, input.result)?;
+            return json(());
+        }
+        (&Method::Post, "/ocr/commit") => {
+            let input: OcrJob = json_body(request)?;
+            return json(workspace.commit_ocr(input.job_id)?);
+        }
+        (&Method::Post, "/ocr/cancel") => {
+            let input: OcrJob = json_body(request)?;
+            return json(workspace.cancel_ocr(input.job_id));
         }
         (&Method::Post, "/redaction/page") => {
             let job_id = numeric_header(request, "X-Folio-Job-Id")?;

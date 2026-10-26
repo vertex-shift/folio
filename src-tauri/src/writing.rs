@@ -11,7 +11,7 @@ use crate::document::{
     Result, invalid, numbers, page_bounds, page_rotation, validate_point, validate_text,
 };
 
-const FONT: &[u8] = include_bytes!("../resources/fonts/NotoSans-Regular.ttf");
+pub(crate) const FONT: &[u8] = include_bytes!("../resources/fonts/NotoSans-Regular.ttf");
 
 fn font_glyphs(face: &ttf_parser::Face<'_>, text: &str) -> Result<BTreeMap<char, (u16, f32)>> {
     let unit = 1000.0 / f32::from(face.units_per_em());

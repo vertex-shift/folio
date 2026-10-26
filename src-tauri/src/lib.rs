@@ -4,6 +4,7 @@ mod authoring_image;
 pub mod document;
 pub mod forms;
 pub mod metadata;
+pub mod ocr;
 pub mod outlines;
 pub mod page_geometry;
 mod pages;

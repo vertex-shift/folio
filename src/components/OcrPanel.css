@@ -1,0 +1,26 @@
+.tools-panel.panel-ocr { width: 274px; }
+.ocr-panel { padding: 0 20px 24px; color: var(--secondary); font-size: 12px; line-height: 1.75; }
+.ocr-panel > p { margin-bottom: 16px; }
+.ocr-local { display: flex; align-items: start; gap: 8px; padding-block: 12px; margin-bottom: 16px; border-block: 1px solid var(--line); color: var(--info-ink); }
+.ocr-local svg { margin-top: 3px; }
+.ocr-panel .setting-field { flex-direction: column; align-items: stretch; margin-top: 18px; gap: 8px; }
+.ocr-panel .setting-field input, .ocr-panel .setting-field select { width: 100%; min-width: 0; max-width: none; }
+.ocr-help, .ocr-limits { color: var(--muted); font-size: 11px; line-height: 1.8; }
+.ocr-help { margin-top: 8px; }
+.ocr-warning { color: var(--warning-ink); background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: var(--radius-control); padding: 10px; margin-top: 12px; }
+.ocr-start { width: 100%; margin-block: 20px 24px; }
+.ocr-outcome { padding-block: 16px; border-block: 1px solid var(--line); margin-bottom: 20px; overflow-wrap: anywhere; }
+.ocr-outcome h3 { color: var(--ink); font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.ocr-outcome p + p { margin-top: 8px; }
+.ocr-job-banner { display: flex; align-items: center; gap: 18px; flex-shrink: 0; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--surface); color: var(--ink); font-size: 12px; }
+.ocr-job-banner > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ocr-job-count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ocr-job-banner progress { flex: 1; max-width: 320px; min-width: 40px; height: 8px; accent-color: var(--blue); }
+.ocr-job-banner .button { margin-left: auto; }
+@media (max-width: 1099px) {
+  .tools-panel.panel-ocr { position: absolute; top: 0; bottom: 0; left: 0; box-shadow: 6px 0 24px var(--shadow-soft); }
+}
+@media (max-width: 699px) {
+  .ocr-job-banner { gap: 10px; padding-inline: 12px; }
+  .ocr-job-banner progress { display: none; }
+}

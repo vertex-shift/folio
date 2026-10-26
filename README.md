@@ -111,6 +111,7 @@ the tag before rerunning the workflow.
 | Watermark | Configurable, embedded-font text watermark on current, all, or explicitly chosen pages |
 | Number pages | Persistent positioned numbers, with starting number, prefix/suffix, and explicit page-range order |
 | Search | Case-insensitive or case-sensitive text and phrases, including across line breaks; result snippets and on-page marks |
+| Offline OCR | Bundled English recognition on selected pages/ranges; add persistent invisible PDF text without replacing original images or page streams |
 | Highlight | Select a passage and choose Highlight, or drag across text with the highlighter |
 | Notes | Place a note on the page, enter Unicode text, and revisit it in Comments |
 | Annotations | Portable PDF appearance streams; edit note/placed-text contents, remove marks, and undo changes |
@@ -510,6 +511,108 @@ are refused; resolution is never lowered silently. Signed PDFs and XFA forms
 are not supported by this export path. A failed or incomplete export does
 not produce a success-shaped partial PDF.
 
+## Offline OCR
+
+Choose **All tools > Recognize scanned text**, enter pages such as `1, 3-5`,
+choose **300 DPI** (or **150 DPI** for lower memory use), then **Recognize
+text**. The included language is **English**. Recognition uses a local
+Tesseract WebAssembly worker, not a cloud service, system-installed executable,
+or a CDN. Annotations and form fields are excluded from recognition input;
+finish/cancel pending writing/form drafts and clear redaction marks first.
+
+The default **Skip existing text** policy conservatively skips pages containing
+text-show operations, including hidden text and nested Form XObjects. **Force
+an additional text layer** is explicit: it can duplicate searchable text and
+does not remove any previous text layer. The summary distinguishes skipped
+pages, pages with no recognized text, and actual words added. Review recognition
+accuracy and reading order before relying on search or copying.
+
+OCR adds real invisible PDF content using embedded Noto Sans and Unicode
+mapping. Original content/image streams remain intact; pages are rendered only
+as recognition input, never raster-replaced. Word boxes and line baselines are
+mapped back into unrotated PDF coordinates, respecting the visible CropBox,
+nonzero box origins, right-angle rotation, and UserUnit. Private font resources
+and a prefixed, balanced graphics/text-state scope prevent changes to the
+original visible content.
+
+Recognition is sequential and cancellable, including while loading the
+engine/model. **Cancel OCR** releases the worker/canvas and discards all staged
+results. Every page is validated before one all-or-nothing document mutation.
+Jobs are tied to document ID/revision and invalidated by edits, undo/redo,
+pending drafts, or tab closure; an undo back to an old revision cannot resurrect
+a stale job. Other tabs are not modified. The final atomic commit cannot be
+canceled once started. No-text/all-skipped jobs create no change or undo step.
+
+The result stays **unsaved** until ordinary Save/Save a copy/Download. One Undo
+removes the whole job within the normal history budget; Redo restores it. Saved/reopened text remains selectable
+and searchable. Supported password protection, passwords, and permissions are
+retained. Signed PDFs are refused; restricted PDFs require editable owner
+access. OCR is **not redaction, accessibility tagging, or PDF/UA
+conformance**; handwriting, other recognition languages, vertical/right-to-left
+text, severely skewed baselines, and unsupported output glyphs are not supported.
+
+Limits are **50 selected pages**, **10,000 words/page**, **100,000 words/job**,
+**8 MiB recognized UTF-8**, **24 megapixels / 16,384 pixels per page dimension**,
+**64 MiB per rendered PNG**, **two minutes per worker step**, and **15 minutes
+per recognition job**. The engine permits at most four staged jobs across a
+workspace and one per document; the current UI serializes document actions.
+Oversize/unsupported results fail explicitly rather than lowering resolution,
+dropping words, or committing partial text.
+
+### Reproducible offline assets and licenses
+
+`tesseract.js` **6.0.1** and compatible `tesseract.js-core` **6.1.2** are
+exact-pinned in `package.json` and integrity-pinned in `package-lock.json`.
+`npm ci` downloads those packages at **build time**. `scripts/prepare-ocr.mjs`
+checks installed versions, verifies committed SHA-256 pins for every worker/core
+variant and the model, and copies the worker,
+all matching SIMD/non-SIMD and LSTM/full WASM core variants, and the English
+model to `public/vendor/ocr`. Vite includes these files in `dist`; Tauri embeds
+that frontend. Runtime worker, core, and model paths are all explicitly local,
+language caching is disabled, and missing assets fail without CDN fallback.
+`public/vendor/ocr/manifest.json` records the copied assets' SHA-256 hashes.
+Preparing/building needs no model download.
+
+The original, unmodified `eng.traineddata` is committed at
+`src-tauri/resources/ocr/eng.traineddata`. It was obtained from:
+
+```text
+https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/eng.traineddata
+SHA-256: 7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2
+```
+
+To restore this source asset, fetch only that immutable URL and verify that
+exact checksum before building. Do not substitute a model from a moving branch.
+The engine, WASM wrapper, and English model use **Apache-2.0** licenses.
+Bundled engine/model license texts are included in generated third-party
+notices and local OCR assets. Original notices for the WASM engine's Leptonica,
+codec, compression, and math dependencies are committed under
+`src-tauri/resources/ocr/notices`; provenance is recorded in `ocr/NOTICE`.
+The PDF text font remains **SIL OFL 1.1**.
+
+Run `node --test tests/ocr.test.ts` and
+`npm run test:rust -- --test ocr` for focused checks. For real synthetic scan
+recognition, save/download/reopen search and selection, all four rotations,
+offset CropBoxes/UserUnit, pixel equality, cancellation/cleanup, and production
+worker recognition with networking disabled under the native CSP:
+
+```sh
+npx playwright install chromium
+npm run test:ocr
+# Optional: retain original synthetic fixtures, PDFs, screenshots, and JSON evidence.
+FOLIO_OCR_ARTIFACTS=/absolute/output/folder npm run test:ocr
+```
+
+The runner starts/stops only its own loopback servers on dynamically selected
+ports and its own browser profile; it does not stop an existing Folio process.
+`FOLIO_OCR_BROWSER=/absolute/path/to/chrome` can select an existing complete
+Chromium/Chrome binary for verification. Tests use only newly generated,
+original synthetic content, never private documents or copyrighted fixtures.
+Rust OCR tests separately verify RC4/AES save/reopen with both passwords,
+permission/signature guards, original resource isolation, and atomic stale-job
+rejection. Native Windows/Linux execution and real-world OCR quality still
+require the normal platform review.
+
 ## Writing and page workflows
 
 Use **Write** to place text or draw on a page. Text size is 6-96 PDF points;
@@ -643,7 +746,7 @@ package dependency.
 ## Important boundaries
 
 - **Not full Acrobat parity.** Run-level source-text replacement is supported,
-  but not paragraph reflow, existing-image editing, OCR, Office conversion, PDF creation from arbitrary inputs,
+  but not paragraph reflow, existing-image editing, non-English OCR, Office conversion, PDF creation from arbitrary inputs,
   trusted certificate-chain validation, cloud storage, collaboration, AI assistant,
   accessibility remediation, preflight, or print-production workflows.
 - Ordinary saves of supported password-protected PDFs retain their protection;

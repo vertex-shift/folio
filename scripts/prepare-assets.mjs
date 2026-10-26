@@ -2,8 +2,10 @@ import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } 
 import { fileURLToPath } from "node:url";
 import { PDFDocument, PDFName, PDFString, StandardFonts, rgb } from "pdf-lib";
 import { collectNotices } from "./collect-notices.mjs";
+import { prepareOcr } from "./prepare-ocr.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+prepareOcr(root);
 function unchanged(source, destination) {
   return existsSync(destination) && statSync(destination).isFile()
     && statSync(source).size === statSync(destination).size
@@ -89,9 +91,9 @@ text(second,
   "Keep the important parts easy to find.",
   54, 591, 12);
 section(second, "Find the right passage",
-  "Press Command+F to search this document. Search reads the PDF\n" +
-  "text layer; scanned pages without text need OCR, which is not in\n" +
-  "this first release.", 510);
+  "Press Command+F to search this document. For scanned pages,\n" +
+  "choose Recognize scanned text in All tools to add an offline\n" +
+  "English text layer. Review the result before saving a copy.", 510);
 section(second, "Highlight with intention",
   "Choose the highlighter and drag across text. You can also select\n" +
   "text with the cursor, then use the small Highlight action.\n" +

@@ -3,8 +3,8 @@ export const PAGE_SIZES = {
   a4: { label: "A4", width: 595.28, height: 841.89 },
 } as const;
 
-export function parsePageRange(input: string, count: number): number[] {
-  if (!input.trim() || !Number.isSafeInteger(count) || count < 1) {
+export function parsePageRange(input: string, count: number, limit = count): number[] {
+  if (!input.trim() || !Number.isSafeInteger(count) || count < 1 || !Number.isSafeInteger(limit) || limit < 1) {
     throw new Error("Enter page numbers, such as 1-3, 5.");
   }
   const result: number[] = [];
@@ -16,6 +16,9 @@ export function parsePageRange(input: string, count: number): number[] {
     const last = match[2] ? Number(match[2]) : first;
     if (!Number.isSafeInteger(first) || !Number.isSafeInteger(last) || first < 1 || last > count || first > last) {
       throw new Error(`Choose pages from 1 to ${count} in ascending ranges.`);
+    }
+    if (result.length + last - first + 1 > limit) {
+      throw new Error(`Choose no more than ${limit} pages for this action.`);
     }
     for (let number = first; number <= last; number++) {
       if (used.has(number)) throw new Error(`Page ${number} is listed more than once.`);

@@ -504,6 +504,48 @@ impl Session {
         )
     }
 
+    pub(crate) fn ocr_plan(
+        &self,
+        job_id: u64,
+        options: crate::ocr::Options,
+    ) -> Result<crate::ocr::Plan> {
+        self.ensure_writable()?;
+        if !self.copy_allowed {
+            return Err(invalid(
+                "This PDF does not allow copying. Reopen it with the owner password before using OCR.",
+            ));
+        }
+        crate::ocr::plan(&self.document, self.id, self.revision, job_id, options)
+    }
+
+    pub(crate) fn commit_ocr(&mut self, job: &crate::ocr::Job) -> Result<crate::ocr::Outcome> {
+        job.ensure_complete()?;
+        let word_count = job.results.iter().map(|page| page.words.len()).sum();
+        let document = if word_count == 0 {
+            self.info()?
+        } else {
+            self.mutate(|next| crate::ocr::apply(next, &job.plan, &job.results))?
+        };
+        Ok(crate::ocr::Outcome {
+            document,
+            word_count,
+            processed_pages: job.results.len(),
+            skipped_pages: job
+                .plan
+                .pages
+                .iter()
+                .filter(|page| page.skipped)
+                .map(|page| page.page)
+                .collect(),
+            no_text_pages: job
+                .results
+                .iter()
+                .filter(|page| page.words.is_empty())
+                .map(|page| page.page)
+                .collect(),
+        })
+    }
+
     pub(crate) fn redaction_plan(
         &self,
         job_id: u64,

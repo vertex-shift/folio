@@ -16,6 +16,8 @@ pub struct Workspace {
     next_id: u64,
     redactions: BTreeMap<u64, Job>,
     next_redaction_id: u64,
+    ocrs: BTreeMap<u64, crate::ocr::Job>,
+    next_ocr_id: u64,
     pending_open: BTreeMap<u64, PendingOpen>,
     next_open_id: u64,
     drafts: HashSet<u64>,
@@ -136,6 +138,7 @@ impl Workspace {
         self.drafts.remove(&id);
         self.authoring_images.clear(id);
         self.redactions.retain(|_, job| job.plan.document_id != id);
+        self.ocrs.retain(|_, job| job.plan.document_id != id);
         self.pending_open.retain(|_, pending| {
             !matches!(pending.kind,
             OpenKind::Import { document_id, .. } if document_id == id)
@@ -155,6 +158,7 @@ impl Workspace {
         self.document(id)?;
         if pending {
             self.drafts.insert(id);
+            self.ocrs.retain(|_, job| job.plan.document_id != id);
         } else {
             self.drafts.remove(&id);
         }
@@ -455,6 +459,7 @@ impl Workspace {
                     .to_owned(),
             ));
         }
+        self.ocrs.retain(|_, job| job.plan.document_id != id);
         Ok(session)
     }
 
@@ -480,6 +485,15 @@ impl Workspace {
         dpi: u16,
         regions: &[Region],
     ) -> Result<Plan> {
+        if self
+            .ocrs
+            .values()
+            .any(|job| job.plan.document_id == id && !job.expired())
+        {
+            return Err(Error::Invalid(
+                "Cancel offline OCR before preparing a redacted copy.".into(),
+            ));
+        }
         let job_id = self.next_redaction_id.checked_add(1).ok_or_else(|| {
             Error::Invalid("Redaction identifiers are exhausted. Restart Folio.".into())
         })?;
@@ -519,6 +533,69 @@ impl Workspace {
 
     pub fn cancel_redaction(&mut self, job_id: u64) -> bool {
         self.redactions.remove(&job_id).is_some()
+    }
+
+    pub fn begin_ocr(
+        &mut self,
+        id: u64,
+        revision: u64,
+        options: crate::ocr::Options,
+    ) -> Result<crate::ocr::Plan> {
+        self.ocrs.retain(|_, job| !job.expired());
+        self.ensure_ocr_ready(id, revision)?;
+        if self.ocrs.len() >= 4 || self.ocrs.values().any(|job| job.plan.document_id == id) {
+            return Err(Error::Invalid("An OCR job is already running for this PDF, or the four-job workspace limit was reached. Cancel it before starting another.".into()));
+        }
+        let job_id = self.next_ocr_id.checked_add(1).ok_or_else(|| {
+            Error::Invalid("OCR identifiers are exhausted. Restart Folio.".into())
+        })?;
+        let plan = self
+            .check_revision(id, revision)?
+            .ocr_plan(job_id, options)?;
+        self.next_ocr_id = job_id;
+        self.ocrs.insert(job_id, crate::ocr::Job::new(plan.clone()));
+        Ok(plan)
+    }
+
+    fn ensure_ocr_ready(&self, id: u64, revision: u64) -> Result<()> {
+        self.ensure_export_ready(id, revision)?.ensure_writable()?;
+        if self
+            .redactions
+            .values()
+            .any(|job| job.plan.document_id == id)
+        {
+            return Err(Error::Invalid("Finish or cancel pending writing/form drafts and clear redaction marks before using OCR.".into()));
+        }
+        Ok(())
+    }
+
+    pub fn stage_ocr_page(&mut self, job_id: u64, result: crate::ocr::PageResult) -> Result<()> {
+        self.ocrs.retain(|_, job| !job.expired());
+        let job = self.ocrs.get(&job_id)
+            .ok_or_else(|| Error::Invalid("This OCR job was canceled, expired, or invalidated by a document change. No text was added.".into()))?;
+        self.ensure_ocr_ready(job.plan.document_id, job.plan.revision)?;
+        self.ocrs
+            .get_mut(&job_id)
+            .expect("OCR job checked above")
+            .stage(result)
+    }
+
+    pub fn commit_ocr(&mut self, job_id: u64) -> Result<crate::ocr::Outcome> {
+        let job = self.ocrs.remove(&job_id).ok_or_else(|| {
+            Error::Invalid("This OCR job was canceled or invalidated. No text was added.".into())
+        })?;
+        if job.expired() {
+            return Err(Error::Invalid(
+                "This OCR job exceeded its 15-minute limit. No text was added.".into(),
+            ));
+        }
+        self.ensure_ocr_ready(job.plan.document_id, job.plan.revision)?;
+        self.current_mut(job.plan.document_id, job.plan.revision)?
+            .commit_ocr(&job)
+    }
+
+    pub fn cancel_ocr(&mut self, job_id: u64) -> bool {
+        self.ocrs.remove(&job_id).is_some()
     }
 
     pub fn bootstrap(&mut self) -> Result<DocumentInfo> {

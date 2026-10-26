@@ -1,0 +1,44 @@
+Folio offline English OCR
+
+Recognition engine: Tesseract.js 6.0.1 (Apache-2.0)
+https://github.com/naptha/tesseract.js/tree/v6.0.1
+WASM engine: Tesseract.js-core 6.1.2 (Apache-2.0)
+https://github.com/naptha/tesseract.js-core/tree/3d12e9b2d4e0e9e64bd0793e2c55b2d8f6404884
+
+English model: unmodified tessdata_fast eng.traineddata (Apache-2.0)
+Source revision: 87416418657359cb625c412a48b6e1d6d41c29bd
+https://github.com/tesseract-ocr/tessdata_fast/tree/87416418657359cb625c412a48b6e1d6d41c29bd
+Asset SHA-256:
+7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2
+The accompanying LICENSE is the original tessdata_fast Apache-2.0 license.
+
+The worker and all matching core variants are copied from integrity-pinned npm
+packages during preparation. The committed English model is checksum-verified
+before copying. No OCR asset is downloaded at application runtime.
+
+Core dependency license texts are in notices/ and are incorporated into
+Folio's generated THIRD_PARTY_NOTICES.txt. Their source revisions are the git
+submodule revisions in tesseract.js-core 6.1.2. Only trailing whitespace is
+normalized; copyright notices, terms, and patent grants are retained:
+
+Tesseract (Apache-2.0)
+https://github.com/Balearica/tesseract/tree/5a21eebeacd77dd181eec17317de7e3a20b7b9fb
+Leptonica (BSD-2-Clause)
+https://github.com/DanBloomberg/leptonica/tree/4af068b56a9674da915debea4ed7e1b9885b17e8
+giflib (MIT)
+https://github.com/mirrorer/giflib/tree/fa37672085ce4b3d62c51627ab3c8cf2dda8009a
+libjpeg (IJG license; notice in the original README)
+https://github.com/LuaDist/libjpeg/tree/6c0fcb8ddee365e7abc4d332662b06900612e923
+libpng (libpng license)
+https://github.com/glennrp/libpng/tree/a37d4836519517bdce6cb9d956092321eca3e73b
+libtiff (libtiff license)
+https://gitlab.com/libtiff/libtiff/-/tree/b51bb157123264e26d34c09cc673d213aea61fc7
+libwebp (BSD-3-Clause with its accompanying patent grant)
+https://github.com/webmproject/libwebp/tree/20ef03ee351d4ff03fc5ff3ec4804a879d1b9d5c
+OpenLibm (individual BSD/MIT/public-domain notices in LICENSE.md)
+https://github.com/JuliaMath/openlibm/tree/ae2d91698508701c83cab83714d42a1146dccf85
+zlib (zlib license; notice in the original README)
+https://github.com/madler/zlib/tree/21767c654d31d2dccdde4330529775c6c5fd5389
+
+PDF text uses the existing embedded Noto Sans font under SIL OFL 1.1; see
+../fonts/OFL.txt. OCR adds no accessibility tags or PDF/UA conformance.

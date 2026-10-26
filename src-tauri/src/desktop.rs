@@ -478,6 +478,44 @@ async fn cancel_authoring_image(
 }
 
 #[tauri::command]
+async fn begin_ocr(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+    options: crate::ocr::Options,
+) -> std::result::Result<crate::ocr::Plan, String> {
+    with_state(app, move |state| {
+        state.workspace.begin_ocr(document_id, revision, options)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn stage_ocr_page(
+    app: AppHandle,
+    job_id: u64,
+    result: crate::ocr::PageResult,
+) -> std::result::Result<(), String> {
+    with_state(app, move |state| {
+        state.workspace.stage_ocr_page(job_id, result)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn commit_ocr(
+    app: AppHandle,
+    job_id: u64,
+) -> std::result::Result<crate::ocr::Outcome, String> {
+    with_state(app, move |state| state.workspace.commit_ocr(job_id)).await
+}
+
+#[tauri::command]
+async fn cancel_ocr(app: AppHandle, job_id: u64) -> std::result::Result<bool, String> {
+    with_state(app, move |state| Ok(state.workspace.cancel_ocr(job_id))).await
+}
+
+#[tauri::command]
 async fn begin_redaction(
     app: AppHandle,
     document_id: u64,
@@ -805,6 +843,10 @@ pub fn run() {
             stage_authoring_image,
             insert_authoring_image,
             cancel_authoring_image,
+            begin_ocr,
+            stage_ocr_page,
+            commit_ocr,
+            cancel_ocr,
             begin_redaction,
             stage_redaction_page,
             export_redacted_copy,

@@ -17,10 +17,18 @@ export function collectNotices(root) {
     ["lucide-react", "LICENSE"], ["@tauri-apps/api", "LICENSE-MIT"],
     ["@tauri-apps/plugin-opener", "LICENSE.spdx"],
     ["pdfjs-dist", "LICENSE"],
+    ["tesseract.js", "LICENSE.md"], ["tesseract.js-core", "LICENSE"],
+    ["bmp-js", "LICENSE"], ["idb-keyval", "LICENCE"], ["is-url", "LICENSE-MIT"],
+    ["regenerator-runtime", "LICENSE"], ["wasm-feature-detect", "LICENSE"], ["zlibjs", "LICENSE"],
   ]) {
     append(name, join(root, "node_modules", name, license));
   }
   append("Noto Sans embedded PDF font", join(root, "src-tauri/resources/fonts/OFL.txt"));
+  append("English OCR model / tessdata_fast 87416418657359cb625c412a48b6e1d6d41c29bd (Apache-2.0)", join(root, "src-tauri/resources/ocr/LICENSE"));
+  append("Offline OCR provenance", join(root, "src-tauri/resources/ocr/NOTICE"));
+  for (const name of ["tesseract", "leptonica", "giflib", "libjpeg", "libpng", "libtiff", "libwebp", "libwebp-patents", "openlibm", "zlib"]) {
+    append(`Tesseract WASM component / ${name}`, join(root, "src-tauri/resources/ocr/notices", `${name}.txt`));
+  }
   for (const [title, folder] of [
     ["PDF.js CMap data", "cmaps"], ["PDF.js ICC profiles", "iccs"],
   ]) {

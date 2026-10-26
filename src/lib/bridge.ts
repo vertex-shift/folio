@@ -7,6 +7,7 @@ import { resolveRuntime } from "./runtime";
 import { MAX_IMAGE_BYTES } from "./authoring";
 import type { ImageAsset, ImagePlacement } from "./authoring";
 import type { FormChange, FormInfo } from "./formsTypes";
+import type { OcrOptions, OcrOutcome, OcrPageResult, OcrPlan } from "./ocrTypes";
 
 const runtime = await resolveRuntime({
   hasNativeBridge: isTauri(),
@@ -181,6 +182,19 @@ export const bridge = {
   fillForms(info: DocumentInfo, changes: FormChange[]): Promise<DocumentInfo> {
     const input = { ...revision(info), changes };
     return native ? invoke("fill_form_fields", input) : previewJson("/forms/fill", post(input));
+  },
+  beginOcr(info: DocumentInfo, options: OcrOptions): Promise<OcrPlan> {
+    const input = { ...revision(info), options };
+    return native ? invoke("begin_ocr", input) : previewJson("/ocr/begin", post(input));
+  },
+  stageOcrPage(jobId: number, result: OcrPageResult, signal?: AbortSignal): Promise<void> {
+    return native ? invoke("stage_ocr_page", { jobId, result }) : previewJson("/ocr/page", { ...post({ jobId, result }), signal });
+  },
+  commitOcr(jobId: number): Promise<OcrOutcome> {
+    return native ? invoke("commit_ocr", { jobId }) : previewJson("/ocr/commit", post({ jobId }));
+  },
+  cancelOcr(jobId: number): Promise<boolean> {
+    return native ? invoke("cancel_ocr", { jobId }) : previewJson("/ocr/cancel", post({ jobId }));
   },
   beginRedaction(info: DocumentInfo, dpi: 150 | 300, regions: RedactionRegion[]): Promise<RedactionPlan> {
     const input = { ...revision(info), dpi, regions };

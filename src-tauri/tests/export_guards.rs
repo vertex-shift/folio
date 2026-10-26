@@ -188,6 +188,20 @@ fn staged_images_block_exports_and_signing_before_a_frontend_draft_update() {
             .check_signing(document.id, document.revision)
             .is_err()
     );
+    assert!(
+        workspace
+            .begin_ocr(
+                document.id,
+                document.revision,
+                folio_core::ocr::Options {
+                    pages: vec![0],
+                    dpi: 150,
+                    language: "eng".into(),
+                    existing_text: folio_core::ocr::ExistingTextPolicy::Force,
+                },
+            )
+            .is_err()
+    );
     assert_eq!(workspace.document(document.id).unwrap().bytes(), original);
     workspace
         .cancel_authoring_image(document.id, asset.asset_id)

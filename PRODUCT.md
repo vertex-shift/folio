@@ -82,6 +82,15 @@ The desktop app processes document contents locally.
   System, Light, Dark, Sepia, and High Contrast. Persist the preference locally;
   follow live device changes in System mode and match native light/dark chrome.
   Theme the workspace without changing PDF content or annotation colors.
+- Offline OCR: bundled, checksum-pinned English Tesseract/WASM recognition on
+  selected page ranges, with explicit skip/force policy for existing text.
+  Stage sequential word boxes/baselines against a document ID/revision, then
+  add real invisible, Unicode-mapped PDF text in one undoable mutation.
+  Preserve original page streams/pixels, CropBox/rotation/UserUnit coordinates,
+  encryption, unsaved work, and other tabs. Exclude annotation/form appearances
+  and refuse pending drafts/redactions. Cancel/release resources without partial
+  commits; report skipped/no-text/error outcomes. No runtime downloads, cloud
+  recognition, system Tesseract prerequisite, or accessibility-conformance claim.
 - Password-protected PDFs: prompt for supported standard PDF passwords in
   native and preview opening flows. Preserve existing encryption, passwords,
   and permissions in saves, history, extraction, and redacted exports.
@@ -126,7 +135,7 @@ The desktop app processes document contents locally.
   Do not claim trusted chains, revocation, trusted timestamps, qualified
   signatures, or PAdES-LTV; make no external certificate/document requests.
 - Certificate-based protection, paragraph reflow, arbitrary font/encoding support, existing-image editing,
-  form authoring, unsupported interactive forms, OCR, Office conversion, advanced
+  form authoring, unsupported interactive forms, non-English OCR, Office conversion, advanced
   signing/trust validation, cloud
   collaboration, and full Acrobat parity remain incomplete capabilities.
 - New annotations, imported pages, and created/extracted documents must remain
@@ -134,7 +143,7 @@ The desktop app processes document contents locally.
   and incompatible page structures are rejected explicitly rather than damaged.
 - Unsupported source encodings, vertical/Type 3 fonts, invisible/clipping text,
   ActualText spans, and optional-content layer text must be reported rather
-  than guessed. Scans and outlined lettering still require OCR.
+  than guessed. Scans and outlined lettering can use the bundled English OCR.
 - Do not copy Adobe code, fonts, icons, artwork, branding, or licensing logic.
 - A development-only browser bridge exercises the same Rust document engine.
   It must be clearly distinguished from the native desktop app.
