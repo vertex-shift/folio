@@ -834,7 +834,7 @@ fn append_widget(
     let mut widget = dictionary! {
         "Type" => "Annot", "Subtype" => "Widget", "Parent" => id, "P" => page,
         "Rect" => numbers(&rect), "F" => 4,
-        "MK" => dictionary! { "R" => geometry.rotation, "BG" => numbers(&[1.0; 3]), "BC" => numbers(&[0.25; 3]) },
+        "MK" => dictionary! { "R" => if definition.kind == ControlKind::Signature { 0 } else { geometry.rotation }, "BG" => numbers(&[1.0; 3]), "BC" => numbers(&[0.25; 3]) },
         "BS" => dictionary! { "W" => 1, "S" => "S" },
     };
     widget_rect(document, &widget, page)?;
@@ -871,7 +871,7 @@ fn append_widget(
         let appearance = document.add_object(Stream::new(
             dictionary! {
                 "Type" => "XObject", "Subtype" => "Form", "BBox" => numbers(&[0.0, 0.0, 1.0, 1.0]),
-                "Resources" => dictionary! {},
+                "Resources" => dictionary! {}, "Matrix" => numbers(&geometry.appearance_matrix(1.0, 1.0)),
             },
             b"q 0.6 G 0.01 w 0.005 0.005 0.99 0.99 re S Q".to_vec(),
         ));
@@ -1417,7 +1417,11 @@ fn place_widget(
     }
     mk.set(
         "R",
-        (rotation + i64::from(geometry.rotation - previous.rotation)).rem_euclid(360),
+        if field.info.kind == FieldKind::Signature {
+            0
+        } else {
+            (rotation + i64::from(geometry.rotation - previous.rotation)).rem_euclid(360)
+        },
     );
     let changed = document.get_dictionary_mut(id)?;
     changed.set("Rect", numbers(&rect));

@@ -1365,6 +1365,101 @@ fn inherited_empty_choice_defaults_and_new_partial_names_preserve_parent_semanti
     );
 }
 
+#[test]
+fn unsigned_signature_slots_keep_signer_compatible_mk_rotation_when_created_and_moved() {
+    let mut document = geometry_document();
+    let mut session = Session::from_bytes(
+        bytes(&mut document),
+        "Unsigned slot geometry.pdf".into(),
+        None,
+        1,
+    )
+    .unwrap();
+    session
+        .design_form_fields(
+            (0..4)
+                .map(|page| {
+                    create(
+                        definition(ControlKind::Signature, &format!("slot{page}")),
+                        vec![widget(page, 40.0, 170.0, 240.0, 40.0)],
+                    )
+                })
+                .collect(),
+        )
+        .unwrap();
+    for moved in [false, true] {
+        if moved {
+            let changes = (0..4)
+                .map(|page| {
+                    let field = field(&session, &format!("slot{page}"));
+                    Change::PlaceWidget {
+                        id: field.id,
+                        widget_id: field.widgets[0].id.clone(),
+                        widget: widget(3 - page, 300.0, 240.0, 220.0, 40.0),
+                    }
+                })
+                .collect();
+            session.design_form_fields(changes).unwrap();
+        }
+        let document = load(session.bytes());
+        for page in 0..4 {
+            let field = field(&session, &format!("slot{page}"));
+            let dictionary = document.get_dictionary(object_key(&field.id)).unwrap();
+            assert!(!dictionary.has(b"V"));
+            assert_eq!(dictionary.get(b"Ff").unwrap().as_i64().unwrap(), 0);
+            let widget = document
+                .get_dictionary(object_key(&field.widgets[0].id))
+                .unwrap();
+            assert_eq!(
+                widget
+                    .get(b"MK")
+                    .unwrap()
+                    .as_dict()
+                    .unwrap()
+                    .get(b"R")
+                    .unwrap()
+                    .as_i64()
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                widget.get(b"P").unwrap().as_reference().unwrap(),
+                document.get_pages()[&(field.widgets[0].page as u32 + 1)]
+            );
+        }
+        assert!(session.info().unwrap().read_only_reason.is_none());
+        let reopened = Session::from_bytes(
+            session.bytes().to_vec(),
+            "Reopened unsigned slots.pdf".into(),
+            None,
+            2,
+        )
+        .unwrap();
+        assert!(reopened.form_designer().unwrap().authorable);
+        if let Ok(directory) = std::env::var("FOLIO_FORM_EVIDENCE_DIR") {
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                Path::new(&directory).join(if moved {
+                    "unsigned-slots-moved.pdf"
+                } else {
+                    "unsigned-slots-created.pdf"
+                }),
+                session.bytes(),
+            )
+            .unwrap();
+            std::fs::write(
+                Path::new(&directory).join(if moved {
+                    "unsigned-slots-moved.json"
+                } else {
+                    "unsigned-slots-created.json"
+                }),
+                serde_json::to_vec_pretty(&session.form_fields().unwrap()).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+}
+
 // Set FOLIO_FORM_EVIDENCE_DIR to retain original synthetic outputs for the
 // independent PDF.js/pdf-lib evidence runner; ordinary tests write no artifacts.
 #[test]
