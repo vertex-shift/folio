@@ -821,8 +821,8 @@ fn change_text_operation(
     let mut replacement = Vec::new();
     if operation.operator == "'" || operation.operator == "\"" {
         if operation.operator == "\"" {
-            replacement.push(Operation::new("Tw", vec![operand(&operation, 0)?.clone()]));
-            replacement.push(Operation::new("Tc", vec![operand(&operation, 1)?.clone()]));
+            replacement.push(Operation::new("Tw", vec![operand(operation, 0)?.clone()]));
+            replacement.push(Operation::new("Tc", vec![operand(operation, 1)?.clone()]));
         }
         replacement.push(Operation::new("T*", vec![]));
     }

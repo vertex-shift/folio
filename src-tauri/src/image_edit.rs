@@ -395,10 +395,10 @@ impl Scanner {
         if pixel_width.is_none() || pixel_height.is_none() {
             reason = Some("The source image has invalid pixel dimensions.".into());
         }
-        if let Ok(mask) = stream.dict.get(b"ImageMask") {
-            if resolve(document, mask)?.as_bool()? {
-                reason = Some("Stencil image masks are read-only.".into());
-            }
+        if let Ok(mask) = stream.dict.get(b"ImageMask")
+            && resolve(document, mask)?.as_bool()?
+        {
+            reason = Some("Stencil image masks are read-only.".into());
         }
         if stream.dict.has(b"Alternates") || stream.dict.has(b"OPI") || stream.dict.has(b"F") {
             reason = Some("Alternate, OPI and external-file images are read-only.".into());

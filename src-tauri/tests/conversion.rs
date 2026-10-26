@@ -100,9 +100,8 @@ fn parts(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
         assert_eq!(crc32fast::hash(content), u32_at(offset + 14));
         let mut reader = quick_xml::Reader::from_reader(content);
         loop {
-            match reader.read_event().unwrap() {
-                quick_xml::events::Event::Eof => break,
-                _ => {}
+            if reader.read_event().unwrap() == quick_xml::events::Event::Eof {
+                break;
             }
         }
         result.insert(name.into(), content.to_vec());
