@@ -179,10 +179,13 @@ export async function runComparison(
           check();
           if (page) {
             const viewport = page.getViewport({ scale: 1 });
+            const raster = page.getViewport({ scale: plan.settings.dpi / 72 });
             const geometry = source.pages[target.index];
             if (Math.abs(viewport.width - geometry.widthPoints) > 0.01 || Math.abs(viewport.height - geometry.heightPoints) > 0.01
               || page.rotate !== geometry.rotation || Math.abs(page.userUnit - geometry.userUnit) > 0.00001
-              || page.view.some((value, i) => Math.abs(value - geometry.bounds[i]) > 0.01)) {
+              || page.view.some((value, i) => Math.abs(value - geometry.bounds[i]) > 0.01)
+              || Math.ceil(raster.width) !== Math.ceil(geometry.widthPoints * plan.settings.dpi / 72)
+              || Math.ceil(raster.height) !== Math.ceil(geometry.heightPoints * plan.settings.dpi / 72)) {
               throw new Error(`Page ${target.index + 1} has unmatched renderer/core geometry. It was not silently aligned or declared equal.`);
             }
           }

@@ -163,7 +163,16 @@ export async function checkComparisonRenderer() {
   try { await runComparison(mismatch, operations, new AbortController().signal, () => {}); }
   catch (error) { mismatchedGeometryRejected = error instanceof Error && error.message.includes("unmatched renderer/core geometry"); }
   verify(mismatchedGeometryRejected, "Mismatched source layouts were silently declared equal.");
+  const boundary = await PDFDocument.load(new Uint8Array(beforeBytes));
+  boundary.getPage(0).setMediaBox(0, 0, 360.000001, 240);
+  const boundaryBytes = await boundary.save();
+  let roundedRasterBoundaryRejected = false;
+  try {
+    await runComparison(plan, { ...operations, bytes: async (side) => new Uint8Array(side === "before" ? boundaryBytes : afterBytes) },
+      new AbortController().signal, () => {});
+  } catch (error) { roundedRasterBoundaryRejected = error instanceof Error && error.message.includes("unmatched renderer/core geometry"); }
+  verify(roundedRasterBoundaryRejected, "Subpixel core rounding silently clipped an actual PDF.js raster column.");
   return { independent, added: added.pages.length, appearancePixels: result.pages[4].pixels.changed,
     geometry: geometryChanges(plan.before.pages[3], plan.after.pages[3]),
-    fileOnlyNoObservedDifferences: true, sourceBuffersUnchanged: true, cancellations, staleRejected, mismatchedGeometryRejected };
+    fileOnlyNoObservedDifferences: true, sourceBuffersUnchanged: true, cancellations, staleRejected, mismatchedGeometryRejected, roundedRasterBoundaryRejected };
 }

@@ -215,7 +215,7 @@ impl Workspace {
         Ok(plan)
     }
 
-    fn comparison_source(&self, reference: &SourceRef) -> Result<Source> {
+    fn comparison_session(&self, reference: &SourceRef) -> Result<&crate::document::Session> {
         let session = self.ensure_export_ready(reference.document_id, reference.revision)?;
         if !session.permissions().copy_allowed {
             return Err(invalid(
@@ -227,17 +227,13 @@ impl Workspace {
                 "Clear pending redaction marks on both PDFs before comparing their content.",
             ));
         }
+        Ok(session)
+    }
+
+    fn comparison_source(&self, reference: &SourceRef) -> Result<Source> {
+        let session = self.comparison_session(reference)?;
         let info = session.info()?;
-        if info.page_count > MAX_PAGES {
-            return Err(invalid(
-                "Comparison supports up to 100 pages per PDF. No pages were silently skipped.",
-            ));
-        }
-        if info.byte_length > MAX_SOURCE_BYTES {
-            return Err(invalid(
-                "Comparison supports source snapshots up to 64 MiB each.",
-            ));
-        }
+        source_limits(info.page_count, info.byte_length)?;
         Ok(Source {
             reference: reference.clone(),
             name: info.name,
@@ -251,7 +247,7 @@ impl Workspace {
     pub fn check_comparison(&self, comparison_id: u64) -> Result<Plan> {
         let job = self.comparisons.get(comparison_id)?;
         for source in [&job.plan.before, &job.plan.after] {
-            self.comparison_source(&source.reference)?;
+            self.comparison_session(&source.reference)?;
         }
         Ok(job.plan.clone())
     }
@@ -344,6 +340,29 @@ impl Workspace {
     }
 }
 
+fn source_limits(pages: usize, bytes: usize) -> Result<()> {
+    if pages == 0 || pages > MAX_PAGES {
+        return Err(invalid(
+            "Comparison supports 1-100 pages per PDF. No pages were silently skipped.",
+        ));
+    }
+    if bytes > MAX_SOURCE_BYTES {
+        return Err(invalid(
+            "Comparison supports source snapshots up to 64 MiB each.",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn source_size_and_page_thresholds_are_inclusive() {
+    assert!(source_limits(MAX_PAGES, MAX_SOURCE_BYTES).is_ok());
+    assert!(source_limits(MAX_PAGES + 1, MAX_SOURCE_BYTES).is_err());
+    assert!(source_limits(MAX_PAGES, MAX_SOURCE_BYTES + 1).is_err());
+    assert!(source_limits(0, 1).is_err());
+}
+
 fn validate_settings(settings: &Settings) -> Result<()> {
     if ![72, 96, 150].contains(&settings.dpi) || settings.tolerance > 64 {
         return Err(invalid(
@@ -422,6 +441,7 @@ fn report_bytes(plan: &Plan, pages: &[PageResult]) -> Result<Vec<u8>> {
             "The comparison report is incomplete. Compare every indexed page before exporting.",
         ));
     }
+
     let mut text_bytes = 0usize;
     let mut tokens = 0usize;
     let mut spans = 0usize;
@@ -445,18 +465,17 @@ fn report_bytes(plan: &Plan, pages: &[PageResult]) -> Result<Vec<u8>> {
                 "The pixel comparison report has invalid dimensions, counts, tolerance or page order.",
             ));
         }
-        if let Some([x, y, width, height]) = pixels.bounds {
-            if width == 0
+        if let Some([x, y, width, height]) = pixels.bounds
+            && (width == 0
                 || height == 0
                 || x.checked_add(width).is_none_or(|end| end > expected.width)
                 || y.checked_add(height)
                     .is_none_or(|end| end > expected.height)
-                || u64::from(width) * u64::from(height) < pixels.changed
-            {
-                return Err(invalid(
-                    "A pixel-difference bounding box is outside its page.",
-                ));
-            }
+                || u64::from(width) * u64::from(height) < pixels.changed)
+        {
+            return Err(invalid(
+                "A pixel-difference bounding box is outside its page.",
+            ));
         }
         let mut before_bytes = 0usize;
         let mut after_bytes = 0usize;

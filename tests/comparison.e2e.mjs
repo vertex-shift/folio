@@ -239,6 +239,7 @@ try {
     assert.equal(await page.getByLabel("After opacity", { exact: true }).inputValue(), "70");
     await page.getByRole("button", { name: "Return to PDFs", exact: true }).click();
     assert.equal(await workspace.getByLabel("Page number", { exact: true }).inputValue(), "3");
+    evidence.workspaceSelectionsSettingsAndReadingPositionPreserved = true;
     await workspace.getByRole("button", { name: "Rotate current page clockwise", exact: true }).click();
     await workspace.getByRole("button", { name: "Undo (Command+Z)", exact: true }).click();
     await page.getByRole("button", { name: "Compare open PDFs", exact: true }).click();
@@ -273,11 +274,9 @@ try {
     await page.getByRole("button", { name: "Clear comparison", exact: true }).click();
     await page.getByRole("button", { name: "Return to PDFs", exact: true }).click();
     await page.getByRole("tab", { name: /comparison-before\.pdf/ }).click();
-    if (await workspace.getByRole("button", { name: "All tools", exact: true }).getAttribute("aria-expanded") !== "true") {
-      await workspace.getByRole("button", { name: "All tools", exact: true }).click();
-    }
-    await workspace.getByRole("button", { name: "Document properties", exact: true }).click();
-    await workspace.getByLabel("Title", { exact: true }).fill("Unapplied comparison safety fixture");
+    const beforeWorkspace = page.locator(`#document-panel-${before.id}`);
+    await beforeWorkspace.getByRole("button", { name: "Show document properties", exact: true }).click();
+    await beforeWorkspace.getByLabel("Title", { exact: true }).fill("Unapplied comparison safety fixture");
     await page.getByRole("tab", { name: /comparison-after\.pdf/ }).click();
     await page.getByRole("button", { name: "Compare open PDFs", exact: true }).click();
     assert.equal(await compare.isDisabled(), true);
@@ -288,10 +287,9 @@ try {
     assert.equal(denied.status, 400, "Comparison silently cleared a peer metadata draft.");
     await page.getByRole("button", { name: "Return to PDFs", exact: true }).click();
     await page.getByRole("tab", { name: /comparison-before\.pdf/ }).click();
-    await workspace.getByRole("button", { name: "Discard draft", exact: true }).click();
-    await workspace.getByRole("button", { name: "All tools", exact: true }).click();
-    await workspace.getByRole("button", { name: "Fill form fields", exact: true }).click();
-    await workspace.getByRole("textbox", { name: "Synthetic.appearance", exact: true }).fill("Draft not in PDF");
+    await beforeWorkspace.getByRole("button", { name: "Discard draft", exact: true }).click();
+    await beforeWorkspace.getByRole("button", { name: "Show form fields", exact: true }).click();
+    await beforeWorkspace.getByRole("textbox", { name: "Synthetic.appearance", exact: true }).fill("Draft not in PDF");
     await page.getByRole("tab", { name: /comparison-after\.pdf/ }).click();
     await page.getByRole("button", { name: "Compare open PDFs", exact: true }).click();
     assert.equal(await compare.isDisabled(), true);
@@ -301,8 +299,10 @@ try {
     assert.equal(denied.status, 400, "Comparison silently cleared a peer form draft.");
     await page.getByRole("button", { name: "Return to PDFs", exact: true }).click();
     await page.getByRole("tab", { name: /comparison-before\.pdf/ }).click();
-    await workspace.getByRole("button", { name: "Discard unapplied changes", exact: true }).click();
+    await beforeWorkspace.getByRole("button", { name: "Discard unapplied changes", exact: true }).click();
     await page.getByRole("button", { name: "Discard form changes", exact: true }).click();
+    await page.getByRole("dialog", { name: "Discard unapplied form changes?", exact: true }).waitFor({ state: "hidden" });
+    await beforeWorkspace.getByText("No unapplied form changes.", { exact: true }).waitFor();
     evidence.peerDraftsRetained = ["metadata", "forms"];
 
     for (const copy of [true, false]) {
@@ -360,6 +360,7 @@ try {
   assert.deepEqual(failures, []);
   assert.deepEqual(evidence.externalRequests, []);
   await writeFile(join(artifacts, "comparison-evidence.json"), JSON.stringify(evidence, null, 2) + "\n");
+  await Promise.all(["comparison-failure.json", "comparison-failure.png"].map((name) => rm(join(artifacts, name), { force: true })));
   console.log(JSON.stringify(evidence, null, 2));
   console.log(`Local comparison checks passed${rendererOnly ? " (renderer only)" : ""}.`);
 } catch (error) {

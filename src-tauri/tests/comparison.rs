@@ -3,9 +3,9 @@ mod fixtures;
 
 use folio_core::{
     comparison::{
-        MAX_PAGE_PIXELS, MAX_PAGE_TEXT_BYTES, MAX_REPORT_BYTES, MAX_SPANS, PageResult, PixelResult,
-        Plan, Request, Settings, Side, SourceRef, SpanKind, TextResult, TextSpan, geometry_changes,
-        page_plans,
+        MAX_PAGE_PIXELS, MAX_PAGE_TEXT_BYTES, MAX_REPORT_BYTES, MAX_SPANS, MAX_TEXT_BYTES,
+        MAX_TOKENS, PageResult, PixelResult, Plan, Request, Settings, Side, SourceRef, SpanKind,
+        TextResult, TextSpan, geometry_changes, page_plans,
     },
     document::{DocumentInfo, Edit, Session},
     workspace::{OpenOutcome, Workspace},
@@ -608,4 +608,160 @@ fn report_json_encoded_bytes_have_a_hard_limit_even_when_text_is_under_its_limit
             .is_err_and(|error| error.to_string().contains("4 MiB"))
     );
     assert_eq!(MAX_REPORT_BYTES, 4 * 1024 * 1024);
+}
+
+#[test]
+fn report_global_text_and_token_budgets_accept_exact_limits_then_reject_one_over() {
+    let mut workspace = Workspace::default();
+    let bytes = fixtures::synthetic_pdf(5, false);
+    let before = workspace
+        .open_bytes(bytes.clone(), "Before.pdf".into())
+        .unwrap();
+    let after = workspace.open_bytes(bytes, "After.pdf".into()).unwrap();
+    let plan = workspace
+        .begin_comparison(request(&before, &after))
+        .unwrap();
+    let mut pages = results(&plan);
+    for page in &mut pages[..4] {
+        page.text.spans = vec![TextSpan {
+            kind: SpanKind::Equal,
+            text: "a".repeat(MAX_PAGE_TEXT_BYTES),
+        }];
+        page.text.before_tokens = 1;
+        page.text.after_tokens = 1;
+    }
+    assert_eq!(4 * 2 * MAX_PAGE_TEXT_BYTES, MAX_TEXT_BYTES);
+    workspace
+        .finish_comparison(plan.comparison_id, pages.clone())
+        .unwrap();
+    pages[4].text.spans.push(TextSpan {
+        kind: SpanKind::Added,
+        text: "a".into(),
+    });
+    pages[4].text.after_tokens = 1;
+    assert!(
+        workspace
+            .finish_comparison(plan.comparison_id, pages)
+            .is_err_and(|error| error.to_string().contains("2 MiB"))
+    );
+
+    let mut pages = results(&plan);
+    for page in &mut pages[..2] {
+        page.text.spans = vec![TextSpan {
+            kind: SpanKind::Equal,
+            text: "a ".repeat(10_000),
+        }];
+        page.text.before_tokens = 20_000;
+        page.text.after_tokens = 20_000;
+    }
+    pages[2].text.spans = vec![TextSpan {
+        kind: SpanKind::Removed,
+        text: "a ".repeat(10_000),
+    }];
+    pages[2].text.before_tokens = 20_000;
+    assert_eq!(
+        pages
+            .iter()
+            .map(|page| page.text.before_tokens + page.text.after_tokens)
+            .sum::<usize>(),
+        MAX_TOKENS
+    );
+    workspace
+        .finish_comparison(plan.comparison_id, pages.clone())
+        .unwrap();
+    pages[2].text.spans.push(TextSpan {
+        kind: SpanKind::Added,
+        text: "a".into(),
+    });
+    pages[2].text.after_tokens = 1;
+    assert!(
+        workspace
+            .finish_comparison(plan.comparison_id, pages)
+            .is_err_and(|error| error.to_string().contains("100,000"))
+    );
+}
+
+#[test]
+fn a_real_detached_cms_signed_pdf_can_be_compared_without_rewriting_its_signed_bytes() {
+    use openssl::{
+        asn1::{Asn1Integer, Asn1Time},
+        bn::BigNum,
+        ec::{EcGroup, EcKey},
+        hash::MessageDigest,
+        nid::Nid,
+        pkcs12::Pkcs12,
+        pkey::PKey,
+        x509::{X509, X509NameBuilder, extension::KeyUsage},
+    };
+    let key = PKey::from_ec_key(
+        EcKey::generate(&EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap()).unwrap(),
+    )
+    .unwrap();
+    let mut name = X509NameBuilder::new().unwrap();
+    name.append_entry_by_text("CN", "Original comparison test signer")
+        .unwrap();
+    let name = name.build();
+    let mut certificate = X509::builder().unwrap();
+    certificate.set_version(2).unwrap();
+    certificate
+        .set_serial_number(&Asn1Integer::from_bn(&BigNum::from_u32(42).unwrap()).unwrap())
+        .unwrap();
+    certificate.set_subject_name(&name).unwrap();
+    certificate.set_issuer_name(&name).unwrap();
+    certificate.set_pubkey(&key).unwrap();
+    certificate
+        .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+        .unwrap();
+    certificate
+        .set_not_after(&Asn1Time::days_from_now(1).unwrap())
+        .unwrap();
+    certificate
+        .append_extension(KeyUsage::new().digital_signature().build().unwrap())
+        .unwrap();
+    certificate.sign(&key, MessageDigest::sha256()).unwrap();
+    let certificate = certificate.build();
+    let identity = Pkcs12::builder()
+        .name("Synthetic test only")
+        .pkey(&key)
+        .cert(&certificate)
+        .build2("synthetic")
+        .unwrap()
+        .to_der()
+        .unwrap();
+    let bytes = Session::blank(72.0, 72.0, 1)
+        .unwrap()
+        .signed_copy(&identity, "synthetic")
+        .unwrap();
+    let mut workspace = Workspace::default();
+    let signed = workspace
+        .open_bytes(bytes.clone(), "Actually signed.pdf".into())
+        .unwrap();
+    let after = open(&mut workspace, "After.pdf");
+    assert!(signed.read_only_reason.is_some());
+    assert!(signed.permissions.copy_allowed);
+    let plan = workspace
+        .begin_comparison(request(&signed, &after))
+        .unwrap();
+    assert_eq!(
+        workspace
+            .comparison_render_bytes(plan.comparison_id, Side::Before)
+            .unwrap(),
+        bytes
+    );
+    workspace
+        .finish_comparison(plan.comparison_id, results(&plan))
+        .unwrap();
+    workspace
+        .comparison_report(plan.comparison_id, false)
+        .unwrap();
+    assert_eq!(workspace.document(signed.id).unwrap().bytes(), bytes);
+    assert!(!workspace.document(signed.id).unwrap().is_dirty());
+    assert!(
+        !workspace
+            .document(signed.id)
+            .unwrap()
+            .info()
+            .unwrap()
+            .can_undo
+    );
 }

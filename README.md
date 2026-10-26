@@ -190,7 +190,8 @@ Geometry is checked separately without a pixel tolerance. Previews fit within
 **No observed differences does not mean identical PDFs.** Metadata, bookmarks,
 attachments, hidden objects, signature changes/validity/trust and other
 unexamined document structure are not compared. This is not a whole-file
-equivalence check. Unsupported renderer/core geometry disagreements and
+equivalence check. Unsupported renderer/core geometry disagreements (including
+different raster rounding at a pixel boundary) and
 over-budget work are rejected rather than reported as matches.
 
 Both PDFs must allow copy/extraction; owner-password access is honored.
@@ -1210,6 +1211,8 @@ cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --test com
 npm run test:comparison
 ```
 
+The browser check requires Playwright Chromium (`npx playwright install chromium`);
+`FOLIO_COMPARISON_BROWSER` can select an existing compatible browser executable.
 The comparison browser check uses original generated PDFs and independent actual
 PDF.js rendering for text, rectangle-color-only, small AcroForm-appearance,
 crop/rotation/UserUnit and added/removed-page differences. It also checks
