@@ -794,6 +794,133 @@ fn incremental_object_allocation_has_bounded_headroom_instead_of_overflowing() {
 }
 
 #[test]
+fn raw_hybrid_and_cyclic_revision_links_cannot_hide_in_lopdfs_normalized_trailer() {
+    let original = Session::blank(72.0, 72.0, 1).unwrap().bytes().to_vec();
+    let document = Document::load_mem(&original).unwrap();
+    let root = document
+        .trailer
+        .get(b"Root")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let mut hybrid = original.clone();
+    hybrid.push(b'\n');
+    let offset = hybrid.len();
+    hybrid.extend_from_slice(format!(
+        "xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size {} /Root {} {} R /XRefStm {} >>\nstartxref\n{offset}\n%%EOF\n",
+        document.max_id + 1, root.0, root.1, document.xref_start,
+    ).as_bytes());
+    let loaded = Document::load_mem(&hybrid).unwrap();
+    assert_eq!(loaded.get_pages().len(), 1);
+    assert!(loaded.xref_recovery.is_none());
+    assert!(!loaded.trailer.has(b"XRefStm"));
+    let mut incremental = IncrementalDocument::create_from(hybrid.clone(), loaded);
+    incremental.new_document.add_object(Object::string_literal(
+        "A plain revision above an earlier hybrid",
+    ));
+    let mut later = vec![];
+    incremental.save_to(&mut later).unwrap();
+    for bytes in [hybrid, later] {
+        let session = open(bytes.clone());
+        assert!(
+            session
+                .signature_report()
+                .unwrap()
+                .signing_blocked_reason
+                .unwrap()
+                .contains("hybrid")
+        );
+        assert!(
+            session
+                .signed_copy(identity(), PASSWORD)
+                .unwrap_err()
+                .to_string()
+                .contains("hybrid")
+        );
+        assert_eq!(session.bytes(), bytes);
+    }
+
+    let mut plain = IncrementalDocument::create_from(original.clone(), document.clone());
+    plain.new_document.add_object(Object::string_literal(
+        "Supported unsigned incremental revision",
+    ));
+    let mut bytes = vec![];
+    plain.save_to(&mut bytes).unwrap();
+    assert!(
+        open(bytes.clone())
+            .signed_copy(identity(), PASSWORD)
+            .unwrap()
+            .starts_with(&bytes)
+    );
+
+    let mut cyclic = document;
+    cyclic.reference_table.cross_reference_type = XrefType::CrossReferenceTable;
+    let first = save(cyclic.clone());
+    let offset = Document::load_mem(&first).unwrap().xref_start;
+    cyclic.trailer.set("Prev", offset as i64);
+    let bytes = save(cyclic);
+    let loaded = Document::load_mem(&bytes).unwrap();
+    assert_eq!(loaded.xref_start, offset);
+    assert!(loaded.xref_recovery.is_none());
+    assert!(!loaded.trailer.has(b"Prev"));
+    let session = open(bytes.clone());
+    assert!(
+        session
+            .signed_copy(identity(), PASSWORD)
+            .unwrap_err()
+            .to_string()
+            .contains("cyclic")
+    );
+    assert_eq!(session.bytes(), bytes);
+}
+
+#[test]
+fn the_revision_chain_limit_is_inclusive_at_exactly_4096_sections() {
+    let mut bytes = Session::blank(72.0, 72.0, 1).unwrap().bytes().to_vec();
+    let document = Document::load_mem(&bytes).unwrap();
+    let root = document
+        .trailer
+        .get(b"Root")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let mut previous = document.xref_start;
+    for additional in 1..=4096 {
+        bytes.push(b'\n');
+        let offset = bytes.len();
+        bytes.extend_from_slice(format!(
+            "xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size {} /Root {} {} R /Prev {previous} >>\nstartxref\n{offset}\n%%EOF\n",
+            document.max_id + 1, root.0, root.1,
+        ).as_bytes());
+        previous = offset;
+        if additional < 4095 {
+            continue;
+        }
+        let session = open(bytes.clone());
+        let report = session.signature_report().unwrap();
+        let result = session.signed_copy(identity(), PASSWORD);
+        if additional == 4095 {
+            assert!(report.signing_blocked_reason.is_none());
+            let output = result.unwrap();
+            assert!(output.starts_with(&bytes));
+            assert_eq!(
+                open(output).signature_report().unwrap().signatures[0].integrity,
+                Integrity::Intact
+            );
+        } else {
+            assert!(
+                report
+                    .signing_blocked_reason
+                    .unwrap()
+                    .contains("4,096-revision")
+            );
+            assert!(result.unwrap_err().to_string().contains("4,096-revision"));
+        }
+        assert_eq!(session.bytes(), bytes);
+    }
+}
+
+#[test]
 fn an_existing_cms_cannot_be_rebound_to_another_or_multiple_logical_fields() {
     let fixture = slots(false, false, 2, true);
     let bytes = open(fixture.bytes)

@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, ops::Range};
+use std::{
+    collections::{BTreeMap, HashSet},
+    ops::Range,
+};
 
 use lopdf::{Document, ObjectId, xref::XrefEntry};
 
@@ -180,13 +183,19 @@ pub(super) fn validate_footer(bytes: &[u8], document: &Document) -> CheckResult<
     Ok(())
 }
 
-pub(super) fn revision_prev(bytes: &[u8], document: &Document) -> CheckResult<Option<usize>> {
+struct RevisionLinks {
+    prev: Option<usize>,
+    hybrid: bool,
+}
+
+fn revision_links(bytes: &[u8], offset: usize) -> CheckResult<RevisionLinks> {
     let mut reader = Reader {
         bytes,
-        position: document.xref_start,
+        position: offset,
         remaining: 16_384,
     };
-    if reader.word()? == b"xref" {
+    let stream = reader.word()? != b"xref";
+    if !stream {
         let mut entries = 0usize;
         loop {
             let word = reader.word()?;
@@ -197,25 +206,23 @@ pub(super) fn revision_prev(bytes: &[u8], document: &Document) -> CheckResult<Op
                 std::str::from_utf8(value)
                     .ok()
                     .and_then(|value| value.parse::<usize>().ok())
-                    .ok_or_else(|| {
-                        CheckError::invalid("The appended cross-reference section is malformed.")
-                    })
+                    .ok_or_else(|| CheckError::invalid("The cross-reference section is malformed."))
             };
             number(word)?;
             let count = number(reader.word()?)?;
             entries = entries
                 .checked_add(count)
-                .filter(|count| *count <= 4096)
+                .filter(|count| *count <= bytes.len() / 5)
                 .ok_or_else(|| {
-                    CheckError::invalid("The appended cross-reference section exceeds its limit.")
+                    CheckError::invalid(
+                        "The cross-reference entry count exceeds the PDF byte bounds.",
+                    )
                 })?;
             for _ in 0..count {
                 number(reader.word()?)?;
                 number(reader.word()?)?;
                 if !matches!(reader.word()?, b"n" | b"f") {
-                    return Err(CheckError::invalid(
-                        "An appended cross-reference entry is malformed.",
-                    ));
+                    return Err(CheckError::invalid("A cross-reference entry is malformed."));
                 }
             }
         }
@@ -223,27 +230,69 @@ pub(super) fn revision_prev(bytes: &[u8], document: &Document) -> CheckResult<Op
         reader.word()?;
         if reader.word()? != b"obj" {
             return Err(CheckError::invalid(
-                "The appended cross-reference stream is malformed.",
+                "The cross-reference stream is malformed.",
             ));
         }
     }
     let Kind::Dictionary(entries) = reader.value(0)?.kind else {
         return Err(CheckError::invalid(
-            "The appended revision has no trailer dictionary.",
+            "The revision has no trailer dictionary.",
         ));
     };
-    match entries.get(b"Prev".as_slice()) {
-        None => Ok(None),
+    if stream
+        && !matches!(entries.get(b"Type".as_slice()), Some(Value {kind: Kind::Name(name), ..}) if name == b"XRef")
+    {
+        return Err(CheckError::invalid(
+            "The cross-reference stream has an invalid Type.",
+        ));
+    }
+    let prev = match entries.get(b"Prev".as_slice()) {
+        None => None,
         Some(Value {
             kind: Kind::Integer(value),
             ..
         }) => usize::try_from(*value)
             .map(Some)
-            .map_err(|_| CheckError::invalid("The appended Prev offset is negative or too large.")),
-        _ => Err(CheckError::invalid(
-            "The appended Prev offset is not a direct integer.",
-        )),
+            .map_err(|_| CheckError::invalid("The Prev offset is negative or too large."))?,
+        _ => {
+            return Err(CheckError::invalid(
+                "The Prev offset is not a direct integer.",
+            ));
+        }
+    };
+    Ok(RevisionLinks {
+        prev,
+        hybrid: entries.contains_key(b"XRefStm".as_slice()),
+    })
+}
+
+pub(super) fn revision_prev(bytes: &[u8], document: &Document) -> CheckResult<Option<usize>> {
+    Ok(revision_links(bytes, document.xref_start)?.prev)
+}
+
+pub(super) fn ensure_supported_revisions(bytes: &[u8], document: &Document) -> CheckResult<()> {
+    let mut offset = document.xref_start;
+    let mut visited = HashSet::new();
+    for _ in 0..4096 {
+        if offset == 0 || offset >= bytes.len() || !visited.insert(offset) {
+            return Err(CheckError::unsupported(
+                "The cross-reference revision chain is cyclic or outside the PDF byte bounds.",
+            ));
+        }
+        let links = revision_links(bytes, offset)?;
+        if links.hybrid {
+            return Err(CheckError::unsupported(
+                "Signing hybrid-reference PDFs, including earlier hybrid revisions, is not supported.",
+            ));
+        }
+        match links.prev {
+            None => return Ok(()),
+            Some(prev) => offset = prev,
+        }
     }
+    Err(CheckError::unsupported(
+        "The PDF exceeds the 4,096-revision signing limit.",
+    ))
 }
 
 fn whitespace(byte: u8) -> bool {

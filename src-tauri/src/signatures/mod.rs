@@ -267,6 +267,7 @@ fn signing_checks(
 ) -> Result<fields::Fields> {
     let fields = signing_fields(document)?;
     pdf::validate_footer(bytes, document)?;
+    pdf::ensure_supported_revisions(bytes, document)?;
     if signatures.len() >= MAX_SIGNATURES {
         return Err(invalid("This PDF has reached the 64-signature limit."));
     }

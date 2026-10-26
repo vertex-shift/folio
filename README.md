@@ -393,6 +393,9 @@ The explicit supported subset is:
   output above 128 MiB is rejected before any export is written. The engine
   also requires 128 available object numbers below its `u32` ceiling to reserve
   safe incremental allocation headroom.
+  Raw cross-reference links are checked through at most 4,096 revisions;
+  hybrid references in any earlier revision and cyclic/out-of-bounds links
+  are refused even when the PDF library normalizes away those trailer keys.
 
 The implementation uses RustCrypto `cms`/`der`/`x509-cert` for structural
 checks and the Rust `openssl` bindings with vendored OpenSSL 3 for PKCS#12
