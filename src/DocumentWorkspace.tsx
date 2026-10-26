@@ -1128,16 +1128,17 @@ export default function DocumentWorkspace(props: Props) {
   }, []);
 
   useEffect(() => {
-    const compact = window.matchMedia("(max-width: 1099px)");
-    const narrow = window.matchMedia("(max-width: 699px)");
-    const collapseTools = () => { if (compact.matches) setPanelOpen(false); };
-    const collapsePages = () => { if (narrow.matches) setRailOpen(false); };
-    compact.addEventListener("change", collapseTools);
-    narrow.addEventListener("change", collapsePages);
-    return () => {
-      compact.removeEventListener("change", collapseTools);
-      narrow.removeEventListener("change", collapsePages);
+    let screenWidth = window.innerWidth;
+    const collapseForResize = () => {
+      // Print page widths must not change the document workspace's panel state.
+      if (window.matchMedia("print").matches) return;
+      const width = window.innerWidth;
+      if (width < 1100 && screenWidth >= 1100) setPanelOpen(false);
+      if (width < 700 && screenWidth >= 700) setRailOpen(false);
+      screenWidth = width;
     };
+    window.addEventListener("resize", collapseForResize);
+    return () => window.removeEventListener("resize", collapseForResize);
   }, []);
 
   const currentMatch = search.results[activeResult];
