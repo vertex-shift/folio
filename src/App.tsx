@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CircleHelp, Files, FolderOpen, LoaderCircle, Plus, ShieldCheck, X } from "lucide-react";
+import { CircleHelp, FilePlus2, Files, FolderOpen, LoaderCircle, Plus, ShieldCheck, X } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import DocumentWorkspace from "./DocumentWorkspace";
@@ -16,6 +16,7 @@ import type { DocumentInfo, OpenOutcome, PasswordChallenge, WorkspaceInfo } from
 import ComparisonWorkspace from "./features/comparison/ComparisonWorkspace";
 import type { ComparisonControls } from "./features/comparison/ComparisonWorkspace";
 import type { SourceState } from "./features/comparison/model";
+import CreatePdfDialog from "./features/conversion/CreatePdfDialog";
 
 export default function App() {
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
@@ -34,6 +35,9 @@ export default function App() {
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [comparisonRunning, setComparisonRunning] = useState(false);
   const [comparisonExporting, setComparisonExporting] = useState(false);
+  const [creationOpen, setCreationOpen] = useState(false);
+  const [creationBusy, setCreationBusy] = useState(false);
+  const [creationPending, setCreationPending] = useState(false);
   const comparison = useRef<ComparisonControls>(null);
   const comparisonOpenRef = useRef(comparisonOpen);
   comparisonOpenRef.current = comparisonOpen;
@@ -47,9 +51,9 @@ export default function App() {
   documentsRef.current = documents;
   activeRef.current = activeId;
   const pending = new Set(documents.filter((document) => activities[document.id]?.pendingDraft).map((document) => document.id));
-  const busy = loading || working || documents.some((document) => activities[document.id]?.busy)
+  const busy = loading || working || creationBusy || documents.some((document) => activities[document.id]?.busy)
     || !documents.length && Boolean(activities[0]?.busy);
-  const blocked = busy || comparisonExporting || passwords.length > 0 || quit
+  const blocked = busy || creationOpen || comparisonExporting || passwords.length > 0 || quit
     || Boolean(activities[activeId ?? 0]?.modal);
   blockedRef.current = blocked;
   const unsaved = unsavedTabs(documents, pending);
@@ -96,6 +100,9 @@ export default function App() {
   const reportError = useCallback((message: string) => setError(message), []);
   const onComparisonActivity = useCallback((running: boolean, exporting: boolean) => {
     setComparisonRunning(running); setComparisonExporting(exporting);
+  }, []);
+  const onCreationActivity = useCallback((busy: boolean, pending: boolean) => {
+    setCreationBusy(busy); setCreationPending(pending);
   }, []);
   const comparisonState = useCallback((id: number): SourceState => controls.current.get(id)?.comparisonState()
     ?? { document: null, pending: false, busy: false }, []);
@@ -222,8 +229,15 @@ export default function App() {
     else void run(async () => bridge.close(false));
   }
 
+  function createFromFiles() {
+    if (blockedRef.current) { setError("Finish the current action or dialog before creating a PDF."); return; }
+    setComparisonOpen(false);
+    setCreationOpen(true);
+  }
+
   function menu(id: string) {
     if (id === "open") { open(); return; }
+    if (id === "create-files") { createFromFiles(); return; }
     if (id === "close-tab") {
       if (activeRef.current !== null) requestClose(activeRef.current);
       return;
@@ -237,7 +251,7 @@ export default function App() {
 
   events.current = {
     open, paths: openPaths, menu, quit: requestQuit, select, close: requestClose, hasUnsaved: unsaved.length > 0,
-    guardUnload: unsaved.length > 0 || busy || comparisonRunning || comparisonExporting || Object.values(activities).some((activity) => activity.outputPending),
+    guardUnload: unsaved.length > 0 || busy || creationPending || comparisonRunning || comparisonExporting || Object.values(activities).some((activity) => activity.outputPending),
   };
 
   useEffect(() => {
@@ -310,7 +324,7 @@ export default function App() {
   }
 
   const workspaceProps = {
-    blocked, onOpen: open, onOpened, onCreated, onInfo,
+    blocked, onOpen: open, onOpened, onCreated, onInfo, onCreateFromFiles: createFromFiles,
     onCompare: () => setComparisonOpen(true),
     onClose: (info: DocumentInfo) => closeDocument(info, true), onActivity,
   };
@@ -340,6 +354,8 @@ export default function App() {
       <DocumentTabs documents={documents} activeId={activeId} pending={pending} disabled={blocked}
         onSelect={select} onClose={requestClose} />
       <IconButton label="Open PDFs in new tabs" className="new-document" disabled={blocked} onClick={open}><Plus size={18} /></IconButton>
+      <button className="button secondary create-files-button" disabled={blocked} onClick={createFromFiles}
+        title="Create PDF from files (Cmd/Ctrl+Shift+N)" aria-label="Create PDF from files"><FilePlus2 size={16} /><span>Create</span></button>
       <IconButton label="Compare open PDFs" disabled={blocked} onClick={() => setComparisonOpen((current) => !current)}><Files size={18} /></IconButton>
       <div className="titlebar-space" data-tauri-drag-region={native || undefined} />
       <span className="runtime-label"><ShieldCheck size={13} />{runtimeIssue ? "Runtime unavailable" : native ? "Local files" : "Browser preview"}</span>
@@ -355,6 +371,8 @@ export default function App() {
     <ComparisonWorkspace ref={comparison} documents={documents} activeId={activeId} open={comparisonOpen}
       blocked={blocked && !comparisonExporting} current={comparisonState} prepare={prepareComparison}
       onOpen={open} onClose={() => setComparisonOpen(false)} onActivity={onComparisonActivity} onResourceError={reportError} />
+    {creationOpen && <CreatePdfDialog onCreated={onOpened} onClose={() => setCreationOpen(false)}
+      onActivity={onCreationActivity} onResourceError={reportError} />}
     {showWorking && <div className="tab-action-status" role="status"><LoaderCircle size={14} className="spin" />Preparing document tabs...</div>}
     {error && <div className="notification error-notification workspace-error" role="alert">
       <span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss workspace error" onClick={() => setError(null)}><X size={16} /></IconButton>

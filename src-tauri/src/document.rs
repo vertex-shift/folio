@@ -308,7 +308,11 @@ impl Session {
         rebuild_page_tree(&mut document, &[page])?;
         let mut bytes = Vec::new();
         document.save_to(&mut bytes)?;
-        let mut session = Self::from_bytes(bytes, "Untitled.pdf".into(), None, id)?;
+        Self::created(bytes, "Untitled.pdf".into(), id)
+    }
+
+    pub(crate) fn created(bytes: Vec<u8>, name: String, id: u64) -> Result<Self> {
+        let mut session = Self::from_bytes(bytes, name, None, id)?;
         session.saved_revision = u64::MAX;
         Ok(session)
     }

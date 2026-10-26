@@ -28,6 +28,7 @@ pub enum OutputKind {
     Png,
     Jpeg,
     Text,
+    Docx,
     Optimize,
 }
 
@@ -38,6 +39,7 @@ impl OutputKind {
             Self::Png => "png",
             Self::Jpeg => "jpg",
             Self::Text => "txt",
+            Self::Docx => "docx",
             Self::Optimize => "pdf",
             Self::Print => "png",
         }
@@ -49,6 +51,7 @@ impl OutputKind {
             "png" => "image/png",
             "jpg" => "image/jpeg",
             "txt" => "text/plain;charset=utf-8",
+            "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             _ => "application/pdf",
         }
     }
@@ -119,6 +122,10 @@ impl OutputJobs {
     }
 
     pub fn close_document(&mut self, document_id: u64) {
+        self.invalidate_document(document_id);
+    }
+
+    pub(crate) fn invalidate_document(&mut self, document_id: u64) {
         self.jobs
             .retain(|_, job| job.plan.document_id != document_id);
     }
@@ -150,6 +157,9 @@ impl Workspace {
             ));
         }
         let session = self.ensure_export_ready(request.document_id, request.revision)?;
+        if self.has_redaction_job(request.document_id) {
+            return Err(invalid("Clear pending redaction output before preparing another export."));
+        }
         validate_request(session, &request)?;
         let info = session.info()?;
         let stem = safe_stem(&info.name);
@@ -160,6 +170,7 @@ impl Workspace {
             }
             OutputKind::Png | OutputKind::Jpeg => format!("{stem}-pages.zip"),
             OutputKind::Text => format!("{stem}-text.txt"),
+            OutputKind::Docx => format!("{stem}-document-content.docx"),
             OutputKind::Optimize => format!("{stem}-optimized.pdf"),
             OutputKind::Print => "Folio print snapshot".into(),
         };
@@ -197,6 +208,9 @@ impl Workspace {
 
     pub fn check_output(&self, job_id: u64) -> Result<&Session> {
         let job = self.outputs.job(job_id)?;
+        if self.has_redaction_job(job.plan.document_id) {
+            return Err(invalid("Clear pending redaction output before exporting."));
+        }
         self.ensure_export_ready(job.plan.document_id, job.plan.revision)
     }
 
@@ -212,7 +226,13 @@ impl Workspace {
                 "Optimization must use protected source bytes, not a renderer copy.",
             ));
         }
-        self.check_output(job_id)?.render_bytes()
+        let bytes = self.check_output(job_id)?.render_bytes()?;
+        if self.outputs.job(job_id)?.plan.kind == OutputKind::Docx
+            && bytes.len() > crate::conversion::MAX_DOCX_SOURCE_BYTES
+        {
+            return Err(invalid("DOCX conversion requires a renderer snapshot no larger than 64 MiB."));
+        }
+        Ok(bytes)
     }
 
     pub fn stage_output_page(&mut self, job_id: u64, index: usize, bytes: Vec<u8>) -> Result<()> {
@@ -227,7 +247,9 @@ impl Workspace {
             ));
         }
         let mut pixels = 0;
-        if job.plan.kind == OutputKind::Text {
+        if job.plan.kind == OutputKind::Docx {
+            crate::conversion::validate_docx_text(&bytes)?;
+        } else if job.plan.kind == OutputKind::Text {
             if bytes.len() > MAX_TEXT_BYTES || std::str::from_utf8(&bytes).is_err() {
                 return Err(invalid(
                     "Text export requires valid UTF-8 within the 16 MiB text limit.",
@@ -257,7 +279,9 @@ impl Workspace {
                 ));
             }
         }
-        let overhead = if job.plan.kind == OutputKind::Text {
+        let overhead = if job.plan.kind == OutputKind::Docx {
+            0
+        } else if job.plan.kind == OutputKind::Text {
             if job.staged == 0 { 0 } else { 3 }
         } else {
             160
@@ -266,13 +290,17 @@ impl Workspace {
             .byte_count
             .checked_add(bytes.len() + overhead)
             .ok_or_else(|| invalid("The output byte count is too large."))?;
-        let limit = if job.plan.kind == OutputKind::Text {
+        let limit = if job.plan.kind == OutputKind::Docx {
+            crate::conversion::MAX_DOCX_TEXT_BYTES
+        } else if job.plan.kind == OutputKind::Text {
             MAX_TEXT_BYTES
         } else {
             MAX_DOCUMENT_BYTES
         };
         if byte_count > limit {
-            return Err(invalid(if job.plan.kind == OutputKind::Text {
+            return Err(invalid(if job.plan.kind == OutputKind::Docx {
+                "The selected DOCX content exceeds the 8 MiB text limit. Export fewer pages."
+            } else if job.plan.kind == OutputKind::Text {
                 "The selected text exceeds the 16 MiB text limit. Export fewer pages."
             } else {
                 "The prepared output exceeds 128 MiB. Choose fewer pages or a lower resolution/quality."
@@ -311,7 +339,7 @@ impl Workspace {
             return Err(invalid(
                 "The output is incomplete. No partial copy was saved.",
             ));
-        } else if job.plan.kind == OutputKind::Text
+        } else if matches!(job.plan.kind, OutputKind::Text | OutputKind::Docx)
             && job.entries.iter().all(|entry| {
                 std::str::from_utf8(entry)
                     .expect("UTF-8 checked")
@@ -319,9 +347,11 @@ impl Workspace {
                     .is_empty()
             })
         {
-            return Err(invalid(
-                "No selectable text was found on these pages. Image-only pages need OCR.",
-            ));
+            return Err(invalid(if job.plan.kind == OutputKind::Docx {
+                "No editable text was found on these pages. Image-only scans require a separate OCR operation."
+            } else {
+                "No selectable text was found on these pages. Image-only pages need OCR."
+            }));
         }
         Ok(job.plan.clone())
     }
@@ -349,6 +379,7 @@ impl Workspace {
                 }
                 Ok(output)
             }
+            OutputKind::Docx => crate::conversion::docx(&job.entries),
             OutputKind::Png | OutputKind::Jpeg if plan.pages.len() == 1 => {
                 Ok(job.entries[0].clone())
             }
@@ -392,7 +423,12 @@ fn validate_request(session: &Session, request: &OutputRequest) -> Result<()> {
         }
         return Ok(());
     }
-    let max_pages = if request.kind == OutputKind::Print {
+    if request.kind == OutputKind::Docx && info.byte_length > crate::conversion::MAX_DOCX_SOURCE_BYTES {
+        return Err(invalid("DOCX conversion requires a source snapshot no larger than 64 MiB."));
+    }
+    let max_pages = if request.kind == OutputKind::Docx {
+        crate::conversion::MAX_DOCX_PAGES
+    } else if request.kind == OutputKind::Print {
         MAX_PRINT_PAGES
     } else {
         MAX_OUTPUT_PAGES
@@ -431,11 +467,11 @@ fn validate_request(session: &Session, request: &OutputRequest) -> Result<()> {
         }
         if info.password_protected && !request.allow_unencrypted {
             return Err(invalid(
-                "Acknowledge that PNG, JPEG, ZIP and text exports are unencrypted and do not retain PDF permissions.",
+                "Acknowledge that PNG, JPEG, ZIP, text and DOCX exports are unencrypted and retain neither PDF permissions nor cryptographic signatures.",
             ));
         }
     }
-    if request.kind == OutputKind::Text {
+    if matches!(request.kind, OutputKind::Text | OutputKind::Docx) {
         if request.dpi.is_some() || request.quality.is_some() {
             return Err(invalid(
                 "Text export does not accept raster resolution or image quality settings.",
@@ -573,11 +609,27 @@ fn image_dimensions(kind: OutputKind, bytes: &[u8]) -> Result<(u32, u32)> {
 }
 
 fn image_zip(plan: &OutputPlan, entries: &[Vec<u8>]) -> Result<Vec<u8>> {
+    let extension = plan.kind.extension(1);
+    let names: Vec<_> = plan.pages.iter()
+        .map(|page| format!("page-{:04}.{extension}", page + 1))
+        .collect();
+    let entries: Vec<_> = names.iter().zip(entries)
+        .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+        .collect();
+    stored_zip(&entries)
+}
+
+pub(crate) fn stored_zip(entries: &[(&str, &[u8])]) -> Result<Vec<u8>> {
+    if entries.len() > u16::MAX as usize
+        || entries.iter().any(|(name, bytes)| !name.is_ascii()
+            || name.len() > u16::MAX as usize || bytes.len() > MAX_DOCUMENT_BYTES)
+        || entries.iter().map(|(name, bytes)| bytes.len() + name.len() * 2 + 98).sum::<usize>() + 22 > MAX_DOCUMENT_BYTES
+    {
+        return Err(invalid("The ZIP exceeds the bounded 128 MiB output format."));
+    }
     let mut output = Vec::new();
     let mut central = Vec::new();
-    let extension = plan.kind.extension(1);
-    for (page, bytes) in plan.pages.iter().zip(entries) {
-        let name = format!("page-{:04}.{extension}", page + 1);
+    for (name, bytes) in entries {
         let offset = output.len() as u32;
         let length = bytes.len() as u32;
         let crc = crc32fast::hash(bytes);
@@ -591,7 +643,7 @@ fn image_zip(plan: &OutputPlan, entries: &[Vec<u8>]) -> Result<Vec<u8>> {
         output.extend((name.len() as u16).to_le_bytes());
         output.extend(0_u16.to_le_bytes());
         output.extend(name.as_bytes());
-        output.extend(bytes);
+        output.extend_from_slice(bytes);
         central.extend(0x02014b50_u32.to_le_bytes());
         for value in [20_u16, 20, 0, 0, 0, 33] {
             central.extend(value.to_le_bytes());

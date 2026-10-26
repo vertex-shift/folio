@@ -3,9 +3,10 @@ import type { TextContent } from "pdfjs-dist/types/src/display/api";
 import { parsePageRange } from "./pages.ts";
 import { mapText } from "./search.ts";
 import type { DocumentInfo } from "./types.ts";
+import { MAX_DOCX_PAGES } from "../features/conversion/model.ts";
 
-export type OutputAction = "print" | "export" | "optimize";
-export type OutputKind = "print" | "png" | "jpeg" | "text" | "optimize";
+export type OutputAction = "print" | "export" | "optimize" | "docx";
+export type OutputKind = "print" | "png" | "jpeg" | "text" | "optimize" | "docx";
 export type OutputDpi = 96 | 150 | 300;
 export type ExportFormat = "png" | "jpeg" | "text";
 
@@ -57,7 +58,7 @@ export interface PrintImage extends RasterGeometry {
 export type OutputProgress = { page: number; count: number };
 
 export function outputPages(all: boolean, range: string, count: number, kind: OutputKind): number[] {
-  const limit = kind === "print" ? MAX_PRINT_PAGES : MAX_OUTPUT_PAGES;
+  const limit = kind === "docx" ? MAX_DOCX_PAGES : kind === "print" ? MAX_PRINT_PAGES : MAX_OUTPUT_PAGES;
   if (!Number.isSafeInteger(count) || count < 1) throw new Error("This PDF has no readable pages.");
   if (all) {
     if (count > limit) throw new Error(`Select a range of no more than ${limit} pages for this output.`);

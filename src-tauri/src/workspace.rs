@@ -24,6 +24,7 @@ pub struct Workspace {
     authoring_images: crate::authoring::ImageStaging,
     image_replacements: crate::authoring::ImageStaging,
     pub(crate) outputs: crate::output::OutputJobs,
+    pub(crate) creations: crate::conversion::CreationJobs,
     pub(crate) comparisons: crate::comparison::ComparisonJobs,
     pub(crate) archives: crate::archive::ArchiveJobs,
     pub(crate) inspections: crate::preflight::Inspections,
@@ -174,6 +175,7 @@ impl Workspace {
         if pending {
             self.comparisons.invalidate(id);
             self.invalidate_technical(id);
+            self.outputs.invalidate_document(id);
             self.drafts.insert(id);
             self.ocrs.retain(|_, job| job.plan.document_id != id);
         } else {
@@ -189,6 +191,7 @@ impl Workspace {
             || !self.image_replacements.is_empty()
             || self.outputs.is_pending()
             || self.archives.is_pending()
+            || self.creations.is_pending()
     }
 
     pub fn stage_authoring_image(
@@ -200,6 +203,7 @@ impl Workspace {
         self.check_revision(id, revision)?.ensure_writable()?;
         self.comparisons.invalidate(id);
         self.invalidate_technical(id);
+        self.outputs.invalidate_document(id);
         self.authoring_images.stage_with_other_bytes(
             id,
             revision,
@@ -218,6 +222,7 @@ impl Workspace {
         self.check_revision(id, revision)?.ensure_writable()?;
         self.comparisons.invalidate(id);
         self.invalidate_technical(id);
+        self.outputs.invalidate_document(id);
         let image = self.authoring_images.get(id, revision, asset_id)?;
         let session = self
             .sessions
@@ -249,6 +254,7 @@ impl Workspace {
             self.authoring_images.byte_length(),
         )?;
         self.invalidate_technical(id);
+        self.outputs.invalidate_document(id);
         self.comparisons.invalidate(id);
         self.ocrs.retain(|_, job| job.plan.document_id != id);
         Ok(result)
@@ -640,6 +646,7 @@ impl Workspace {
         }
         self.ocrs.retain(|_, job| job.plan.document_id != id);
         self.comparisons.invalidate(id);
+        self.outputs.invalidate_document(id);
         Ok(session)
     }
 
@@ -699,6 +706,7 @@ impl Workspace {
             .redaction_plan(job_id, dpi, regions)?;
         self.comparisons.invalidate(id);
         self.invalidate_technical(id);
+        self.outputs.invalidate_document(id);
         self.next_redaction_id = job_id;
         self.redactions.retain(|_, job| job.plan.document_id != id);
         self.redactions.insert(job_id, Job::new(plan.clone()));
@@ -827,6 +835,13 @@ impl Workspace {
 
     pub fn create_document(&mut self, width: f32, height: f32) -> Result<DocumentInfo> {
         self.add(Session::blank(width, height, self.next_id + 1)?)
+    }
+
+    pub(crate) fn add_created_pdf(&mut self, bytes: Vec<u8>, name: String) -> Result<DocumentInfo> {
+        let id = self.next_id.checked_add(1).ok_or_else(|| {
+            Error::Invalid("Document identifiers are exhausted. Restart Folio.".into())
+        })?;
+        self.add(Session::created(bytes, name, id)?)
     }
 
     fn add(&mut self, session: Session) -> Result<DocumentInfo> {

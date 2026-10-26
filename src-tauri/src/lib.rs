@@ -3,6 +3,7 @@ pub mod archive;
 pub mod authoring;
 mod authoring_image;
 pub mod comparison;
+pub mod conversion;
 pub mod document;
 pub mod forms;
 pub mod image_edit;

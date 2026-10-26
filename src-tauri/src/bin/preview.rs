@@ -31,6 +31,20 @@ struct CreateRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BeginCreation {
+    kind: folio_core::conversion::CreationKind,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PrepareCreation {
+    job_id: u64,
+    settings: folio_core::conversion::CreationSettings,
+    order: Vec<usize>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DocumentRequest {
     document_id: u64,
 }
@@ -346,6 +360,41 @@ fn handle(
         (&Method::Post, "/create") => {
             let input: CreateRequest = json_body(request)?;
             workspace.create_document(input.width, input.height)?
+        }
+        (&Method::Post, "/creation/begin") => {
+            let input: BeginCreation = json_body(request)?;
+            return json(workspace.begin_creation(input.kind)?);
+        }
+        (&Method::Post, "/creation/file") => {
+            let job_id = numeric_header(request, "X-Folio-Job-Id")?;
+            let result = (|| {
+                let limit = workspace.creation_plan(job_id)?.kind.file_limit();
+                if request.body_length().is_some_and(|length| length > limit) {
+                    return Err(Error::Invalid("This file exceeds its creation input limit.".into()));
+                }
+                let name = file_name(request)?;
+                let mut bytes = Vec::new();
+                request.as_reader().take(limit as u64 + 1).read_to_end(&mut bytes)?;
+                workspace.stage_creation_file(job_id, name, bytes)
+            })();
+            if result.is_err() { workspace.cancel_creation(job_id)?; }
+            return json(result?);
+        }
+        (&Method::Post, "/creation/prepare") => {
+            let input: PrepareCreation = json_body(request)?;
+            return json(workspace.prepare_creation(input.job_id, input.settings, input.order)?);
+        }
+        (&Method::Post, "/creation/status") => {
+            let input: RedactionJob = json_body(request)?;
+            return json(workspace.creation_status(input.job_id)?);
+        }
+        (&Method::Post, "/creation/commit") => {
+            let input: RedactionJob = json_body(request)?;
+            workspace.commit_creation(input.job_id)?
+        }
+        (&Method::Post, "/creation/cancel") => {
+            let input: RedactionJob = json_body(request)?;
+            return json(workspace.cancel_creation(input.job_id)?);
         }
         (&Method::Post, "/activate") => {
             let input: DocumentRequest = json_body(request)?;

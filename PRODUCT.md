@@ -52,6 +52,18 @@ The desktop app processes document contents locally.
   Index nested Form invocations and isolate shared streams/resources so only
   the selected occurrence changes. Replacements must be searchable, selectable,
   undoable, and persistent after save/reopen, not drawn over old text.
+- Local conversion: ordered still PNG/JPEG and strict UTF-8 text files create
+  complete, independent new PDFs, never replacing source tabs or clearing
+  their drafts/history. Explicit Letter/A4, orientation, margin and text-size
+  settings; real image content/orientation/alpha and readable wrapped Unicode
+  page text. Transactional bounded preparation, cancellation and new dirty tabs.
+  Export actual extracted Unicode from selected/all PDF pages, in requested
+  order, as editable paragraphs/page breaks in a real DOCX OPC package.
+  Clearly label text/document-content conversion, not high-fidelity Word layout,
+  table/chart reconstruction, source-PDF paragraph editing, OCR or full Office
+  import/export. Keep copy/owner authority, protected-output acknowledgment,
+  every draft/staged-image/redaction guard, permanent job invalidation and
+  atomic separate no-clobber output. No cloud or system Office prerequisite.
 - Page authoring: user-selected PNG/JPEG image stamps with physical placement,
   size, opacity and real alpha; bounded decoding and metadata-free image objects.
   Crop the actual visible CropBox non-destructively, with per-page geometry,
@@ -213,7 +225,7 @@ The desktop app processes document contents locally.
   all tabs' cached trust. Do not claim revocation, trusted timestamps, qualified
   signatures, or PAdES-LTV.
 - Certificate-based protection, paragraph reflow, arbitrary font/encoding support, existing-image editing,
-  advanced form authoring, unsupported interactive forms, non-English OCR, Office conversion, advanced
+  advanced form authoring, unsupported interactive forms, non-English OCR, general Office conversion, advanced
   certification/qualified signing and authoritative trust, cloud
   collaboration, and full Acrobat parity remain incomplete capabilities.
 - New annotations, imported pages, and created/extracted documents must remain

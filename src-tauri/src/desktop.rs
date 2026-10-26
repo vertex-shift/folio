@@ -26,6 +26,9 @@ type SharedState = Mutex<DesktopState>;
 #[path = "desktop_output.rs"]
 mod output_commands;
 
+#[path = "desktop_conversion.rs"]
+mod conversion_commands;
+
 #[path = "forms/desktop.rs"]
 mod form_commands;
 
@@ -824,6 +827,7 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         true,
         &[
             &MenuItem::with_id(app, "new", "New PDF...", true, Some("CmdOrCtrl+N"))?,
+            &MenuItem::with_id(app, "create-files", "Create PDF from Files...", true, Some("CmdOrCtrl+Shift+N"))?,
             &MenuItem::with_id(app, "open", "Open PDF...", true, Some("CmdOrCtrl+O"))?,
             &MenuItem::with_id(app, "example", "Open Example Document", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
@@ -846,6 +850,7 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &MenuItem::with_id(app, "optimize", "Optimize PDF Copy...", true, None::<&str>)?,
             &MenuItem::with_id(app, "preflight", "Technical Preflight...", true, None::<&str>)?,
             &MenuItem::with_id(app, "archive", "Export PDF/A-2b Archival Copy...", true, None::<&str>)?,
+            &MenuItem::with_id(app, "export-docx", "Export Word Document Content...", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "close-tab", "Close PDF", true, Some("CmdOrCtrl+W"))?,
         ],
@@ -905,6 +910,12 @@ pub fn run() {
             utilities::export_document_attachment,
             utilities::export_protection_copy,
             create_document,
+            conversion_commands::begin_creation,
+            conversion_commands::choose_creation_files,
+            conversion_commands::prepare_creation,
+            conversion_commands::creation_status,
+            conversion_commands::commit_creation,
+            conversion_commands::cancel_creation,
             import_document_pages,
             extract_document_pages,
             bootstrap,
@@ -979,6 +990,7 @@ pub fn run() {
             let id = event.id().as_ref();
             if [
                 "new",
+                "create-files",
                 "open",
                 "example",
                 "save",
@@ -989,6 +1001,7 @@ pub fn run() {
                 "close-tab",
                 "print",
                 "export",
+                "export-docx",
                 "optimize",
             ]
             .contains(&id)

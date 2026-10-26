@@ -475,6 +475,8 @@ fn outputs_are_incomplete_until_every_page_and_drafts_stale_revisions_cancel_and
             .is_err()
     );
     workspace.set_draft(first.id, false).unwrap();
+    assert!(workspace.output_plan(plan.job_id).is_err());
+    let plan = begin(&mut workspace, OutputKind::Text);
     workspace
         .stage_output_page(plan.job_id, 0, b"Selected text".to_vec())
         .unwrap();
@@ -494,7 +496,6 @@ fn outputs_are_incomplete_until_every_page_and_drafts_stale_revisions_cancel_and
         })
         .unwrap();
     assert!(workspace.output_bytes(plan.job_id).is_err());
-    assert!(workspace.cancel_output(plan.job_id));
     assert!(!workspace.cancel_output(plan.job_id));
     assert!(workspace.output_plan(plan.job_id).is_err());
     workspace.activate(second.id).unwrap();
@@ -544,6 +545,9 @@ fn native_copy_writes_are_no_clobber_and_recheck_stale_draft_and_all_tab_paths()
     assert!(workspace.write_output_copy(plan.job_id, &target).is_err());
     assert!(!target.exists());
     workspace.set_draft(other.id, false).unwrap();
+    assert!(workspace.output_plan(plan.job_id).is_err());
+    let plan = begin(&mut workspace, OutputKind::Optimize);
+    workspace.prepare_optimized_output(plan.job_id).unwrap();
     let count = workspace.write_output_copy(plan.job_id, &target).unwrap();
     assert_eq!(std::fs::read(&target).unwrap().len(), count);
     let before = std::fs::read(&target).unwrap();

@@ -149,6 +149,7 @@ interface Props {
   blocked: boolean;
   startWriting?: boolean;
   onOpen(): void;
+  onCreateFromFiles(): void;
   onCompare(): void;
   onOpened(document: DocumentInfo): void;
   onCreated(document: DocumentInfo): void;
@@ -943,7 +944,7 @@ export default function DocumentWorkspace(props: Props) {
     if (kind === "print" && !current.permissions.printAllowed) {
       setError("This PDF does not allow printing. Reopen it with the owner password."); return;
     }
-    if (kind === "export" && !current.permissions.copyAllowed) {
+    if ((kind === "export" || kind === "docx") && !current.permissions.copyAllowed) {
       setError("This PDF does not allow copying text or images. Reopen it with the owner password."); return;
     }
     if (kind === "optimize" && current.readOnlyReason) { setError(current.readOnlyReason); return; }
@@ -1299,12 +1300,14 @@ export default function DocumentWorkspace(props: Props) {
     if (modal) return;
     switch (id) {
       case "new": setModal({ type: "create", size: "letter", landscape: false }); break;
+      case "create-files": props.onCreateFromFiles(); break;
       case "open": open(); break;
       case "example": requestAction({ type: "example" }); break;
       case "save": save(false); break;
       case "save-copy": save(true); break;
       case "print": requestOutput("print"); break;
       case "export": requestOutput("export"); break;
+      case "export-docx": requestOutput("docx"); break;
       case "optimize": requestOutput("optimize"); break;
       case "preflight": setTool("select"); showPanel("preflight"); break;
       case "archive": requestArchive(); break;
@@ -1393,7 +1396,7 @@ export default function DocumentWorkspace(props: Props) {
         if (typingTarget(event.target) && (key === "z" || key === "y")) return;
         event.preventDefault();
         if (key === "o") actions.open();
-        else if (key === "n") actions.menu("new");
+        else if (key === "n") actions.menu(event.shiftKey ? "create-files" : "new");
         else if (key === "s") actions.save(event.shiftKey);
         else if (key === "f") actions.find();
         else if (key === "z" || key === "y") actions.history(event.shiftKey || key === "y");
@@ -1583,6 +1586,9 @@ export default function DocumentWorkspace(props: Props) {
             <button disabled={disabled} onClick={requestArchive}>
               <span className="tool-icon neutral"><FileOutput size={18} /></span><span>PDF/A-2b archival copy</span>
             </button>
+            <button disabled={disabled} onClick={() => requestOutput("docx")}>
+              <span className="tool-icon blue"><FileText size={18} /></span><span>Export Word text (.docx)</span>
+            </button>
             <button disabled={disabled || readOnly} onClick={() => requestOutput("optimize")}>
               <span className="tool-icon neutral"><Minimize2 size={18} /></span><span>Optimize PDF copy</span>
             </button>
@@ -1594,6 +1600,7 @@ export default function DocumentWorkspace(props: Props) {
               <span className="tool-icon neutral"><FolderOpen size={18} /></span><span>Open PDF</span><kbd>Cmd+O</kbd>
             </button>
             <button disabled={Boolean(busy)} onClick={() => setModal({ type: "create", size: "letter", landscape: false })}><span className="tool-icon neutral"><FilePlus2 size={18} /></span><span>Create a PDF</span></button>
+            <button disabled={Boolean(busy)} onClick={props.onCreateFromFiles}><span className="tool-icon neutral"><FileInput size={18} /></span><span>Create PDF from files</span></button>
           </div>
           <div className="panel-spacer" />
           <div className="quick-tip"><Highlighter size={18} /><h3>A small mark. A useful memory.</h3>

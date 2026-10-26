@@ -102,7 +102,7 @@ the tag before rerunning the workflow.
 | Document properties | Inspect/edit title, author, subject, and keywords; synchronize supported existing XMP with classic Info metadata |
 | Attachments | Inspect, embed, remove, and explicitly save bounded document-level embedded files without opening them |
 | Protection copies | Separate AES-256 revision-6 protected/reprotected or unprotected copies, with owner authorization and explicit permissions |
-| Create | New blank US Letter or A4 PDFs, in portrait or landscape |
+| Create | New blank PDFs, or ordered local PNG/JPEG and UTF-8 text files as independent PDFs; Letter/A4, orientation, margins and text-size controls |
 | Edit existing text | Replace or delete a specific PDF content-stream text run; keep the original font or explicitly embed Noto Sans |
 | Redact | Mark rectangles and export a fresh image-only PDF with permanently blacked-out pixels and no original document content, attachments, or descriptive metadata; retain existing encryption when protected |
 | Write | Placed, editable `/FreeText` annotations with embedded Noto Sans; supported Latin, Greek, and Cyrillic text |
@@ -123,6 +123,7 @@ the tag before rerunning the workflow.
 | Extract | Export page numbers/ranges to a separate PDF, in the requested order, without changing the working document |
 | Print | Prepare all selected pages independently of virtualization, then open the platform/browser print dialog; explicit raster quality and permission checks |
 | Export images/text | PNG or JPEG at 96/150/300 DPI; multiple images in an ordered ZIP; selectable page text as UTF-8 |
+| Export Word content | Real editable-text DOCX from all/selected PDF pages in requested order; document content, not high-fidelity Word layout |
 | Optimize a copy | Lossless compression of eligible unfiltered streams and unreachable-object cleanup; measured byte counts, protected PDF copies, honest no-reduction outcomes |
 | Undo/redo | Document changes, including annotations and page operations; saved-state tracking |
 | Save | Save an edited copy by default; subsequent Save can update that chosen copy; atomic file replacement |
@@ -162,6 +163,82 @@ Ordinary saves, PDF downloads, and page extraction also check pending edits in
 the document engine, not only in the interface. Apply or discard those drafts
 first. Pending redactions require the dedicated **Export redacted copy**
 workflow; viewing the current document remains available.
+
+## Creating PDFs from local files
+
+Choose **Create** in the title bar, **Create PDF from files** in All tools,
+or **Command/Control+Shift+N**. Select still PNG/JPEG images or strict UTF-8
+text files, reorder them with the named Up/Down buttons, choose Letter/A4,
+portrait/landscape and a margin, and prepare the complete batch. **Open new
+PDF** then adds an independent, unsaved tab; it never replaces a source tab,
+clears its drafts, changes its history, or writes an input file.
+
+Images become real page content, one centered aspect-preserving image per
+page, with decoded EXIF orientation and a real PNG transparency soft mask.
+Only sanitized RGB/alpha image resources enter the PDF, not source metadata.
+Text uses embedded Noto Sans and real Unicode mappings. It wraps and paginates
+without truncation; every file starts a new page. Latin, Greek and Cyrillic
+within the bundled font's existing supported range are accepted; other glyphs
+are explicitly refused. A leading UTF-8 BOM is removed, CRLF/CR become LF,
+and tabs become four spaces. Invalid UTF-8, unsupported controls/scripts and
+empty text files fail the entire batch rather than inserting replacements.
+No OCR, rich-text or Office-file import is performed.
+
+| Creation boundary | Limit |
+| --- | --- |
+| Files / output | 1-50 files, 500 pages, 128 MiB PDF |
+| Image input | 16 MiB/file, 64 MiB/batch, 24 megapixels and 8,192 px/side per image |
+| Decoded image budget | 128 MiB RGB/alpha across the batch |
+| UTF-8 input | 1 MiB/file, 4 MiB/batch |
+| Physical settings | Letter/A4 UI; backend dimensions 144-1,440 pt, margin 0-144 pt leaving at least 72 pt content in each direction, text 8-36 pt |
+
+Animated PNG, CMYK/lossless/arithmetic/higher-bit-depth JPEG and unsupported
+images are refused by the shared bounded still-image decoder. Preparation is
+cancelable, with no partial document registered. Creation jobs participate
+in quit/unload guards. Settings are creation-local, not document drafts.
+Native input comes only from explicit local picker selections; preview uploads
+bytes and filenames, never arbitrary filesystem paths.
+
+## Exporting editable Word document content
+
+Choose **Export Word text (.docx)** in All tools or **File > Export Word
+Document Content**. Select all pages or explicit ranges in the desired
+order, for example **3, 1-2**. Folio extracts the current working snapshot's
+actual Unicode text with PDF.js, reviews the ready text summary, and saves
+a separate interoperable Office Open XML package with real editable
+paragraphs and explicit selected-page breaks. It is not a renamed PDF,
+page screenshots inside Word, or a cloud/system-Office conversion.
+
+**This is text / document-content conversion, not high-fidelity Word layout.**
+Extraction order can include invisible/off-crop text, and columns, paragraph
+structure, line wrapping and Word page counts can differ. Tables/charts,
+images, annotations, form-field values, OCR, source-PDF paragraph editing,
+full Office import/export, and PDF signature preservation are not provided.
+Empty scans report **No editable text**, not invented content. XML characters
+are correctly escaped; invalid XML controls and malformed text are refused
+without silently dropping or replacing them.
+
+Limits are **200 selected pages**, **64 MiB source/renderer snapshot**,
+**256 KiB UTF-8 text/page**, **8 MiB text total**, and **64 MiB DOCX package**.
+The minimal OPC package has correct content types, package relationships
+and a WordprocessingML document part; it needs no installed Word or LibreOffice.
+Existing ZIP/CRC helpers are shared with image export; no runtime dependency
+was added.
+
+Copy/extraction permission is required independently of editing; true owner
+authentication is honored. Authorized signed/read-only sources can be copied
+without rewriting them. Protected inputs require explicit acknowledgment
+that DOCX is **unencrypted and retains no PDF passwords, permissions or
+cryptographic signatures**. Apply/discard every pending document draft,
+staged image and redaction first. Drafts, edits, staging, redaction jobs and
+closing permanently invalidate prepared output, even when Undo restores an
+older revision. Canceling or failing releases partial output and renderer
+resources without changing source bytes, saved state or history.
+
+Native saving rechecks the scoped job, revision, drafts and every open tab's
+source/saved paths after the dialog, then atomically writes a **new,
+no-clobber file**. Existing files/folders/symlinks are not overwritten.
+Browser preview downloads the copy without claiming a local file was saved.
 
 ## Comparing two open PDFs
 
@@ -1096,7 +1173,7 @@ package dependency.
 ## Important boundaries
 
 - **Not full Acrobat parity.** Run-level source-text replacement is supported,
-  but not paragraph reflow, existing-image editing, non-English OCR, Office conversion, PDF creation from arbitrary inputs,
+  but not paragraph reflow, existing-image editing, non-English OCR, general Office conversion or PDF creation beyond the explicit PNG/JPEG/UTF-8 subset,
   automatic AATL/EUTL/OS trust, cloud storage, collaboration, AI assistant,
   accessibility remediation, preflight, or print-production workflows.
 - Ordinary saves of supported password-protected PDFs retain their protection;
@@ -1150,8 +1227,8 @@ preview. Open uses a browser file picker; Download PDF exports a copy.
 Downloading does not pretend that a local file was overwritten or clear
 the working copy's unsaved state.
 
-The development bridge binds only `127.0.0.1:19148`, accepts user-selected PDF
-and PNG/JPEG bytes rather than filesystem paths, restricts browser origins, and is excluded from the
+The development bridge binds only `127.0.0.1:19148`, accepts user-selected PDF,
+PNG/JPEG and UTF-8 text bytes rather than filesystem paths, restricts browser origins, and is excluded from the
 default native build. Do not expose the Vite server or preview bridge to a
 network.
 
@@ -1206,6 +1283,12 @@ bounded ZIP construction, no-clobber copy writes and lossless optimization;
 preparation, transport and the isolated print surface live in
 `src/lib/output.ts`, `outputBridge.ts` and `printSurface.ts`, with
 `components/OutputDialog.tsx` and print-only `src/output.css`.
+`conversion.rs` owns transactional new-PDF creation, cancelable bounded
+background preparation and the DOCX WordprocessingML package writer.
+`desktop_conversion.rs` handles native creation pickers; `features/conversion/`
+contains creation-local settings, ordering, transport and streamed DOCX text
+extraction. DOCX reuses `output.rs` identity/permission/draft/lifetime and
+atomic separate-copy guards, not a parallel save framework.
 
 Reordering first materializes inherited resources, page boxes, and rotations
 before rebuilding the page tree. Deletion prunes unreachable objects and
@@ -1274,6 +1357,17 @@ theme mappings, standard and rotated selection coordinates, phrase search,
 Unicode annotation persistence, annotation removal, inherited page properties,
 page deletion, destination retargeting, save/reopen, source preservation,
 signature read-only handling, undo/redo, stale revisions, and failed opens.
+Conversion coverage checks fresh-tab/source/history/draft isolation, real
+Unicode page content and pagination, RGB/alpha image resources, strict
+UTF-8/BOM/newline rules, unsupported input and exact settings/text limits,
+cancel/order/all-or-nothing behavior, real OPC ZIP/CRC/XML, selected DOCX page
+order, copy/owner/protected/signed authority, XML controls, no-text results,
+draft/edit/undo invalidation and no-clobber output. Run the targeted checks:
+
+```sh
+node --test tests/conversion.test.ts tests/output.test.ts tests/draftProtection.test.ts
+cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --test conversion --test output
+```
 Additional authoring coverage checks new-document dirty state, embedded text
 appearances, Unicode normalization and supported scripts, overflow rejection,
 rotated text matrices, independent annotation copies, imported links and

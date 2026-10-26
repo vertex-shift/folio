@@ -226,6 +226,26 @@ Opening PDFs is additive, not a destructive navigation requiring discard.
 Close decisions name the affected PDF; quitting reviews unsaved inactive tabs
 as well. An empty workspace still offers opening and document creation.
 
+## Local file conversion
+
+Keep conversion inside the established local document-first workspace. A
+visible title-bar Create action and All tools entry open the focused
+Create PDF from files dialog; Command/Control+Shift+N is the keyboard
+alternative. Keep the source-kind chooser, ordered filename list with
+named Up/Down buttons, physical layout controls, limits and ready/error/
+canceled feedback in one scrollable body. Header/footer actions stay visible
+at desktop and compact sizes. Reuse semantic theme/focus/status tokens and
+the existing reduced-motion dialog behavior. Preparation and opening are
+distinct: Open new PDF creates a new tab, not a source mutation.
+
+Export Word text uses the existing separate-output dialog and All tools/
+native File menu. Name it Word document content, with a prominent
+text-conversion/not-layout disclaimer, explicit ordered ranges, protected
+source acknowledgment, cancelable progress, ready text summary and Save DOCX
+copy footer. Empty scans and unsupported text are actionable errors, never
+success-shaped empty exports. Conversion settings must not become document
+drafts or silently clear any existing draft.
+
 ## PDF digital signatures
 
 Digital signatures extends the existing tools panel and utility rail without
