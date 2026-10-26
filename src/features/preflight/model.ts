@@ -65,16 +65,20 @@ export function assertTechnicalCurrent(source: SourceRef, current: { id: number;
   if (pending) throw new Error("Apply or discard every writing, metadata, form, image, authoring, redaction and live-gesture draft before technical output.");
 }
 
-export function validateArchiveGeometry(page: ArchivePage, actual: { rotate: number; userUnit: number; view: readonly number[]; width: number; height: number }, dpi: number) {
+export function validateArchiveGeometry(page: ArchivePage, actual: { rotate: number; userUnit: number; view: readonly number[]; width: number; height: number; rasterWidth: number; rasterHeight: number }, dpi: number) {
   const { geometry, pixelWidth, pixelHeight } = page;
+  const scale = (dpi / 72) * geometry.userUnit;
+  const rawWidth = geometry.bounds[2] - geometry.bounds[0], rawHeight = geometry.bounds[3] - geometry.bounds[1];
+  const [width, height] = geometry.rotation % 180 ? [rawHeight, rawWidth] : [rawWidth, rawHeight];
   if (![150, 300].includes(dpi) || actual.rotate !== geometry.rotation || !Number.isFinite(actual.userUnit)
     || Math.abs(actual.userUnit - geometry.userUnit) > 0.0001 || actual.view.length !== 4
     || actual.view.some((value, index) => !Number.isFinite(value) || Math.abs(value - geometry.bounds[index]) > 0.01)
     || !Number.isFinite(actual.width) || !Number.isFinite(actual.height)
     || Math.abs(actual.width - geometry.widthPoints) > 0.01 || Math.abs(actual.height - geometry.heightPoints) > 0.01
-    || Math.ceil(actual.width * dpi / 72) !== pixelWidth || Math.ceil(actual.height * dpi / 72) !== pixelHeight
+    || !Number.isFinite(actual.rasterWidth) || !Number.isFinite(actual.rasterHeight)
+    || Math.ceil(actual.rasterWidth) !== pixelWidth || Math.ceil(actual.rasterHeight) !== pixelHeight
     || !Number.isSafeInteger(pixelWidth) || !Number.isSafeInteger(pixelHeight) || pixelWidth < 1 || pixelHeight < 1
-    || pixelWidth !== Math.ceil(geometry.widthPoints * dpi / 72) || pixelHeight !== Math.ceil(geometry.heightPoints * dpi / 72)
+    || pixelWidth !== Math.ceil(width * scale) || pixelHeight !== Math.ceil(height * scale)
     || pixelWidth > ARCHIVE_LIMITS.dimension || pixelHeight > ARCHIVE_LIMITS.dimension || pixelWidth * pixelHeight > ARCHIVE_LIMITS.pagePixels) {
     throw new Error(`Source page ${page.sourcePage + 1} has inconsistent or unsupported archival geometry. No copy was saved.`);
   }

@@ -1135,6 +1135,107 @@ preparation without saving a partial file; native Save dialogs have their
 own Cancel control. A running bounded compression call finishes before its
 cancellation can be acknowledged, but cancellation prevents saving it.
 
+## Technical preflight and PDF/A-2b archival copies
+
+These are **two separate tools**, available in All tools and the native File
+menu. Neither replaces the working PDF or certifies an arbitrary input.
+
+**Technical preflight** inspects local, bounded dictionary/resource facts:
+font-program stream presence (not font validity, coverage or actual use),
+MediaBox/effective CropBox and other declared page boxes, right-angle rotation,
+page-local UserUnit and physical dimensions, image dictionary properties,
+form/active/attachment keys, catalog language/tag presence, and namespace-resolved
+UTF-8 PDF/A/PDF/UA XMP identification properties. Each finding is an observed
+**fact**, scoped **absence**, **unsupported** inspection, or **unchecked** property.
+Flags and declarations are never promoted to a validation success. Inline images,
+content-stream semantics, tag correctness/reading order, accessibility, font
+program validity, hidden history and signature trust are outside this inspection.
+The optional JSON report requires copy/extraction rights and an explicit
+unencrypted-property disclosure for protected sources.
+
+**PDF/A-2b archival copy** creates a fresh PDF 1.7 document from isolated PDF.js
+page appearances, independent of mounted/virtualized canvases or HTML form
+controls. Choose all source pages or an explicit unique ascending range and
+exactly **150 or 300 DPI**. No pages are skipped and quality is never silently
+lowered. Effective CropBox, rotation and page-local UserUnit determine actual
+physical dimensions. Core and renderer pixel ceilings must agree exactly;
+near-boundary source precision disagreements fail instead of clipping a pixel.
+The new image matrix retains the chosen pixel pitch and clips only ceil-rounded
+padding at the physical page boundary, not a rescaled whole raster.
+
+Every page uses lossless opaque sRGB image pixels and the unchanged, checksum-pinned
+ICC **sRGB2014** profile, an embedded output intent and UTF-8 PDF/A-2b identification
+XMP. The source's objects, text/fonts/vectors, search/selection, accessibility
+tags, interactive fields, attachments, active code, original metadata/history
+and cryptographic signatures do **not** carry over. Explicitly accept these
+losses and review the copy's appearances. This is not OCR, accessibility
+remediation, automatic redaction, or validation of the original. Pending
+redactions and every writing/form/metadata/image/authoring/live-gesture draft
+block preparation. XFA, forms requiring regenerated appearances, visible widgets
+without persistent appearances and unsupported multimedia/3D stop archival export.
+Zero-area invisible signature slots contribute no pixels and do not require an
+appearance; their cryptographic signatures still do not carry over.
+
+PDF/A forbids encryption. Protected inputs require both actual **owner
+authentication** (reopen with the owner password) and explicit acknowledgment of
+an **unencrypted** archive, in addition to copy rights. Permissive opening-password
+access is not ownership. Signed/certified inputs can be raster-copied only with
+explicit **fresh unsigned copy** acknowledgment; the signed source remains
+read-only. Renderer-only decrypted PDF snapshots are never exported as PDFs.
+
+Folio's generated archives carry a private catalog marker and open **read-only**.
+Ordinary edits, form filling, protection changes, signing, optimization, extraction
+and import-as-donor rewrites are blocked, including narrow signed-source
+exceptions. Exact-byte saving and honest non-PDF outputs remain available. Edit
+the original and export a new archive; no ordinary Folio rewrite silently retains
+the generated archival declaration. The marker itself is not validation evidence.
+
+The archive has its own job identity, source ID/revision and monotonic source
+epoch, separate from print/output, comparison, OCR and redaction jobs. Edits
+(including undo returning to an older revision), drafts, image staging and tab
+closure permanently invalidate retained technical results/jobs. Cancellation
+releases staging, renderers, canvases and temporary URLs without partial exports.
+Native writes recheck after the Save dialog, guard all open source/saved paths,
+and atomically create a new copy without clobbering existing files or symlinks.
+Close/quit/unload also guard archival work.
+
+Inspection limits: **500 pages, 200,000 parsed objects, 50,000 reachable graph
+nodes, 64 levels, 4,000 findings and 2 MiB report**; XMP is limited to 1 MiB,
+50,000 XML events, 64 levels, 256 attributes per element, 64 identification
+values and 4,096 UTF-8 bytes per value. DTD/entity-bearing or unsupported XMP is
+reported, not guessed. Archive limits: **100 selected pages, 24 megapixels per
+page, 100 megapixels total, 16,384 pixels per dimension, 64 MiB PNG per page,
+128 MiB source/render/output and 15 minutes**. Unsupported/oversized jobs fail
+explicitly instead of producing an apparently successful partial copy.
+
+The profile's exact provenance, checksum and full redistributable license are in
+`src-tauri/resources/color/NOTICE.txt` and the bundled third-party notices. It is
+not an Adobe or operating-system profile.
+
+### Development acceptance
+
+`npm run test:archive` generates original synthetic fixtures, downloads actual
+UI archival outputs, checks PDF.js physical geometry/pixels after save/reopen,
+and runs **local veraPDF with `--flavour 2b`**. It also rejects negative controls
+with false source declarations, missing/invalid ICC profiles and missing/false
+XMP, checks protected/signed copies, source invariance, cancellation and resource
+cleanup. Set `FOLIO_VERAPDF` to an already installed local CLI and optionally
+`FOLIO_ARCHIVE_BROWSER` and `FOLIO_ARCHIVE_ARTIFACTS`. The test does not download a
+validator, repair browser caches, start a native app or upload any document.
+The verifier is a development/acceptance tool, **not an end-user Java service**
+or a hidden runtime prerequisite. See the official [veraPDF validation
+CLI](https://docs.verapdf.org/cli/validation/) and [verified local installation
+instructions](https://docs.verapdf.org/install/).
+
+Core APIs are `Workspace::inspect_technical`, `check_inspection`,
+`inspection_report`, `write_inspection_report`, `cancel_inspection` and
+`begin_archive`, `check_archive`, `archive_render_bytes`, `stage_archive_page`,
+`archive_bytes`, `write_archive_copy`, `cancel_archive`. Native IPC uses
+`inspectionId`/`archiveId`; the preview endpoints are `/preflight/*` and
+`/archive/*`. Additional source-draft domains must reuse the aggregate draft
+projection and `ensure_export_ready`, and call `invalidate_technical` when
+staging or mutating a source.
+
 ## Appearance
 
 Use the **Appearance** palette button in the title bar. The default **System**
@@ -1175,7 +1276,10 @@ package dependency.
 - **Not full Acrobat parity.** Run-level source-text replacement is supported,
   but not paragraph reflow, existing-image editing, non-English OCR, general Office conversion or PDF creation beyond the explicit PNG/JPEG/UTF-8 subset,
   automatic AATL/EUTL/OS trust, cloud storage, collaboration, AI assistant,
-  accessibility remediation, preflight, or print-production workflows.
+  accessibility remediation, full conformance validation/preflight, or
+  print-production workflows. The bounded technical inspection and fresh
+  image-only archival-copy subset above do not imply PDF/UA authoring or full
+  Acrobat parity.
 - Ordinary saves of supported password-protected PDFs retain their protection;
   explicit protection changes are separate, owner-authorized copy exports.
   Certificate-based security is not supported. Existing signatures remain read-only; the Digital signatures

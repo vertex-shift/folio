@@ -94,7 +94,7 @@ export default function PreflightPanel(props: Props) {
     {report && <>
       <div className="preflight-report-source"><strong>{report.name}</strong><span>Revision {report.revision} · {report.findings.length} observations</span></div>
       <p className="preflight-boundary">{report.inputConformance}</p>
-      <label className="preflight-filter">Show observations<select value={filter} disabled={props.disabled}
+      <label className="form-control preflight-filter">Show observations<select value={filter} disabled={props.disabled}
         onChange={(event) => {
           const value = event.target.value;
           if (value === "all" || value === "fact" || value === "absent" || value === "unsupported" || value === "unchecked") setFilter(value);

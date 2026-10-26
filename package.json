@@ -13,6 +13,7 @@
     "test": "node --test tests/*.test.ts",
     "test:ocr": "node tests/ocr.e2e.mjs",
     "test:comparison": "node tests/comparison.e2e.mjs",
+    "test:archive": "node tests/preflightArchive.e2e.mjs",
     "test:forms": "node tests/formsDesigner.e2e.mjs",
     "test:signatures": "node tests/signatures.e2e.mjs",
     "tauri": "tauri",

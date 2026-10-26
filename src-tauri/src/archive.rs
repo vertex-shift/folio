@@ -5,7 +5,7 @@ use std::{
 };
 
 use lopdf::{
-    Document, Object, ObjectId, Stream,
+    Dictionary, Document, Object, ObjectId, Stream,
     content::{Content, Operation},
     dictionary,
 };
@@ -129,6 +129,14 @@ impl Workspace {
     }
 
     pub fn begin_archive(&mut self, request: Request) -> Result<Plan> {
+        if self
+            .archives
+            .job
+            .as_ref()
+            .is_some_and(|job| job.started.elapsed() > Duration::from_secs(MAX_JOB_SECONDS))
+        {
+            self.archives.job = None;
+        }
         if self.archives.is_pending() {
             return Err(invalid(
                 "Finish or cancel the previous archival job. Only one archival copy is retained.",
@@ -303,8 +311,14 @@ pub fn page_plans(
     let mut total = 0_u64;
     selected.iter().map(|index| {
         let geometry = geometries.get(*index).ok_or_else(|| invalid("An archival page is outside the source document."))?;
-        let width = (f64::from(geometry.width_points) * f64::from(dpi) / 72.0).ceil();
-        let height = (f64::from(geometry.height_points) * f64::from(dpi) / 72.0).ceil();
+        // Match PDF.js's operation order, including its pixel ceiling:
+        // viewport scale is (DPI / 72) * page-local UserUnit.
+        let scale = (f64::from(dpi) / 72.0) * f64::from(geometry.user_unit);
+        let mut width = f64::from(geometry.bounds[2]) - f64::from(geometry.bounds[0]);
+        let mut height = f64::from(geometry.bounds[3]) - f64::from(geometry.bounds[1]);
+        if geometry.rotation % 180 != 0 { std::mem::swap(&mut width, &mut height); }
+        let width = (width * scale).ceil();
+        let height = (height * scale).ceil();
         if !width.is_finite() || !height.is_finite() || width < 1.0 || height < 1.0
             || width > f64::from(MAX_DIMENSION) || height > f64::from(MAX_DIMENSION)
             || width * height > MAX_PAGE_PIXELS as f64
@@ -361,13 +375,69 @@ pub(crate) fn check_appearances(document: &Document) -> Result<()> {
                 "This PDF contains multimedia/3D appearances not supported by archival rendering. No pages were exported.",
             ));
         }
-        if subtype == Some(b"Widget") && !dictionary.has(b"AP") {
-            return Err(invalid(
-                "A form/signature widget has no persistent appearance. Archival export will not substitute HTML controls or silently omit a value.",
-            ));
+        if subtype == Some(b"Widget") {
+            check_widget_appearance(document, dictionary)?;
         }
         Ok(())
     })
+}
+
+fn check_widget_appearance(document: &Document, widget: &Dictionary) -> Result<()> {
+    let rectangle = resolve(document, widget.get(b"Rect")?)?.as_array()?;
+    if rectangle.len() != 4 {
+        return Err(invalid("A widget has an invalid appearance rectangle."));
+    }
+    let bounds: Vec<f32> = rectangle
+        .iter()
+        .map(|value| Ok(resolve(document, value)?.as_float()?))
+        .collect::<Result<_>>()?;
+    if bounds.iter().any(|value| !value.is_finite()) {
+        return Err(invalid("A widget has a non-finite appearance rectangle."));
+    }
+    // Invisible signature slots legitimately have zero area and no AP.
+    if bounds[0] == bounds[2] || bounds[1] == bounds[3] {
+        return Ok(());
+    }
+    let appearance = match widget.get(b"AP") {
+        Ok(value) => resolve(document, value)?.as_dict()?,
+        Err(lopdf::Error::DictKey(_)) => {
+            return Err(invalid(
+                "A visible form/signature widget has no persistent appearance. Archival export will not substitute HTML controls or silently omit a value.",
+            ));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let normal = resolve(document, appearance.get(b"N")?)?;
+    let stream = match normal {
+        Object::Stream(stream) => stream,
+        Object::Dictionary(states) => {
+            let state = resolve(document, widget.get(b"AS")?)?.as_name()?;
+            resolve(document, states.get(state)?)?.as_stream()?
+        }
+        _ => {
+            return Err(invalid(
+                "A visible widget has no usable normal PDF appearance.",
+            ));
+        }
+    };
+    if stream.dict.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Form") {
+        return Err(invalid(
+            "A widget's normal appearance is not a supported Form XObject.",
+        ));
+    }
+    crate::page_geometry::read_box(document, stream.dict.get(b"BBox")?)?;
+    if let Ok(value) = stream.dict.get(b"Matrix") {
+        let values = resolve(document, value)?.as_array()?;
+        if values.len() != 6 {
+            return Err(invalid("A widget has an invalid appearance transform."));
+        }
+        for value in values {
+            if !resolve(document, value)?.as_float()?.is_finite() {
+                return Err(invalid("A widget has a non-finite appearance transform."));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_profile(profile: &[u8]) -> Result<()> {
@@ -473,18 +543,24 @@ impl Job {
         }
         let width = page.geometry.width_points;
         let height = page.geometry.height_points;
+        // Keep the requested pixel pitch. A ceil-rounded edge pixel may extend
+        // outside the physical page; squeezing that padding into the page
+        // would resample every pixel. Anchor at the top-left and let the page
+        // boundary clip only the raster's padding.
+        let image_width = (f64::from(page.pixel_width) * 72.0 / f64::from(self.plan.dpi)) as f32;
+        let image_height = (f64::from(page.pixel_height) * 72.0 / f64::from(self.plan.dpi)) as f32;
         let content = Content {
             operations: vec![
                 Operation::new("q", vec![]),
                 Operation::new(
                     "cm",
                     vec![
-                        width.into(),
+                        image_width.into(),
                         0.into(),
                         0.into(),
-                        height.into(),
+                        image_height.into(),
                         0.into(),
-                        0.into(),
+                        (height - image_height).into(),
                     ],
                 ),
                 Operation::new("Do", vec![Object::Name(b"PageImage".to_vec())]),
@@ -579,5 +655,41 @@ mod tests {
         bytes[16] ^= 1;
         assert!(validate_profile(&bytes).is_err());
         validate_profile(PROFILE).unwrap();
+    }
+
+    #[test]
+    fn expired_jobs_cannot_export_and_are_released_before_a_new_job() {
+        let mut workspace = Workspace::default();
+        let source = workspace
+            .open_bytes(
+                Session::blank(72.0, 72.0, 1).unwrap().bytes().to_vec(),
+                "Expiry.pdf".into(),
+            )
+            .unwrap();
+        let request = || Request {
+            source: SourceRef {
+                document_id: source.id,
+                revision: source.revision,
+            },
+            pages: vec![0],
+            dpi: 150,
+            acknowledge_loss: true,
+            allow_unencrypted: false,
+            acknowledge_unsigned: false,
+        };
+        let first = workspace.begin_archive(request()).unwrap();
+        workspace.archives.job.as_mut().unwrap().started =
+            Instant::now() - Duration::from_secs(MAX_JOB_SECONDS + 1);
+        assert!(
+            workspace
+                .check_archive(first.archive_id)
+                .unwrap_err()
+                .to_string()
+                .contains("15 minutes")
+        );
+        assert!(workspace.archive_bytes(first.archive_id).is_err());
+        let next = workspace.begin_archive(request()).unwrap();
+        assert!(next.archive_id > first.archive_id);
+        assert!(workspace.check_archive(first.archive_id).is_err());
     }
 }

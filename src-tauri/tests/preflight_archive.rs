@@ -177,6 +177,37 @@ fn fresh_archive_has_only_new_raster_objects_and_does_not_touch_source_history_p
 }
 
 #[test]
+fn applied_unsaved_working_edits_are_rendered_without_changing_dirty_state_or_history() {
+    let mut workspace = Workspace::default();
+    let source = open(&mut workspace);
+    let changed = workspace
+        .current_mut(source.id, source.revision)
+        .unwrap()
+        .apply(Edit::Rotate {
+            page: 0,
+            degrees: 90,
+        })
+        .unwrap();
+    assert!(changed.dirty && changed.can_undo);
+    let bytes = workspace.document(source.id).unwrap().bytes().to_vec();
+    let state = serde_json::to_value(&changed).unwrap();
+    let plan = workspace.begin_archive(request(&changed)).unwrap();
+    assert_eq!(plan.pages[0].geometry.rotation, 90);
+    assert_eq!(plan.pages[0].geometry.width_points, 96.0);
+    assert_eq!(
+        workspace.archive_render_bytes(plan.archive_id).unwrap(),
+        bytes
+    );
+    complete(&mut workspace, &plan);
+    workspace.cancel_archive(plan.archive_id);
+    assert_eq!(workspace.document(source.id).unwrap().bytes(), bytes);
+    assert_eq!(
+        serde_json::to_value(workspace.document(source.id).unwrap().info().unwrap()).unwrap(),
+        state
+    );
+}
+
+#[test]
 fn every_folio_rewrite_of_its_own_archive_is_read_only_but_exact_saves_and_raster_rearchives_are_allowed()
  {
     let mut workspace = Workspace::default();
@@ -297,6 +328,90 @@ fn edits_undo_drafts_staging_close_and_cancel_invalidate_jobs_without_resurrecti
             }
         }
     }
+}
+
+#[test]
+fn native_redaction_jobs_invalidate_inspections_and_block_archives_even_without_a_frontend_draft_flag()
+ {
+    let mut workspace = Workspace::default();
+    let info = open(&mut workspace);
+    let report = workspace.inspect_technical(request(&info).source).unwrap();
+    let archive = workspace.begin_archive(request(&info)).unwrap();
+    let redaction = workspace
+        .begin_redaction(
+            info.id,
+            info.revision,
+            150,
+            &[folio_core::redaction::Region {
+                page: 0,
+                rect: [10.0, 10.0, 20.0, 20.0],
+            }],
+        )
+        .unwrap();
+    assert!(workspace.check_inspection(report.inspection_id).is_err());
+    assert!(workspace.check_archive(archive.archive_id).is_err());
+    workspace.set_draft(info.id, false).unwrap();
+    assert!(workspace.begin_archive(request(&info)).is_err());
+    assert!(workspace.inspect_technical(request(&info).source).is_err());
+    workspace.cancel_redaction(redaction.job_id);
+    assert!(workspace.begin_archive(request(&info)).is_ok());
+}
+
+#[test]
+fn native_archive_and_report_paths_never_replace_any_open_source_saved_file_or_symlink() {
+    let directory = tempfile::tempdir().unwrap();
+    let source_path = directory.path().join("source.pdf");
+    let other_path = directory.path().join("other.pdf");
+    let bytes = Session::blank(72.0, 96.0, 1).unwrap().bytes().to_vec();
+    std::fs::write(&source_path, &bytes).unwrap();
+    std::fs::write(&other_path, &bytes).unwrap();
+    let mut workspace = Workspace::default();
+    let source = workspace.open_path(source_path.clone()).unwrap();
+    let other = workspace.open_path(other_path.clone()).unwrap();
+    let saved_path = directory.path().join("other-saved.pdf");
+    workspace
+        .current_mut(other.id, other.revision)
+        .unwrap()
+        .save_as(&saved_path)
+        .unwrap();
+    let report = workspace
+        .inspect_technical(request(&source).source)
+        .unwrap();
+    let plan = workspace.begin_archive(request(&source)).unwrap();
+    complete(&mut workspace, &plan);
+    for path in [&source_path, &other_path, &saved_path] {
+        assert!(workspace.write_archive_copy(plan.archive_id, path).is_err());
+        assert!(
+            workspace
+                .write_inspection_report(report.inspection_id, false, path)
+                .is_err()
+        );
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+    #[cfg(unix)]
+    {
+        let link = directory.path().join("link.pdf");
+        std::os::unix::fs::symlink(&source_path, &link).unwrap();
+        assert!(
+            workspace
+                .write_archive_copy(plan.archive_id, &link)
+                .is_err()
+        );
+        let broken = directory.path().join("broken.pdf");
+        std::os::unix::fs::symlink(directory.path().join("not-created.pdf"), &broken).unwrap();
+        assert!(
+            workspace
+                .write_archive_copy(plan.archive_id, &broken)
+                .is_err()
+        );
+        assert!(broken.symlink_metadata().unwrap().file_type().is_symlink());
+    }
+    assert_eq!(workspace.document(source.id).unwrap().bytes(), bytes);
+    assert_eq!(
+        workspace.document(source.id).unwrap().source_path.as_ref(),
+        Some(&source_path)
+    );
+    assert!(workspace.document(source.id).unwrap().saved_path.is_none());
 }
 
 fn unlock(workspace: &mut Workspace, bytes: Vec<u8>, password: &str) -> DocumentInfo {
@@ -462,34 +577,72 @@ fn sequence_exact_pixels_alpha_pages_and_noclobber_are_enforced() {
 }
 
 #[test]
+fn ceil_padding_keeps_requested_pixel_pitch_without_resampling_the_page() {
+    let mut workspace = Workspace::default();
+    let info = workspace
+        .open_bytes(
+            Session::blank(72.0, 73.0, 1).unwrap().bytes().to_vec(),
+            "Fractional raster edge.pdf".into(),
+        )
+        .unwrap();
+    let plan = workspace.begin_archive(request(&info)).unwrap();
+    let bytes = complete(&mut workspace, &plan);
+    let pdf = Document::load_mem(&bytes).unwrap();
+    let page_id = *pdf.get_pages().values().next().unwrap();
+    let contents = lopdf::content::Content::decode(&pdf.get_page_content(page_id)).unwrap();
+    let matrix = &contents
+        .operations
+        .iter()
+        .find(|operation| operation.operator == "cm")
+        .unwrap()
+        .operands;
+    assert!(
+        (matrix[0].as_float().unwrap() - plan.pages[0].pixel_width as f32 * 72.0 / 150.0).abs()
+            < 0.0001
+    );
+    assert!(
+        (matrix[3].as_float().unwrap() - plan.pages[0].pixel_height as f32 * 72.0 / 150.0).abs()
+            < 0.0001
+    );
+    assert_eq!(matrix[4].as_float().unwrap(), 0.0);
+    assert!(
+        (matrix[5].as_float().unwrap() - (73.0 - matrix[3].as_float().unwrap())).abs() < 0.0001
+    );
+    assert!(matrix[5].as_float().unwrap() < 0.0);
+}
+
+#[test]
 fn exact_pixel_and_page_limits_never_fall_back_to_lower_quality_or_partial_selection() {
-    let mut geometry = Session::blank(72.0, 72.0, 1).unwrap().info().unwrap().pages[0]
+    let base = Session::blank(72.0, 72.0, 1).unwrap().info().unwrap().pages[0]
         .geometry
         .clone();
-    geometry.width_points = 2880.0;
-    geometry.height_points = 1920.0;
+    let sized = |width, height| {
+        let mut geometry = base.clone();
+        geometry.width_points = width;
+        geometry.height_points = height;
+        geometry.bounds = [0.0, 0.0, width, height];
+        geometry
+    };
+    let geometry = sized(2880.0, 1919.9999);
     assert_eq!(
         archive::page_plans(&[geometry.clone()], &[0], 150).unwrap()[0].pixel_width,
         6000
     );
     assert!(archive::page_plans(&[geometry.clone()], &[0], 300).is_err());
     assert!(archive::page_plans(&[geometry.clone()], &[0], 96).is_err());
-    geometry.width_points += 0.01;
+    let geometry = sized(2880.01, 1919.9999);
     assert!(archive::page_plans(&[geometry.clone()], &[0], 150).is_err());
-    geometry.width_points = 7864.319;
-    geometry.height_points = 0.48;
+    let geometry = sized(7864.319, 0.48);
     assert_eq!(
         archive::page_plans(&[geometry.clone()], &[0], 150).unwrap()[0].pixel_width,
         16_384
     );
-    geometry.width_points += 0.01;
+    let geometry = sized(7864.329, 0.48);
     assert!(archive::page_plans(&[geometry.clone()], &[0], 150).is_err());
-    geometry.width_points = 2400.0;
-    geometry.height_points = 1920.0; // 20 MP
+    let geometry = sized(2400.0, 1919.9999); // Exactly 20 MP after the renderer's ceiling.
     assert!(archive::page_plans(&vec![geometry.clone(); 5], &[0, 1, 2, 3, 4], 150).is_ok());
     assert!(archive::page_plans(&vec![geometry.clone(); 6], &[0, 1, 2, 3, 4, 5], 150).is_err());
-    geometry.width_points = 1.0;
-    geometry.height_points = 1.0;
+    let geometry = sized(1.0, 1.0);
     assert!(
         archive::page_plans(
             &vec![geometry.clone(); 100],
@@ -601,4 +754,59 @@ fn malformed_reference_graphs_and_unsupported_widget_appearances_do_not_produce_
         .open_bytes(bytes, "Missing appearance.pdf".into())
         .unwrap();
     assert!(workspace.begin_archive(request(&info)).is_err());
+}
+
+#[test]
+fn oversized_reachable_preflight_graphs_fail_instead_of_exporting_partial_success() {
+    let mut pdf = Document::load_mem(Session::blank(72.0, 72.0, 1).unwrap().bytes()).unwrap();
+    pdf.catalog_mut().unwrap().set(
+        "Oversized",
+        vec![Object::Null; folio_core::preflight::MAX_GRAPH_NODES + 1],
+    );
+    let mut bytes = Vec::new();
+    pdf.save_to(&mut bytes).unwrap();
+    let mut workspace = Workspace::default();
+    let info = workspace
+        .open_bytes(bytes, "Oversized graph.pdf".into())
+        .unwrap();
+    assert!(
+        workspace
+            .inspect_technical(request(&info).source)
+            .unwrap_err()
+            .to_string()
+            .contains("50,000")
+    );
+    assert!(workspace.begin_archive(request(&info)).is_err());
+}
+
+#[test]
+fn merely_having_an_ap_key_does_not_hide_a_missing_or_ambiguous_visible_widget_appearance() {
+    let mut pdf = Document::load_mem(Session::blank(72.0, 72.0, 1).unwrap().bytes()).unwrap();
+    let normal = pdf.add_object(Stream::new(dictionary! { "Subtype" => "Form", "BBox" => vec![0.into(), 0.into(), 10.into(), 10.into()] }, Vec::new()));
+    let no_box = pdf.add_object(Stream::new(dictionary! { "Subtype" => "Form" }, Vec::new()));
+    for appearance in [
+        Object::Null,
+        dictionary! {}.into(),
+        dictionary! { "N" => Object::Null }.into(),
+        dictionary! { "N" => dictionary! { "Off" => normal } }.into(),
+        dictionary! { "N" => no_box }.into(),
+    ] {
+        let mut source = pdf.clone();
+        let widget = source.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Widget", "Rect" => vec![0.into(), 0.into(), 10.into(), 10.into()],
+            "FT" => "Tx", "T" => Object::string_literal("field"), "V" => Object::string_literal("Visible value"), "AP" => appearance,
+        });
+        let page = *source.get_pages().values().next().unwrap();
+        source
+            .get_dictionary_mut(page)
+            .unwrap()
+            .set("Annots", vec![Object::Reference(widget)]);
+        let mut bytes = Vec::new();
+        source.save_to(&mut bytes).unwrap();
+        let mut workspace = Workspace::default();
+        let info = workspace
+            .open_bytes(bytes, "Malformed appearance.pdf".into())
+            .unwrap();
+        assert!(workspace.begin_archive(request(&info)).is_err());
+    }
 }

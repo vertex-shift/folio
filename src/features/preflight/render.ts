@@ -23,11 +23,9 @@ export async function renderArchivePages(
     try {
       signal.throwIfAborted(); check();
       const base = page.getViewport({ scale: 1 });
-      validateArchiveGeometry(target, { rotate: page.rotate, userUnit: page.userUnit, view: page.view, width: base.width, height: base.height }, plan.dpi);
       const viewport = page.getViewport({ scale: plan.dpi / 72 });
-      if (Math.ceil(viewport.width) !== target.pixelWidth || Math.ceil(viewport.height) !== target.pixelHeight) {
-        throw new Error(`Source page ${target.sourcePage + 1} crosses a renderer pixel-rounding boundary. No archival copy was saved; pages are never clipped or downscaled.`);
-      }
+      validateArchiveGeometry(target, { rotate: page.rotate, userUnit: page.userUnit, view: page.view,
+        width: base.width, height: base.height, rasterWidth: viewport.width, rasterHeight: viewport.height }, plan.dpi);
       totalPixels += target.pixelWidth * target.pixelHeight;
       if (totalPixels > ARCHIVE_LIMITS.totalPixels) throw new Error("The archival job exceeds 100 megapixels. No pages were skipped or downscaled.");
       canvas = document.createElement("canvas");

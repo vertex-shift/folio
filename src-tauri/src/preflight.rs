@@ -84,6 +84,7 @@ impl Workspace {
             .next_id
             .checked_add(1)
             .ok_or_else(|| invalid("Inspection identifiers are exhausted. Restart Folio."))?;
+        let findings = session.technical_findings()?;
         let info = session.info()?;
         let report = Report {
             schema: "folio-technical-preflight",
@@ -95,7 +96,7 @@ impl Workspace {
             password_protected: info.password_protected,
             scope: SCOPE,
             input_conformance: "NOT VALIDATED. Declarations and tag presence are observations, not proof of conformance.",
-            findings: session.technical_findings()?,
+            findings,
             suggested_name: format!(
                 "{}-technical-preflight.json",
                 crate::output::safe_stem(&info.name)
@@ -293,6 +294,11 @@ impl Findings {
 }
 
 pub(crate) fn inspect(document: &Document) -> Result<Vec<Finding>> {
+    if document.objects.len() > MAX_OBJECTS {
+        return Err(invalid(
+            "Technical inspection supports at most 200,000 PDF objects.",
+        ));
+    }
     let pages = document.get_pages();
     if pages.is_empty() || pages.len() > MAX_PAGES {
         return Err(invalid(
@@ -344,37 +350,49 @@ pub(crate) fn inspect(document: &Document) -> Result<Vec<Finding>> {
                 State::Absent
             },
             if catalog.has(entry) {
-                format!("/{label} entry present; not a validation of its semantics.")
+                format!(
+                    "Catalog /{} entry present; not a validation of its semantics.",
+                    String::from_utf8_lossy(entry)
+                )
             } else {
                 format!("No catalog /{} entry.", String::from_utf8_lossy(entry))
             },
             None,
         )?;
     }
-    findings.observed(
-        "structure",
-        "Marked flag",
-        (|| match catalog.get(b"MarkInfo") {
+    match (|| -> Result<Option<String>> {
+        match catalog.get(b"MarkInfo") {
             Ok(value) => {
                 let dictionary = resolve(document, value)?.as_dict()?;
                 match dictionary.get(b"Marked") {
-                    Ok(value) => Ok(format!(
+                    Ok(value) => Ok(Some(format!(
                         "MarkInfo /Marked = {}. This is only a flag, not verified tagging.",
                         resolve(document, value)?.as_bool()?
-                    )),
-                    Err(lopdf::Error::DictKey(_)) => {
-                        Ok("MarkInfo exists without /Marked; tag correctness is unchecked.".into())
-                    }
+                    ))),
+                    Err(lopdf::Error::DictKey(_)) => Ok(None),
                     Err(error) => Err(error.into()),
                 }
             }
-            Err(lopdf::Error::DictKey(_)) => {
-                Ok("No MarkInfo dictionary (no marked flag declared).".into())
-            }
+            Err(lopdf::Error::DictKey(_)) => Ok(None),
             Err(error) => Err(error.into()),
-        })(),
-        None,
-    )?;
+        }
+    })() {
+        Ok(Some(detail)) => findings.add("structure", "Marked flag", State::Fact, detail, None)?,
+        Ok(None) => findings.add(
+            "structure",
+            "Marked flag",
+            State::Absent,
+            "No MarkInfo /Marked flag declared. Tag correctness is unchecked.",
+            None,
+        )?,
+        Err(error) => findings.add(
+            "structure",
+            "Marked flag",
+            State::Unsupported,
+            error.to_string(),
+            None,
+        )?,
+    }
     for (number, id) in pages {
         let page = Some(number as usize);
         findings.observed("pages", format!("Page {number} geometry"), PageGeometry::for_page(document, id).map(|geometry| format!(

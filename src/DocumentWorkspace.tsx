@@ -1610,7 +1610,7 @@ export default function DocumentWorkspace(props: Props) {
         </>}
         {panel === "signatures" && info && <SignaturesPanel info={info} active={props.active}
           disabled={disabled} pendingDraft={pendingDraft} onSign={reviewSigning} />}
-        {panel === "preflight" && info && <PreflightPanel info={info} disabled={disabled} pending={pendingDraft}
+        {props.active && panel === "preflight" && info && <PreflightPanel info={info} disabled={disabled} pending={pendingDraft}
           current={() => infoRef.current} hasPending={draftProjection} prepare={prepareTechnical} run={run} onError={setError}
           onNotice={setToast} onArchive={requestArchive} />}
         {panel === "image-edit" && info && <ImageEditingPanel info={info} page={page} inspection={images.inspection(page)}

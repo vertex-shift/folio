@@ -61,6 +61,13 @@ export default function ArchiveDialog(props: Props) {
       if (job.current) throw new Error("Release the previous archival job before preparing another.");
       const pages = archivePages(all, range, info.pageCount);
       const abort = new AbortController(); controller.current = abort;
+      let expired = false;
+      const deadline = window.setTimeout(() => {
+        expired = true; abort.abort();
+        if (job.current) void archiveBridge.cancel(job.current.archiveId).catch((error: unknown) => {
+          latest.current.onError(`Expired archival staging cleanup failed: ${errorMessage(error)}`);
+        });
+      }, 15 * 60 * 1000);
       setPhase("rendering"); setCanceling(false); setProgress({ page: 0, count: pages.length });
       let saved: string | null = null;
       let failure: unknown;
@@ -98,8 +105,9 @@ export default function ArchiveDialog(props: Props) {
       catch (error) {
         setPhase("cleanup");
         throw new Error(`${failure ? errorMessage(failure) : saved ? "The copy was exported." : "No copy was saved."} Archival staging cleanup failed: ${errorMessage(error)}`);
-      } finally { controller.current = null; setCanceling(false); }
+      } finally { window.clearTimeout(deadline); controller.current = null; setCanceling(false); }
       setPhase("settings");
+      if (expired) throw new Error("The archival job exceeded 15 minutes and was canceled. No source bytes, history or saved paths were changed.");
       if (failure && !abort.signal.aborted) throw failure;
       if (abort.signal.aborted) props.onNotice("Archival preparation canceled. Source bytes, saved state and history are unchanged.");
       else if (!saved) props.onNotice("Archival save canceled. The source is unchanged.");
