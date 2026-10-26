@@ -3,6 +3,7 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 public/vendor/
+.playwright-mcp/
 .DS_Store
 .impeccable/review/
 .impeccable/hook.cache.json
