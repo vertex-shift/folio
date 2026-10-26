@@ -120,9 +120,9 @@ export type Edit =
   | { type: "page_numbers"; pages: number[]; settings: { start: number; prefix: string; suffix: string; position: NumberPosition; size: number; color: Color; margin: number } }
   | { type: "remove_authoring"; pages: number[]; kind: "watermark" | "page_number" };
 
-export type Tool = "select" | "hand" | "highlight" | "note" | "text" | "ink" | "edit-text" | "redact" | "image" | "crop" | "form-widget";
+export type Tool = "select" | "hand" | "highlight" | "note" | "text" | "ink" | "edit-text" | "edit-image" | "redact" | "image" | "crop" | "form-widget";
 export type Mode = "read" | "write" | "comment" | "organize";
-export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write" | "edit" | "redact" | "signatures" | "authoring" | "forms" | "form-designer" | "properties" | "attachments" | "ocr" | "preflight";
+export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write" | "edit" | "image-edit" | "redact" | "signatures" | "authoring" | "forms" | "form-designer" | "properties" | "attachments" | "ocr" | "preflight";
 export type Zoom = { mode: "page" | "width" } | { mode: "custom"; scale: number };
 
 export interface SearchResult {

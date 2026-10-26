@@ -10,6 +10,8 @@ import { pageScale } from "../lib/continuous";
 import AuthoringOverlay from "./AuthoringOverlay";
 import FormDesignerOverlay from "../features/formsDesigner/FormDesignerOverlay";
 import type { FormDesignerOverlayInput } from "../features/formsDesigner/FormDesignerOverlay";
+import ImageEditingOverlay from "../features/imageEditing/ImageEditingOverlay";
+import type { ImageEditingOverlayInput } from "../features/imageEditing/ImageEditingOverlay";
 import type { AuthoringDraft } from "../lib/authoring";
 import type { AnnotationInfo, PdfRect, Point, Quad, RedactionMark, Tool, Zoom } from "../lib/types";
 
@@ -46,6 +48,7 @@ interface Props {
   onAuthoringPoint(point: Point): void;
   onAuthoringCrop(margins: [number, number, number, number]): void;
   formDesigner?: FormDesignerOverlayInput;
+  imageEditing?: ImageEditingOverlayInput;
 }
 
 interface Layout {
@@ -444,6 +447,7 @@ export default function PdfPage(props: Props) {
         viewport={layout.viewport} page={props.page} tool={props.tool} disabled={props.disabled}
         onPoint={props.onAuthoringPoint} onCrop={props.onAuthoringCrop} onError={props.onError} />}
       {layout && props.formDesigner && <FormDesignerOverlay {...props.formDesigner} viewport={layout.viewport} page={props.page} />}
+      {layout && props.imageEditing && <ImageEditingOverlay {...props.imageEditing} viewport={layout.viewport} page={props.page} />}
       {layout && links.filter((link) => intersectsPdfRect(link.rect, layout.viewport.viewBox)).map((link, index) => {
         const a = layout.viewport.convertToViewportPoint(link.rect[0], link.rect[1]);
         const b = layout.viewport.convertToViewportPoint(link.rect[2], link.rect[3]);

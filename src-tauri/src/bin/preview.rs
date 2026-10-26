@@ -100,6 +100,14 @@ struct CancelImageRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImageEditRequest {
+    document_id: u64,
+    revision: u64,
+    change: folio_core::image_edit::ImageChange,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RedactionRequest {
     document_id: u64,
     revision: u64,
@@ -711,7 +719,24 @@ fn handle(
                 .current_mut(input.document_id, input.revision)?
                 .fill_form_fields(input.changes)?
         }
-        (&Method::Post, "/authoring/image") => {
+        (&Method::Post, "/images") => {
+            let input: TextRunsRequest = json_body(request)?;
+            return json(
+                workspace
+                    .check_revision(input.document_id, input.revision)?
+                    .image_occurrences(input.page)?,
+            );
+        }
+        (&Method::Post, "/images/edit") => {
+            let input: ImageEditRequest = json_body(request)?;
+            workspace.edit_image_occurrence(input.document_id, input.revision, input.change)?
+        }
+        (&Method::Post, "/images/replacement/cancel") => {
+            let input: CancelImageRequest = json_body(request)?;
+            return json(workspace.cancel_image_replacement(input.document_id, input.asset_id)?);
+        }
+        (&Method::Post, "/authoring/image" | "/images/replacement") => {
+            let replacing = request.url() == "/images/replacement";
             let id = numeric_header(request, "X-Document-Id")?;
             let revision = numeric_header(request, "X-Revision")?;
             workspace.check_revision(id, revision)?;
@@ -726,7 +751,11 @@ fn handle(
                 .as_reader()
                 .take(limit as u64 + 1)
                 .read_to_end(&mut bytes)?;
-            return json(workspace.stage_authoring_image(id, revision, &bytes)?);
+            return if replacing {
+                json(workspace.stage_image_replacement(id, revision, &bytes)?)
+            } else {
+                json(workspace.stage_authoring_image(id, revision, &bytes)?)
+            };
         }
         (&Method::Post, "/authoring/image/insert") => {
             let input: ImageRequest = json_body(request)?;

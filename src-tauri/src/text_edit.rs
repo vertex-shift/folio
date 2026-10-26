@@ -11,7 +11,10 @@ use lopdf::{
 use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::document::{Result, inherited, invalid, page_id};
+use crate::{
+    document::{Result, invalid, page_id},
+    pdf_objects::{form_resources, install_resource, page_resources, resource, rewrite_operation},
+};
 
 const MAX_CONTENT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CMAP_BYTES: usize = 2 * 1024 * 1024;
@@ -264,36 +267,16 @@ pub(crate) fn replace(
         .view
         .font_size
         .ok_or_else(|| invalid("The original text has an invalid font size."))?;
-    let page_id = page_id(document, page)?;
-    if document
-        .get_pages()
-        .values()
-        .filter(|id| **id == page_id)
-        .count()
-        != 1
-    {
-        return Err(invalid(
-            "This PDF reuses a page object. It cannot be edited independently.",
-        ));
-    }
-    let bytes = document.get_page_content_with_limit(page_id, MAX_CONTENT_BYTES)?;
-    let resources = page_resources(document, page_id)?;
     let change = Change {
-        path,
         expected_font: font_binding,
         original: run.original,
         replacement,
         font,
         size,
     };
-    let (content, resources) = change_container(document, bytes, resources, &change)?;
-    let mut stream = Stream::new(dictionary! {}, content);
-    stream.compress()?;
-    let stream_id = document.add_object(stream);
-    let page = document.get_dictionary_mut(page_id)?;
-    // Never mutate a shared content stream or resource dictionary in place.
-    page.set("Contents", stream_id);
-    page.set("Resources", resources);
+    rewrite_operation(document, page, path, |document, resources, operation| {
+        change_text_operation(document, resources, operation, &change)
+    })?;
     document.prune_objects();
     Ok(())
 }
@@ -819,7 +802,6 @@ fn validate_cmap(bytes: &[u8]) -> std::result::Result<(), String> {
 }
 
 struct Change<'a> {
-    path: &'a [usize],
     expected_font: Arc<BoundFont>,
     original: Vec<u8>,
     replacement: &'a str,
@@ -827,169 +809,69 @@ struct Change<'a> {
     size: f64,
 }
 
-fn change_container(
+fn change_text_operation(
     document: &mut Document,
-    bytes: Vec<u8>,
-    mut resources: Dictionary,
+    resources: &mut Dictionary,
+    operation: &Operation,
     change: &Change<'_>,
-) -> Result<(Vec<u8>, Dictionary)> {
-    let mut content = Content::decode(&bytes)?;
-    let index = change.path[0];
-    let operation = content
-        .operations
-        .get(index)
-        .ok_or_else(|| invalid("The selected content operation no longer exists."))?
-        .clone();
-    if change.path.len() > 1 {
-        if operation.operator != "Do" {
-            return Err(invalid("The selected Form path changed."));
+) -> Result<Vec<Operation>> {
+    if !matches!(operation.operator.as_str(), "Tj" | "TJ" | "'" | "\"") {
+        return Err(invalid("The selected text operation changed."));
+    }
+    let mut replacement = Vec::new();
+    if operation.operator == "'" || operation.operator == "\"" {
+        if operation.operator == "\"" {
+            replacement.push(Operation::new("Tw", vec![operand(&operation, 0)?.clone()]));
+            replacement.push(Operation::new("Tc", vec![operand(&operation, 1)?.clone()]));
         }
-        let name = operand(&operation, 0)?.as_name()?;
-        let stream = document
-            .dereference(resource(document, &resources, b"XObject", name)?)?
-            .1
-            .as_stream()?
-            .clone();
-        let child_resources = form_resources(document, &stream, &resources)?;
-        let child = Change {
-            path: &change.path[1..],
-            expected_font: change.expected_font.clone(),
-            original: change.original.clone(),
-            replacement: change.replacement,
-            font: change.font,
-            size: change.size,
-        };
-        let (bytes, child_resources) = change_container(
-            document,
-            stream.get_plain_content_with_limit(MAX_CONTENT_BYTES)?,
-            child_resources,
-            &child,
-        )?;
-        let mut edited = stream;
-        edited.set_plain_content(bytes);
-        edited.dict.set("Resources", child_resources);
-        edited.compress()?;
-        let id = document.add_object(edited);
+        replacement.push(Operation::new("T*", vec![]));
+    }
+    let mut restore = None;
+    let bytes = if change.font == ReplacementFont::Noto && !change.replacement.is_empty() {
+        let text: String = change.replacement.nfc().collect();
+        let (font, encoding) = crate::writing::embed_text_font(document, &text)?;
         let name = install_resource(
             document,
-            &mut resources,
-            b"XObject",
-            "FolioEditedForm",
-            id.into(),
+            resources,
+            b"Font",
+            "FolioReplacement",
+            font.into(),
         )?;
-        content.operations[index].operands[0] = Object::Name(name);
-    } else {
-        let mut replacement = Vec::new();
-        if operation.operator == "'" || operation.operator == "\"" {
-            if operation.operator == "\"" {
-                replacement.push(Operation::new("Tw", vec![operand(&operation, 0)?.clone()]));
-                replacement.push(Operation::new("Tc", vec![operand(&operation, 1)?.clone()]));
-            }
-            replacement.push(Operation::new("T*", vec![]));
-        }
-        let mut restore = None;
-        let bytes = if change.font == ReplacementFont::Noto && !change.replacement.is_empty() {
-            let text: String = change.replacement.nfc().collect();
-            let (font, encoding) = crate::writing::embed_text_font(document, &text)?;
-            let name = install_resource(
-                document,
-                &mut resources,
-                b"Font",
-                "FolioReplacement",
-                font.into(),
-            )?;
-            let original = change
-                .expected_font
-                .id
-                .map(Object::Reference)
-                .unwrap_or_else(|| {
-                    Object::Reference(document.add_object(change.expected_font.dictionary.clone()))
-                });
-            let old =
-                install_resource(document, &mut resources, b"Font", "FolioOriginal", original)?;
-            replacement.push(Operation::new(
-                "Tf",
-                vec![Object::Name(name), Object::Real(change.size as f32)],
-            ));
-            restore = Some(Operation::new(
-                "Tf",
-                vec![Object::Name(old), Object::Real(change.size as f32)],
-            ));
-            text.chars()
-                .flat_map(|character| encoding[&character].to_be_bytes())
-                .collect()
-        } else {
-            change
-                .expected_font
-                .codec
-                .as_ref()
-                .map_err(|reason| invalid(reason.clone()))?
-                .encode(change.replacement, &change.original)?
-        };
+        let original = change
+            .expected_font
+            .id
+            .map(Object::Reference)
+            .unwrap_or_else(|| {
+                Object::Reference(document.add_object(change.expected_font.dictionary.clone()))
+            });
+        let old = install_resource(document, resources, b"Font", "FolioOriginal", original)?;
         replacement.push(Operation::new(
-            "Tj",
-            vec![Object::String(bytes, StringFormat::Hexadecimal)],
+            "Tf",
+            vec![Object::Name(name), Object::Real(change.size as f32)],
         ));
-        if let Some(restore) = restore {
-            replacement.push(restore);
-        }
-        content.operations.splice(index..=index, replacement);
-    }
-    Ok((content.encode()?, resources))
-}
-
-fn install_resource(
-    document: &Document,
-    resources: &mut Dictionary,
-    kind: &[u8],
-    prefix: &str,
-    value: Object,
-) -> Result<Vec<u8>> {
-    let mut entries = match resources.get(kind) {
-        Ok(value) => document.dereference(value)?.1.as_dict()?.clone(),
-        Err(_) => Dictionary::new(),
+        restore = Some(Operation::new(
+            "Tf",
+            vec![Object::Name(old), Object::Real(change.size as f32)],
+        ));
+        text.chars()
+            .flat_map(|character| encoding[&character].to_be_bytes())
+            .collect()
+    } else {
+        change
+            .expected_font
+            .codec
+            .as_ref()
+            .map_err(|reason| invalid(reason.clone()))?
+            .encode(change.replacement, &change.original)?
     };
-    let mut index = 1;
-    let name = loop {
-        let name = format!("{prefix}{index}").into_bytes();
-        if !entries.has(&name) {
-            break name;
-        }
-        index += 1;
-        if index > MAX_OPERATIONS {
-            return Err(invalid("Too many resource names in this PDF."));
-        }
-    };
-    entries.set(name.clone(), value);
-    resources.set(kind, entries);
-    Ok(name)
-}
-
-fn page_resources(document: &Document, id: ObjectId) -> Result<Dictionary> {
-    match inherited(document, id, b"Resources")? {
-        Some(value) => Ok(document.dereference(&value)?.1.as_dict()?.clone()),
-        None => Ok(Dictionary::new()),
+    replacement.push(Operation::new(
+        "Tj",
+        vec![Object::String(bytes, StringFormat::Hexadecimal)],
+    ));
+    if let Some(restore) = restore {
+        replacement.push(restore);
     }
-}
-
-fn form_resources(document: &Document, stream: &Stream, parent: &Dictionary) -> Result<Dictionary> {
-    match stream.dict.get(b"Resources") {
-        Ok(value) => Ok(document.dereference(value)?.1.as_dict()?.clone()),
-        Err(_) => Ok(parent.clone()),
-    }
-}
-
-fn resource<'a>(
-    document: &'a Document,
-    resources: &'a Dictionary,
-    kind: &[u8],
-    name: &[u8],
-) -> Result<&'a Object> {
-    Ok(document
-        .dereference(resources.get(kind)?)?
-        .1
-        .as_dict()?
-        .get(name)?)
+    Ok(replacement)
 }
 
 fn mark_block(

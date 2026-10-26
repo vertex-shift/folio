@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
 
 use lopdf::{
     Dictionary, Document, Object, ObjectId, Stream, StringFormat,
@@ -38,11 +41,17 @@ pub(crate) struct ImageStaging {
 struct StagedImage {
     asset_id: u64,
     revision: u64,
-    image: PreparedImage,
+    image: Arc<PreparedImage>,
 }
 
 impl ImageStaging {
-    pub fn stage(&mut self, document_id: u64, revision: u64, bytes: &[u8]) -> Result<ImageAsset> {
+    pub fn stage_with_other_bytes(
+        &mut self,
+        document_id: u64,
+        revision: u64,
+        bytes: &[u8],
+        other_bytes: usize,
+    ) -> Result<ImageAsset> {
         let image = PreparedImage::decode(bytes)?;
         let used: usize = self
             .images
@@ -50,7 +59,7 @@ impl ImageStaging {
             .filter(|(id, _)| **id != document_id)
             .map(|(_, staged)| staged.image.byte_length())
             .sum();
-        if used + image.byte_length() > MAX_STAGED_IMAGE_BYTES {
+        if used + other_bytes + image.byte_length() > MAX_STAGED_IMAGE_BYTES {
             return Err(invalid(
                 "Pending images across all PDF tabs exceed 128 MiB of decoded pixels. Place or discard another pending image first.",
             ));
@@ -70,7 +79,7 @@ impl ImageStaging {
             StagedImage {
                 asset_id,
                 revision,
-                image,
+                image: Arc::new(image),
             },
         );
         self.next_id = asset_id;
@@ -80,8 +89,25 @@ impl ImageStaging {
     pub fn get(&self, document_id: u64, revision: u64, asset_id: u64) -> Result<&PreparedImage> {
         self.images.get(&document_id)
             .filter(|staged| staged.asset_id == asset_id && staged.revision == revision)
-            .map(|staged| &staged.image)
+            .map(|staged| staged.image.as_ref())
             .ok_or_else(|| invalid("This image selection is stale or belongs to another PDF. Discard it and select the image again."))
+    }
+
+    pub fn get_shared(
+        &self,
+        document_id: u64,
+        revision: u64,
+        asset_id: u64,
+    ) -> Result<Arc<PreparedImage>> {
+        self.get(document_id, revision, asset_id)?;
+        Ok(Arc::clone(&self.images[&document_id].image))
+    }
+
+    pub fn byte_length(&self) -> usize {
+        self.images
+            .values()
+            .map(|staged| staged.image.byte_length())
+            .sum()
     }
 
     pub fn cancel(&mut self, document_id: u64, asset_id: u64) -> Result<bool> {
@@ -361,26 +387,7 @@ pub(crate) fn insert_image(
     let page = page_id(document, settings.page)?;
     let geometry = PageGeometry::for_page(document, page)?;
     let rect = geometry.display_rect(settings.placement)?;
-    let mut image_dict = dictionary! {
-        "Type" => "XObject", "Subtype" => "Image",
-        "Width" => i64::from(image.width), "Height" => i64::from(image.height),
-        "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8, "Interpolate" => true,
-    };
-    if let Some(alpha) = &image.alpha {
-        let mut mask = Stream::new(
-            dictionary! {
-                "Type" => "XObject", "Subtype" => "Image",
-                "Width" => i64::from(image.width), "Height" => i64::from(image.height),
-                "ColorSpace" => "DeviceGray", "BitsPerComponent" => 8,
-            },
-            alpha.clone(),
-        );
-        mask.compress()?;
-        image_dict.set("SMask", document.add_object(mask));
-    }
-    let mut pixels = Stream::new(image_dict, image.rgb.clone());
-    pixels.compress()?;
-    let image_id = document.add_object(pixels);
+    let image_id = image.embed(document)?;
     let [_, _, width, height] = settings.placement;
     let form = appearance(
         document,

@@ -5,6 +5,7 @@ export interface DocumentDraftProjection {
   formFilling: boolean;
   formDesign: boolean;
   pageAuthoring: boolean;
+  imageEditing: boolean;
   redaction: boolean;
 }
 

@@ -1,6 +1,7 @@
 use std::io::Cursor;
 
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits};
+use lopdf::{Document, ObjectId, Stream, dictionary};
 
 use crate::document::{Result, invalid};
 
@@ -158,6 +159,32 @@ impl PreparedImage {
 
     pub fn byte_length(&self) -> usize {
         self.rgb.len() + self.alpha.as_ref().map_or(0, Vec::len) + self.preview_png.len()
+    }
+
+    pub(crate) fn embed(&self, document: &mut Document) -> Result<ObjectId> {
+        let mut dictionary = dictionary! {
+            "Type" => "XObject", "Subtype" => "Image",
+            "Width" => i64::from(self.width), "Height" => i64::from(self.height),
+            "ColorSpace" => "DeviceRGB", "BitsPerComponent" => 8, "Interpolate" => true,
+        };
+        if let Some(alpha) = &self.alpha {
+            if matches!(document.version.as_str(), "1.0" | "1.1" | "1.2" | "1.3") {
+                document.version = "1.4".into();
+            }
+            let mut mask = Stream::new(
+                dictionary! {
+                    "Type" => "XObject", "Subtype" => "Image",
+                    "Width" => i64::from(self.width), "Height" => i64::from(self.height),
+                    "ColorSpace" => "DeviceGray", "BitsPerComponent" => 8,
+                },
+                alpha.clone(),
+            );
+            mask.compress()?;
+            dictionary.set("SMask", document.add_object(mask));
+        }
+        let mut stream = Stream::new(dictionary, self.rgb.clone());
+        stream.compress()?;
+        Ok(document.add_object(stream))
     }
 }
 

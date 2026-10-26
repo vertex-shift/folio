@@ -193,6 +193,7 @@ pub struct Session {
     revision: u64,
     saved_revision: u64,
     next_revision: u64,
+    mutation_epoch: u64,
     undo: VecDeque<Snapshot>,
     redo: VecDeque<Snapshot>,
     read_only_reason: Option<String>,
@@ -243,6 +244,7 @@ impl Session {
             revision: 0,
             saved_revision: 0,
             next_revision: 1,
+            mutation_epoch: 0,
             undo: VecDeque::new(),
             redo: VecDeque::new(),
             read_only_reason: if archival {
@@ -485,6 +487,29 @@ impl Session {
         crate::text_edit::page_runs(&self.document, page)
     }
 
+    pub fn image_occurrences(&self, page: usize) -> Result<crate::image_edit::ImagePage> {
+        let mut result = crate::image_edit::inspect(&self.document, page)?;
+        if let Some(reason) = &self.read_only_reason {
+            for image in &mut result.images {
+                image.editable = false;
+                image.reason = Some(reason.clone());
+            }
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn mutation_epoch(&self) -> u64 {
+        self.mutation_epoch
+    }
+
+    pub(crate) fn edit_image_occurrence(
+        &mut self,
+        change: &crate::image_edit::ImageChange,
+        replacement: Option<&crate::authoring_image::PreparedImage>,
+    ) -> Result<DocumentInfo> {
+        self.mutate(|next| crate::image_edit::apply(next, change, replacement))
+    }
+
     pub fn form_fields(&self) -> Result<crate::forms::FormInfo> {
         crate::forms::inspect(
             &self.document,
@@ -696,6 +721,7 @@ impl Session {
         self.document = next;
         self.revision = self.next_revision;
         self.next_revision += 1;
+        self.mutation_epoch += 1;
         self.redo.clear();
         self.trim_history();
         self.info()
@@ -717,6 +743,7 @@ impl Session {
         });
         self.document = document;
         self.revision = snapshot.revision;
+        self.mutation_epoch += 1;
         self.info()
     }
 
@@ -736,6 +763,7 @@ impl Session {
         });
         self.document = document;
         self.revision = snapshot.revision;
+        self.mutation_epoch += 1;
         self.info()
     }
 

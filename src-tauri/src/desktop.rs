@@ -35,6 +35,9 @@ mod comparison_commands;
 #[path = "desktop_archive.rs"]
 mod archive_commands;
 
+#[path = "desktop_image_edit.rs"]
+mod image_commands;
+
 async fn with_state<T: Send + 'static>(
     app: AppHandle,
     action: impl FnOnce(&mut DesktopState) -> Result<T> + Send + 'static,
@@ -916,6 +919,10 @@ pub fn run() {
             document_bytes,
             edit_document,
             page_text_runs,
+            image_commands::page_image_occurrences,
+            image_commands::stage_image_replacement,
+            image_commands::edit_image_occurrence,
+            image_commands::cancel_image_replacement,
             inspect_signatures,
             choose_signing_identity,
             export_signed_copy,

@@ -54,6 +54,12 @@ import { widgetPlacement } from "./features/formsDesigner/model";
 import { decimal } from "./lib/authoring";
 import type { ControlKind, FlattenInfo } from "./features/formsDesigner/types";
 import type { FormWidget } from "./lib/formsTypes";
+import ImageEditingPanel from "./features/imageEditing/ImageEditingPanel";
+import { useImageEditing } from "./features/imageEditing/useImageEditing";
+import { imageEditingBridge } from "./features/imageEditing/bridge";
+import { assertImageDraft, imageChange, withPlacement } from "./features/imageEditing/model";
+import type { ImageOccurrence, ImagePlacement as SourceImagePlacement } from "./features/imageEditing/types";
+import "./features/imageEditing/styles.css";
 import { matchExistingText } from "./lib/existingText";
 import { PAGE_SIZES, parsePageRange, parseWritingNumber, rgbFromHex } from "./lib/pages";
 import { destinationPage, safeExternalUrl } from "./lib/navigation";
@@ -111,6 +117,7 @@ const panelLabels: Record<Panel, string> = {
   bookmarks: "Bookmarks", write: "Writing tools", edit: "Edit existing text", redact: "Redact a PDF",
   signatures: "Digital signatures",
   authoring: "Page authoring",
+  "image-edit": "Edit existing images",
   forms: "Fill form fields",
   "form-designer": "Design form fields",
   properties: "Document properties", attachments: "File attachments",
@@ -184,7 +191,7 @@ export default function DocumentWorkspace(props: Props) {
   const ocrJob = useRef<{ controller: AbortController; documentId: number; revision: number } | null>(null);
   const [outputMode, setOutputMode] = useState<OutputAction | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
-  const gesturePages = useRef(new Set<number>());
+  const gesturePages = useRef(new Set<string>());
   const [gestureDraft, setGestureDraft] = useState(false);
   const redactionsRef = useRef(redactions);
   redactionsRef.current = redactions;
@@ -215,6 +222,7 @@ export default function DocumentWorkspace(props: Props) {
   const searchRef = useRef<HTMLInputElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
+  const replacementImageRef = useRef<HTMLInputElement>(null);
   const attachmentRef = useRef<HTMLInputElement>(null);
   const attachmentPickerRevision = useRef<{ documentId: number; revision: number } | null>(null);
   const infoRef = useRef(info);
@@ -234,11 +242,12 @@ export default function DocumentWorkspace(props: Props) {
   const existingText = useExistingText(info, page, tool === "edit-text" || panelOpen && panel === "edit");
   const forms = useForms(info, panelOpen && panel === "forms");
   const designer = useFormDesigner(info, panel === "form-designer" || tool === "form-widget");
+  const images = useImageEditing(info, page, props.active && (panelOpen && panel === "image-edit" || tool === "edit-image"));
   const pendingDesign = Boolean(designer.draft?.dirty);
   const readOnly = Boolean(info?.readOnlyReason);
   const disabled = Boolean(busy) || !info;
   const authoring = useAuthoring({ info, page, current: () => infoRef.current,
-    blocked: () => busyRef.current || redactionsRef.current.length > 0 || forms.pending() || designer.pending() || writingDraftRef.current,
+    blocked: () => busyRef.current || redactionsRef.current.length > 0 || forms.pending() || designer.pending() || images.hasDraft() || writingDraftRef.current,
     run, adopt, onError: setError, onToast: setToast,
     onSelect: (kind) => {
       setMode("write"); setPanel("authoring"); setPanelOpen(true);
@@ -250,12 +259,13 @@ export default function DocumentWorkspace(props: Props) {
     },
   });
   const pendingDraft = hasDocumentDrafts({ writing: pendingWriting || pendingMetadata || gestureDraft,
-    formFilling: forms.count > 0, formDesign: pendingDesign, pageAuthoring: authoring.pending, redaction: redactions.length > 0 });
+    formFilling: forms.count > 0, formDesign: pendingDesign, pageAuthoring: authoring.pending, imageEditing: images.pending, redaction: redactions.length > 0 });
   const pendingDraftRef = useRef(pendingDraft);
   pendingDraftRef.current = pendingDraft;
-  const authoringDisabled = disabled || readOnly || redactions.length > 0 || forms.count > 0 || pendingMetadata || pendingDesign;
+  const authoringDisabled = disabled || readOnly || redactions.length > 0 || forms.count > 0 || pendingMetadata || pendingDesign || images.pending;
   const editDisabled = authoringDisabled || authoring.pending;
-  const redactDisabled = disabled || readOnly || authoring.pending || forms.count > 0 || pendingMetadata || pendingDesign;
+  const redactDisabled = disabled || readOnly || authoring.pending || forms.count > 0 || pendingMetadata || pendingDesign || images.pending;
+  const imageEditingDisabled = disabled || authoring.pending || forms.count > 0 || pendingWriting || pendingMetadata || pendingDesign || redactions.length > 0;
   const managementTooLarge = Boolean(info && info.byteLength > MAX_MANAGEMENT_SOURCE_BYTES);
   const managementEditDisabled = editDisabled || managementTooLarge;
   const utilityPanel = panelOpen && ["properties", "attachments", "bookmarks"].includes(panel);
@@ -307,9 +317,10 @@ export default function DocumentWorkspace(props: Props) {
     props.onInfo(next);
   }
 
-  function onGestureDraft(page: number, pending: boolean) {
-    if (pending) gesturePages.current.add(page);
-    else gesturePages.current.delete(page);
+  function onGestureDraft(page: number, pending: boolean, owner = "writing") {
+    const key = `${owner}:${page}`;
+    if (pending) gesturePages.current.add(key);
+    else gesturePages.current.delete(key);
     const active = gesturePages.current.size > 0;
     writingDraftRef.current = pendingWriting || pendingMetadata || active;
     pendingDraftRef.current = draftProjection();
@@ -318,6 +329,9 @@ export default function DocumentWorkspace(props: Props) {
 
   async function adopt(next: DocumentInfo) {
     const previous = infoRef.current;
+    if (images.hasDraft() && (previous?.id !== next.id || previous.revision !== next.revision)) {
+      throw new Error("Apply or explicitly discard the image draft before changing this PDF.");
+    }
     if (designer.pending() && (previous?.id !== next.id || previous.revision !== next.revision)) {
       throw new Error("Apply or explicitly discard the form-design draft before changing this PDF.");
     }
@@ -441,6 +455,11 @@ export default function DocumentWorkspace(props: Props) {
       setPanel("authoring"); setPanelOpen(true);
       return;
     }
+    if (images.hasDraft() && action.type === "close") {
+      showPanel("image-edit");
+      setError("Apply or discard the image draft before closing this PDF tab.");
+      return;
+    }
     if (designer.pending() && action.type === "close") {
       showPanel("form-designer");
       setError("Apply or discard the form-design draft before closing this PDF tab.");
@@ -490,6 +509,7 @@ export default function DocumentWorkspace(props: Props) {
     if (next === "forms") { setTool("select"); if (mode === "write") setMode("read"); }
     if (next === "form-designer") { setTool("select"); setMode("write"); }
     else if (tool === "form-widget") setTool("select");
+    if (next === "image-edit") { setTool("edit-image"); setMode("write"); }
   }
 
   function showOcr() {
@@ -570,6 +590,9 @@ export default function DocumentWorkspace(props: Props) {
 
   function chooseTool(next: Tool) {
     if (busyRef.current) { setToast("Wait for the current document action to finish."); return; }
+    if (images.hasDraft() && !["select", "hand", "edit-image"].includes(next)) {
+      showPanel("image-edit"); setError("Apply or discard the image draft before using another editing tool."); return;
+    }
     if (authoring.hasDraft() && !["select", "hand", "image", "crop"].includes(next)) {
       setError("Apply or discard the Page authoring draft before using another editing tool.");
       return;
@@ -592,7 +615,7 @@ export default function DocumentWorkspace(props: Props) {
       setError("Clear the pending redaction marks before changing the original PDF.");
       return;
     }
-    if (!["select", "hand"].includes(next) && readOnly) {
+    if (!["select", "hand", "edit-image"].includes(next) && readOnly) {
       setError(info?.readOnlyReason ?? "This PDF is read-only.");
       return;
     }
@@ -601,11 +624,15 @@ export default function DocumentWorkspace(props: Props) {
     if (next === "highlight" || next === "note") setMode("comment");
     if (next === "text" || next === "ink") { setMode("write"); setPanel("write"); setPanelOpen(true); }
     if (next === "edit-text") { setMode("write"); setPanel("edit"); setPanelOpen(true); }
+    if (next === "edit-image") { setMode("write"); setPanel("image-edit"); setPanelOpen(true); }
     if (next === "redact") { setMode("write"); setPanel("redact"); setPanelOpen(true); }
     if (next === "image" || next === "crop") authoring.choose(next);
   }
 
   function changeMode(next: Mode) {
+    if (images.hasDraft() && (next === "write" || next === "organize")) {
+      showPanel("image-edit"); setError("Apply or discard the image draft before changing editing modes."); return;
+    }
     if (designer.pending() && (next === "write" || next === "organize")) {
       showPanel("form-designer"); setError("Apply or discard the form-design draft before changing editing modes."); return;
     }
@@ -629,6 +656,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function edit(change: Edit, label: string, onSuccess?: () => void) {
+    if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before changing this PDF."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before changing this PDF."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before changing this PDF."); return; }
     if (forms.pending()) { showPanel("forms"); setError("Apply or discard the pending form changes before editing this PDF."); return; }
@@ -655,6 +683,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function selectSourceText(run: ExistingTextRun, targetPage = pageRef.current) {
+    if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before editing source text."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before editing source text."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before editing source text."); return; }
     if (forms.pending()) { showPanel("forms"); setError("Apply or discard the pending form changes before editing PDF text."); return; }
@@ -692,6 +721,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function importPages(file?: File) {
+    if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before inserting pages."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before inserting pages."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before inserting pages."); return; }
     if (forms.pending()) { showPanel("forms"); setError("Apply or discard form changes before inserting pages."); return; }
@@ -737,6 +767,7 @@ export default function DocumentWorkspace(props: Props) {
       document.execCommand(redo ? "redo" : "undo");
       return;
     }
+    if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before undoing or redoing PDF changes."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before undoing or redoing PDF changes."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before undoing or redoing PDF changes."); return; }
     if (forms.pending()) { showPanel("forms"); setError("Apply or discard the form changes before undoing or redoing document edits."); return; }
@@ -750,6 +781,9 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function save(copy = true) {
+    if (images.hasDraft()) {
+      showPanel("image-edit"); setError("Apply or discard the image draft before saving. These changes are not yet in the PDF."); return;
+    }
     if (designer.pending()) {
       showPanel("form-designer"); setError("Apply or discard the form-design draft before saving. It is not yet in the PDF."); return;
     }
@@ -819,7 +853,7 @@ export default function DocumentWorkspace(props: Props) {
     const draft = metadataDraft;
     if (!draft || !metadataChanged(draft)) return;
     void run("Applying descriptive metadata...", async () => {
-      if (forms.pending() || designer.pending() || authoring.hasDraft() || pendingWriting) {
+      if (forms.pending() || designer.pending() || images.hasDraft() || authoring.hasDraft() || pendingWriting) {
         throw new Error("Apply or discard the other pending document edits before applying metadata.");
       }
       const current = infoRef.current;
@@ -946,6 +980,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function markRedaction(rect: PdfRect, targetPage = pageRef.current) {
+    if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before marking redactions."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before marking redactions."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before marking redactions."); return; }
     if (forms.pending()) { showPanel("forms"); setError("Apply or discard form changes before marking redactions."); return; }
@@ -964,6 +999,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function applyForms() {
+    if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before filling fields."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before filling fields."); return; }
     if (authoring.hasDraft() || writingDraftRef.current) {
       setError("Apply or discard pending writing and Page authoring before applying form changes.");
@@ -984,16 +1020,86 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function hasPendingContentEdits() {
-    return writingDraftRef.current || forms.pending() || designer.pending() || authoring.hasDraft() || gesturePages.current.size > 0;
+    return writingDraftRef.current || forms.pending() || designer.pending() || images.hasDraft() || authoring.hasDraft() || gesturePages.current.size > 0;
   }
 
-  function draftProjection(exclude?: "formFilling" | "formDesign") {
+  function draftProjection(exclude?: "formFilling" | "formDesign" | "imageEditing") {
     return hasDocumentDrafts({
       writing: writingDraftRef.current || gesturePages.current.size > 0,
       formFilling: exclude !== "formFilling" && forms.pending(),
       formDesign: exclude !== "formDesign" && designer.pending(),
       pageAuthoring: authoring.hasDraft(),
+      imageEditing: exclude !== "imageEditing" && images.hasDraft(),
       redaction: redactionsRef.current.length > 0,
+    });
+  }
+
+  function imageEditingAvailable() {
+    if (busyRef.current) return false;
+    if (draftProjection("imageEditing")) {
+      setError("Apply or discard other writing, forms, metadata, authoring and redaction drafts before editing images.");
+      return false;
+    }
+    return true;
+  }
+
+  function selectSourceImage(targetPage: number, image: ImageOccurrence) {
+    if (!imageEditingAvailable()) return;
+    try {
+      images.select(targetPage, image);
+      setPage(targetPage); setError(null); setToast(null);
+      setPanel("image-edit"); setMode("write");
+    } catch (error) { setError(errorMessage(error)); }
+  }
+
+  function placeSourceImage(targetPage: number, placement: SourceImagePlacement) {
+    if (!imageEditingAvailable()) return;
+    try {
+      const current = infoRef.current, draft = images.draft;
+      if (!current) throw new Error("Open a PDF first.");
+      assertImageDraft(current, draft);
+      if (draft.page !== targetPage || !draft.source.editable || draft.remove) throw new Error("Select an editable image occurrence on this page first.");
+      images.change(withPlacement(draft, placement)); setError(null);
+    } catch (error) { setError(errorMessage(error)); }
+  }
+
+  function chooseImageReplacement() {
+    if (!imageEditingAvailable()) return;
+    try { images.prepareReplacement(); replacementImageRef.current?.click(); }
+    catch (error) { setError(errorMessage(error)); }
+  }
+
+  function stageImageReplacement(file: File) {
+    if (!imageEditingAvailable()) return;
+    void run("Preparing replacement image...", async () => {
+      await images.stage(file);
+      setToast("Replacement prepared. The source occurrence changes only when you Apply.");
+    });
+  }
+
+  function applyImageChanges() {
+    if (!imageEditingAvailable()) return;
+    void run("Applying source image changes...", async () => {
+      const current = infoRef.current;
+      if (!current) throw new Error("Open a PDF first.");
+      const change = imageChange(current, images.draft);
+      await syncDraft(current.id, draftProjection());
+      const next = await imageEditingBridge.apply(current, change);
+      images.clear();
+      await adopt(next);
+      await syncDraft(next.id, draftProjection());
+      setToast("Image occurrence changed in page content. Undo is available; save a copy to keep it. This is not secure redaction.");
+    });
+  }
+
+  function discardImageDraft() {
+    if (gesturePages.current.size) { setError("Finish or cancel the live page gesture before discarding an image draft."); return; }
+    void run("Discarding image draft...", async () => {
+      const current = infoRef.current;
+      if (!current) throw new Error("This PDF tab is no longer open.");
+      await images.discard();
+      await syncDraft(current.id, draftProjection());
+      setToast("Image draft discarded. Already applied PDF edits are unchanged.");
     });
   }
 
@@ -1355,6 +1461,8 @@ export default function DocumentWorkspace(props: Props) {
       onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) importPages(file); event.currentTarget.value = ""; }} />
     <input ref={imageRef} className="file-input" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" aria-label="Choose image to insert"
       onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) authoring.stage(file); event.currentTarget.value = ""; }} />
+    <input ref={replacementImageRef} className="file-input" type="file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" aria-label="Choose replacement image"
+      onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) stageImageReplacement(file); event.currentTarget.value = ""; }} />
     <input ref={attachmentRef} className="file-input" type="file" aria-label="Choose file to embed as an attachment"
       onChange={(event) => { const file = event.currentTarget.files?.[0]; if (file) addAttachment(file); event.currentTarget.value = ""; }} />
 
@@ -1372,7 +1480,7 @@ export default function DocumentWorkspace(props: Props) {
           <button key={item.mode} className={mode === item.mode ? "selected" : ""}
             aria-label={item.label} title={item.label}
             aria-current={mode === item.mode ? "page" : undefined}
-            disabled={disabled || (item.mode === "organize" || item.mode === "write") && (forms.count > 0 || pendingDesign) || item.mode === "organize" && redactions.length > 0} onClick={() => changeMode(item.mode)}>
+            disabled={disabled || (item.mode === "organize" || item.mode === "write") && (forms.count > 0 || pendingDesign || images.pending) || item.mode === "organize" && redactions.length > 0} onClick={() => changeMode(item.mode)}>
             <item.icon size={16} /><span>{item.label}</span>
           </button>)}
       </nav>
@@ -1380,8 +1488,8 @@ export default function DocumentWorkspace(props: Props) {
         <IconButton label="Find in document (Command+F)" disabled={disabled} onClick={() => showPanel("search")}><Search size={18} /></IconButton>
         <IconButton label="Print PDF (Command+P)" disabled={disabled} onClick={() => requestOutput("print")}><Printer size={18} /></IconButton>
         <span className="toolbar-divider" />
-        <IconButton label="Undo (Command+Z)" disabled={disabled || authoring.pending || pendingMetadata || pendingDesign || redactions.length > 0 || forms.count > 0 || !info?.canUndo} onClick={() => history(false)}><Undo2 size={18} /></IconButton>
-        <IconButton label="Redo (Command+Shift+Z)" disabled={disabled || authoring.pending || pendingMetadata || pendingDesign || redactions.length > 0 || forms.count > 0 || !info?.canRedo} onClick={() => history(true)}><Redo2 size={18} /></IconButton>
+        <IconButton label="Undo (Command+Z)" disabled={disabled || authoring.pending || pendingMetadata || pendingDesign || images.pending || redactions.length > 0 || forms.count > 0 || !info?.canUndo} onClick={() => history(false)}><Undo2 size={18} /></IconButton>
+        <IconButton label="Redo (Command+Shift+Z)" disabled={disabled || authoring.pending || pendingMetadata || pendingDesign || images.pending || redactions.length > 0 || forms.count > 0 || !info?.canRedo} onClick={() => history(true)}><Redo2 size={18} /></IconButton>
         <button className="button primary save-button" aria-label={saveLabel} title={saveLabel} disabled={disabled || redactionIntent && !redactions.length} onClick={() => save(true)}>
           {redactionIntent ? <FileOutput size={15} /> : <Copy size={15} />}<span>{saveLabel}</span>
         </button>
@@ -1398,6 +1506,9 @@ export default function DocumentWorkspace(props: Props) {
     {pendingDesign && <div className="protected-banner designer-draft-banner" role="status"><ClipboardList size={15} />
       Unapplied form-design draft. Save requires applying or discarding it.
       <button className="text-button" onClick={() => showPanel("form-designer")}>Review design</button></div>}
+    {images.pending && <div className="protected-banner image-draft-banner" role="status"><ImagePlus size={15} />
+      Unapplied source image edit. Apply or discard it before saving or exporting.
+      <button className="text-button" onClick={() => showPanel("image-edit")}>Review image</button></div>}
     {ocrProgress && <OcrJobProgress progress={ocrProgress} canceling={ocrCanceling} onCancel={cancelOcr} />}
 
     <div className="workspace">
@@ -1420,6 +1531,9 @@ export default function DocumentWorkspace(props: Props) {
             </button>
             <button className={tool === "edit-text" ? "chosen" : ""} disabled={editDisabled} onClick={() => chooseTool("edit-text")}>
               <span className="tool-icon blue"><SquarePen size={19} /></span><span>Edit existing text</span><ChevronRight size={14} className="list-arrow" />
+            </button>
+            <button className={tool === "edit-image" ? "chosen" : ""} disabled={disabled} onClick={() => chooseTool("edit-image")}>
+              <span className="tool-icon blue"><ImagePlus size={19} /></span><span>Edit existing images</span><ChevronRight size={14} className="list-arrow" />
             </button>
             <button disabled={disabled} onClick={() => showPanel("forms")}>
               <span className="tool-icon blue"><ClipboardList size={19} /></span><span>Fill form fields</span><ChevronRight size={14} className="list-arrow" />
@@ -1450,7 +1564,7 @@ export default function DocumentWorkspace(props: Props) {
             <button disabled={authoringDisabled} onClick={() => authoring.choose(authoring.draft?.kind ?? "image")}>
               <span className="tool-icon blue"><ImagePlus size={19} /></span><span>Page authoring</span><ChevronRight size={14} className="list-arrow" />
             </button>
-            <button className={mode === "organize" ? "chosen" : ""} disabled={disabled || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign} onClick={() => changeMode("organize")}>
+            <button className={mode === "organize" ? "chosen" : ""} disabled={disabled || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign || images.pending} onClick={() => changeMode("organize")}>
               <span className="tool-icon teal"><LayoutGrid size={19} /></span><span>Organize pages</span><ChevronRight size={14} className="list-arrow" />
             </button>
             <button disabled={disabled} onClick={() => showPanel("properties")}><span className="tool-icon neutral"><Info size={18} /></span><span>Document properties</span><ChevronRight size={14} className="list-arrow" /></button>
@@ -1492,6 +1606,14 @@ export default function DocumentWorkspace(props: Props) {
         {panel === "preflight" && info && <PreflightPanel info={info} disabled={disabled} pending={pendingDraft}
           current={() => infoRef.current} hasPending={draftProjection} prepare={prepareTechnical} run={run} onError={setError}
           onNotice={setToast} onArchive={requestArchive} />}
+        {panel === "image-edit" && info && <ImageEditingPanel info={info} page={page} inspection={images.inspection(page)}
+          draft={images.draft} disabled={imageEditingDisabled} stale={images.stale} error={error} notice={toast}
+          onSelect={selectSourceImage} onChange={images.change} onReplacement={chooseImageReplacement}
+          onApply={applyImageChanges} onDiscard={discardImageDraft} retry={images.retry} onLocate={setPage}
+          onTarget={() => {
+            chooseTool("edit-image");
+            if (window.matchMedia("(max-width: 899px)").matches) setPanelOpen(false);
+          }} />}
         {panel === "authoring" && info && authoring.draft && info.pages[authoring.draft.page] && <AuthoringPanel
           draft={authoring.draft} geometry={info.pages[authoring.draft.page].geometry}
           currentPage={page} pageCount={info.pageCount} disabled={authoringDisabled}
@@ -1504,13 +1626,13 @@ export default function DocumentWorkspace(props: Props) {
           draft={forms.draft} count={forms.count} loading={forms.loading} error={forms.error}
           actionError={error} notice={toast}
           fieldErrors={forms.fieldErrors} stale={forms.stale} retry={forms.retry}
-          disabled={disabled || redactions.length > 0 || authoring.pending || pendingWriting || pendingMetadata || pendingDesign} onChange={forms.change} onApply={applyForms}
+          disabled={disabled || redactions.length > 0 || authoring.pending || pendingWriting || pendingMetadata || pendingDesign || images.pending} onChange={forms.change} onApply={applyForms}
           onDiscard={() => { setError(null); setModal({ type: "form-discard" }); }} onLocate={locateFormWidget}
           onDesign={() => showPanel("form-designer")} onFlatten={reviewStaticFormCopy} />}
         {panel === "form-designer" && info && <FormDesignerPanel info={info} page={page} designer={designer.designer}
           draft={designer.draft} widgetIndex={designerWidget} loading={designer.loading} stale={designer.stale}
           error={error ?? designer.error} notice={toast}
-          disabled={disabled || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || redactions.length > 0}
+          disabled={disabled || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || images.pending || redactions.length > 0}
           retry={designer.retry} onNew={createDesignerField} onSelect={selectDesignerField} onChange={designer.change}
           onWidget={setDesignerWidget} onTarget={() => {
             if (!designerAvailable()) return;
@@ -1528,7 +1650,7 @@ export default function DocumentWorkspace(props: Props) {
           onRemove={(entry) => { setError(null); setModal({ type: "bookmark-delete", entry }); }}
           onMove={(entry, parent, at) => edit({ type: "bookmark_move", id: entry.id, parent, at }, "Organizing bookmarks...", () => setToast("Bookmark moved. Its destination and children are unchanged."))} />}
         {panel === "properties" && <DocumentPropertiesPanel info={info} draft={metadataDraft}
-          disabled={disabled || readOnly || managementTooLarge || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign} onDraft={(draft) => setMetadataDraft(metadataChanged(draft) ? draft : null)}
+          disabled={disabled || readOnly || managementTooLarge || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign || images.pending} onDraft={(draft) => setMetadataDraft(metadataChanged(draft) ? draft : null)}
           onApply={applyMetadata} onDiscard={() => setMetadataDraft(null)} />}
         {panel === "attachments" && <AttachmentsPanel info={info} editDisabled={managementEditDisabled} exportDisabled={disabled || pendingDraft}
           onAdd={() => addAttachment()}
@@ -1550,6 +1672,7 @@ export default function DocumentWorkspace(props: Props) {
         {panel === "write" && <div className="panel-scroll writing-settings">
           <p>Add text annotations or freehand marks. To replace original page text, choose Edit existing text.</p>
           <button className="button secondary existing-text-launch" disabled={editDisabled} onClick={() => chooseTool("edit-text")}><SquarePen size={15} />Edit existing text</button>
+          <button className="button secondary existing-text-launch" disabled={disabled} onClick={() => chooseTool("edit-image")}><ImagePlus size={15} />Edit existing images</button>
           <button className="button secondary existing-text-launch" disabled={authoringDisabled}
             onClick={() => authoring.choose(authoring.draft?.kind ?? "image")}><ImagePlus size={15} />Page authoring</button>
           <button className="button secondary existing-text-launch" disabled={disabled} onClick={() => showPanel("form-designer")}><ClipboardList size={15} />Design form fields</button>
@@ -1686,15 +1809,21 @@ export default function DocumentWorkspace(props: Props) {
               width={viewportSize.width} height={viewportSize.height} container={viewerRef}
               onPage={setPage} onScale={onScale} onError={notifyError}
               renderPage={(index, frame) => pdf && <PdfPage pdf={pdf} page={index} initialSize={frame} zoom={zoom} width={viewportSize.width} height={viewportSize.height} copyAllowed={info.copyAllowed}
-                tool={tool} disabled={tool === "image" || tool === "crop" ? authoringDisabled : tool === "redact" ? redactDisabled : editDisabled} annotations={info.annotations.filter((annotation) => annotation.page === index)}
+                tool={tool} disabled={tool === "edit-image" ? imageEditingDisabled : tool === "image" || tool === "crop" ? authoringDisabled : tool === "redact" ? redactDisabled : editDisabled} annotations={info.annotations.filter((annotation) => annotation.page === index)}
                 authoringDraft={authoring.draft} onAuthoringPoint={(point) => authoring.place(index, point)}
                 onAuthoringCrop={(margins) => authoring.crop(index, margins)}
                 formDesigner={panelOpen && panel === "form-designer" || tool === "form-widget" ? {
                   fields: designer.designer?.fields ?? [], draft: designer.draft, widgetIndex: designerWidget,
                   active: tool === "form-widget",
-                  disabled: disabled || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || redactions.length > 0,
+                  disabled: disabled || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || images.pending || redactions.length > 0,
                   onSelect: selectDesignerField, onPlace: placeDesignerWidget,
-                  onGesture: (pending) => onGestureDraft(index, pending),
+                  onGesture: (pending) => onGestureDraft(index, pending, "form-design"),
+                } : undefined}
+                imageEditing={tool === "edit-image" ? {
+                  images: images.inspection(index).result?.images ?? [], draft: images.stale ? null : images.draft,
+                  geometry: info.pages[index].geometry, disabled: imageEditingDisabled, active: tool === "edit-image",
+                  inspect: images.inspectPage, onSelect: selectSourceImage, onPlace: placeSourceImage,
+                  onGesture: (pending) => onGestureDraft(index, pending, "image-editing"), onError: notifyError,
                 } : undefined}
                 redactions={redactions.filter((mark) => mark.page === index)} onRedaction={(rect) => markRedaction(rect, index)}
                 selectedAnnotation={selectedAnnotation}
@@ -1722,7 +1851,7 @@ export default function DocumentWorkspace(props: Props) {
               <IconButton label={item.label} active={tool === item.tool}
                 disabled={disabled || readOnly && !["select", "hand"].includes(item.tool)
                   || redactions.length > 0 && !["select", "hand", "redact"].includes(item.tool)
-                  || (forms.count > 0 || pendingDesign) && !["select", "hand"].includes(item.tool)}
+                  || (forms.count > 0 || pendingDesign || images.pending) && !["select", "hand"].includes(item.tool)}
                 onClick={() => chooseTool(item.tool)}><item.icon size={19} />
                 {item.tool === "highlight" && <span className="highlighter-swatch" />}
               </IconButton>
@@ -1775,7 +1904,7 @@ export default function DocumentWorkspace(props: Props) {
               <Thumbnail pdf={pdf} page={index} /><span className="thumbnail-number">{index + 1}</span>
             </button>)}
         </div>
-        <button className="rail-organize" disabled={disabled || redactions.length > 0 || forms.count > 0 || pendingDesign} onClick={() => changeMode("organize")}><LayoutGrid size={14} />Organize pages</button>
+        <button className="rail-organize" disabled={disabled || redactions.length > 0 || forms.count > 0 || pendingDesign || images.pending} onClick={() => changeMode("organize")}><LayoutGrid size={14} />Organize pages</button>
       </aside>}
       <nav className="utility-rail" aria-label="Document panels">
         <IconButton label="Toggle page thumbnails" active={railOpen && mode !== "organize"} disabled={disabled} onClick={() => { setRailOpen((open) => !open); if (mode === "organize") setMode("read"); }}><FileText size={18} /></IconButton>
@@ -1792,13 +1921,13 @@ export default function DocumentWorkspace(props: Props) {
     </div>
 
     <footer className="statusbar">
-      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : redactions.length ? <><span className="status-dot dirty" />{redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}</> : forms.count ? <><span className="status-dot dirty" />{forms.count} unapplied form {forms.count === 1 ? "field" : "fields"}</> : authoring.pending ? <><span className="status-dot dirty" />Unapplied page authoring</> : pendingMetadata ? <><span className="status-dot dirty" />Unapplied metadata draft</> : pendingWriting || gestureDraft ? <><span className="status-dot dirty" />Uncommitted writing or area</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
+      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : images.pending ? <><span className="status-dot dirty" />Unapplied source image edit</> : redactions.length ? <><span className="status-dot dirty" />{redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}</> : forms.count ? <><span className="status-dot dirty" />{forms.count} unapplied form {forms.count === 1 ? "field" : "fields"}</> : authoring.pending ? <><span className="status-dot dirty" />Unapplied page authoring</> : pendingMetadata ? <><span className="status-dot dirty" />Unapplied metadata draft</> : pendingWriting || gestureDraft ? <><span className="status-dot dirty" />Uncommitted writing or area</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
       <div className="document-status">{info && <><span>{info.pageCount} {info.pageCount === 1 ? "page" : "pages"}</span><span className="status-separator" /><span>{formatBytes(info.byteLength)}</span></>}</div>
       <div className="privacy-status"><ShieldCheck size={12} /><span>{runtimeIssue ? "Desktop runtime unavailable" : native ? "Local files. No uploads." : "Preview uses the real Rust engine"}</span></div>
     </footer>
 
-    {error && !modal && !outputMode && !archiveOpen && !utilityPanel && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
-    {toast && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "authoring" && authoring.draft)) && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
+    {error && !modal && !outputMode && !archiveOpen && !utilityPanel && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "image-edit" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
+    {toast && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "image-edit" || panel === "authoring" && authoring.draft)) && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
 
     {modal?.type === "protection-copy" && info && <ProtectionCopyDialog info={info} busy={Boolean(busy)} error={error}
       onClose={() => setModal(null)} onSubmit={exportProtectionCopy} />}

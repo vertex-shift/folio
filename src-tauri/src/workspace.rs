@@ -22,6 +22,7 @@ pub struct Workspace {
     next_open_id: u64,
     drafts: HashSet<u64>,
     authoring_images: crate::authoring::ImageStaging,
+    image_replacements: crate::authoring::ImageStaging,
     pub(crate) outputs: crate::output::OutputJobs,
     pub(crate) comparisons: crate::comparison::ComparisonJobs,
     pub(crate) archives: crate::archive::ArchiveJobs,
@@ -137,6 +138,7 @@ impl Workspace {
             && (document.is_dirty()
                 || self.drafts.contains(&id)
                 || self.authoring_images.contains(id)
+                || self.image_replacements.contains(id)
                 || self.outputs.has_document(id)
                 || self.archives.has_document(id))
         {
@@ -147,6 +149,7 @@ impl Workspace {
         self.invalidate_technical(id);
         self.drafts.remove(&id);
         self.authoring_images.clear(id);
+        self.image_replacements.clear(id);
         self.redactions.retain(|_, job| job.plan.document_id != id);
         self.ocrs.retain(|_, job| job.plan.document_id != id);
         self.outputs.close_document(id);
@@ -183,6 +186,7 @@ impl Workspace {
         self.is_dirty()
             || !self.drafts.is_empty()
             || !self.authoring_images.is_empty()
+            || !self.image_replacements.is_empty()
             || self.outputs.is_pending()
             || self.archives.is_pending()
     }
@@ -196,7 +200,12 @@ impl Workspace {
         self.check_revision(id, revision)?.ensure_writable()?;
         self.comparisons.invalidate(id);
         self.invalidate_technical(id);
-        self.authoring_images.stage(id, revision, bytes)
+        self.authoring_images.stage_with_other_bytes(
+            id,
+            revision,
+            bytes,
+            self.image_replacements.byte_length(),
+        )
     }
 
     pub fn insert_authoring_image(
@@ -224,9 +233,60 @@ impl Workspace {
         self.authoring_images.cancel(id, asset_id)
     }
 
+    pub fn stage_image_replacement(
+        &mut self,
+        id: u64,
+        revision: u64,
+        bytes: &[u8],
+    ) -> Result<crate::authoring::ImageAsset> {
+        let session = self.check_revision(id, revision)?;
+        session.ensure_writable()?;
+        let epoch = session.mutation_epoch();
+        let result = self.image_replacements.stage_with_other_bytes(
+            id,
+            epoch,
+            bytes,
+            self.authoring_images.byte_length(),
+        )?;
+        self.invalidate_technical(id);
+        self.comparisons.invalidate(id);
+        self.ocrs.retain(|_, job| job.plan.document_id != id);
+        Ok(result)
+    }
+
+    pub fn edit_image_occurrence(
+        &mut self,
+        id: u64,
+        revision: u64,
+        change: crate::image_edit::ImageChange,
+    ) -> Result<DocumentInfo> {
+        let session = self.check_revision(id, revision)?;
+        session.ensure_writable()?;
+        let replacement = change
+            .asset_id()
+            .map(|asset_id| {
+                self.image_replacements
+                    .get_shared(id, session.mutation_epoch(), asset_id)
+            })
+            .transpose()?;
+        let result = self
+            .current_mut(id, revision)?
+            .edit_image_occurrence(&change, replacement.as_deref())?;
+        self.image_replacements.clear(id);
+        Ok(result)
+    }
+
+    pub fn cancel_image_replacement(&mut self, id: u64, asset_id: u64) -> Result<bool> {
+        self.document(id)?;
+        self.image_replacements.cancel(id, asset_id)
+    }
+
     pub fn ensure_export_ready(&self, id: u64, revision: u64) -> Result<&Session> {
         let session = self.check_revision(id, revision)?;
-        if self.drafts.contains(&id) || self.authoring_images.contains(id) {
+        if self.drafts.contains(&id)
+            || self.authoring_images.contains(id)
+            || self.image_replacements.contains(id)
+        {
             return Err(Error::Invalid(
                 "Apply or discard pending edits before saving or exporting this PDF. Use Export redacted copy for pending redactions.".into(),
             ));
@@ -616,6 +676,12 @@ impl Workspace {
         dpi: u16,
         regions: &[Region],
     ) -> Result<Plan> {
+        if self.image_replacements.contains(id) {
+            return Err(Error::Invalid(
+                "Apply or discard the pending image replacement before preparing a redacted copy."
+                    .into(),
+            ));
+        }
         if self
             .ocrs
             .values()
@@ -643,6 +709,12 @@ impl Workspace {
         let job = self.redactions.get(&job_id).ok_or_else(|| {
             Error::Invalid("This redaction export was canceled or superseded. Export again.".into())
         })?;
+        if self.image_replacements.contains(job.plan.document_id) {
+            return Err(Error::Invalid(
+                "Apply or discard the pending image replacement before exporting redactions."
+                    .into(),
+            ));
+        }
         self.check_revision(job.plan.document_id, job.plan.revision)
     }
 
