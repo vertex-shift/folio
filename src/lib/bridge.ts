@@ -6,6 +6,7 @@ import { safeExternalUrl } from "./navigation";
 import { resolveRuntime } from "./runtime";
 import { MAX_IMAGE_BYTES } from "./authoring";
 import type { ImageAsset, ImagePlacement } from "./authoring";
+import type { FormChange, FormInfo } from "./formsTypes";
 
 const runtime = await resolveRuntime({
   hasNativeBridge: isTauri(),
@@ -173,6 +174,13 @@ export const bridge = {
   cancelImage(documentId: number, assetId: number): Promise<boolean> {
     return native ? invoke("cancel_authoring_image", { documentId, assetId })
       : previewJson("/authoring/image/cancel", post({ documentId, assetId }));
+  },
+  forms(info: DocumentInfo): Promise<FormInfo> {
+    return native ? invoke("form_fields", revision(info)) : previewJson("/forms", post(revision(info)));
+  },
+  fillForms(info: DocumentInfo, changes: FormChange[]): Promise<DocumentInfo> {
+    const input = { ...revision(info), changes };
+    return native ? invoke("fill_form_fields", input) : previewJson("/forms/fill", post(input));
   },
   beginRedaction(info: DocumentInfo, dpi: 150 | 300, regions: RedactionRegion[]): Promise<RedactionPlan> {
     const input = { ...revision(info), dpi, regions };

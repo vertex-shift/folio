@@ -114,6 +114,7 @@ a { color: var(--blue-ink); text-underline-offset: 3px; }
 
 .tools-panel { width: 226px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--border); min-height: 0; z-index: 25; animation: context-reveal var(--motion-surface) var(--ease); }
 .tools-panel.panel-search, .tools-panel.panel-comments, .tools-panel.panel-edit, .tools-panel.panel-redact { width: 274px; }
+.tools-panel.panel-forms { width: 300px; }
 .tools-panel.panel-tools { overflow-y: auto; }
 .panel-tools .tools-list { flex-shrink: 0; }
 .panel-progress { display: flex; align-items: center; gap: 7px; padding: 18px; color: var(--muted); font-size: 11px; }
@@ -136,6 +137,46 @@ a { color: var(--blue-ink); text-underline-offset: 3px; }
 .source-text-reason svg { margin-right: 5px; }
 .source-text-error { padding-bottom: 15px; }
 .source-text-error .button { margin-inline: 18px; }
+.forms-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.form-intro { padding: 0 18px 8px; }
+.form-intro > p { color: var(--muted); font-size: 12px; line-height: 1.7; margin-bottom: 14px; }
+.form-intro .checkbox-setting { margin-top: 12px; }
+.form-error { padding: 0 18px 16px; }
+.form-error .inline-error { margin-bottom: 10px; }
+.form-notice { padding: 12px 18px; background: var(--warning-bg); color: var(--warning-ink); font-size: 12px; line-height: 1.7; border-block: 1px solid var(--warning-border); }
+.form-fields { border-top: 1px solid var(--line); }
+.form-field { padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.form-field-changed { background: var(--info-bg); }
+.form-field-heading { display: flex; align-items: baseline; gap: 8px; justify-content: space-between; margin-bottom: 9px; }
+.form-field-label { color: var(--ink); font-size: 12px; font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; }
+.form-required { display: block; font-size: 11px; font-weight: 400; color: var(--secondary); }
+.form-draft-label { font-size: 11px; flex-shrink: 0; color: var(--info-ink); }
+.form-field-name { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; line-height: 1.6; margin-bottom: 9px; }
+.form-control { display: flex; flex-direction: column; gap: 9px; }
+.form-control > input, .form-control > textarea, .form-control > select { width: 100%; min-width: 0; min-height: 34px; padding: 7px 9px; border: 1px solid var(--control-border); background: var(--input-bg); color: var(--ink); border-radius: var(--radius-control); font: inherit; font-size: 12px; line-height: 1.5; }
+.form-control > textarea { resize: vertical; max-height: 240px; }
+.form-control[aria-invalid="true"] > input, .form-control[aria-invalid="true"] > textarea, .form-control[aria-invalid="true"] > select { border-color: var(--danger-ink); }
+.form-checkbox, .form-radio-options label { display: flex; gap: 9px; align-items: center; min-height: 32px; font-size: 12px; line-height: 1.6; color: var(--secondary); }
+.form-radio-options { border: 0; padding: 0; margin: 0; min-width: 0; }
+.form-radio-options label + label { margin-top: 4px; }
+.form-checkbox input, .form-radio-options input { accent-color: var(--blue); flex-shrink: 0; width: 16px; height: 16px; }
+.form-radio-options span { overflow-wrap: anywhere; }
+.form-field-help { color: var(--muted); font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; margin-top: 7px; }
+.form-field-help p + p { margin-top: 5px; }
+.form-unfillable { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.form-page-links { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
+.form-page-links .text-button { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; min-height: 26px; padding: 0; }
+.form-support { padding: 16px 18px; color: var(--muted); font-size: 11px; line-height: 1.8; }
+.form-support summary { cursor: pointer; color: var(--secondary); padding-block: 4px; }
+.form-support p { margin-top: 10px; }
+.form-actions { flex-shrink: 0; padding: 14px 18px; border-top: 1px solid var(--line); }
+.form-actions > p { color: var(--secondary); font-size: 11px; line-height: 1.6; margin-bottom: 10px; }
+.form-actions > .inline-error { color: var(--danger-ink); }
+.form-actions > .form-action-notice { color: var(--info-ink); }
+.form-actions > .button { width: 100%; }
+.form-actions > .text-button { display: block; width: 100%; margin-top: 10px; font-size: 12px; }
+.form-draft-banner { flex-wrap: wrap; }
+.form-draft-banner .text-button { font-size: 12px; padding: 0 4px; }
 .redaction-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .redaction-intro { padding: 0 20px 16px; color: var(--secondary); font-size: 12px; line-height: 1.8; }
 .redaction-intro p + p { margin-top: 12px; }

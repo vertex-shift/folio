@@ -365,6 +365,17 @@ PDF operation is rejected. Uncommitted note/text drafts participate in exit
 protection. The on-page ink preview is a live rendering of the user's stroke,
 not decorative artwork; it commits as a PDF annotation when the pointer lifts.
 
+Forms extends the existing contextual panel, not the mode hierarchy. The
+300px panel uses labeled native text/password/checkbox/radio/select controls,
+qualified names, required/read-only states, field filtering, and page links
+for repeated widgets. Signature slots have no text-entry affordance.
+Values remain document-workspace drafts while panels/pages unmount. A visible
+Unapplied label and banner distinguish those values from the rendered PDF.
+Keep Apply form changes and confirmed Discard actions in a fixed footer.
+Errors preserve drafts; save/history/source mutations and exit protection
+must not quietly ignore them. Explain the embedded-font and unsupported
+script/calculation/XFA boundaries without adding placeholder controls.
+
 Appearance is a nonmodal title-bar popover, not an interrupting settings
 dialog. Its standard radio group supports keyboard navigation, visible
 selection, Escape, outside dismissal, and focus restoration. Choices persist

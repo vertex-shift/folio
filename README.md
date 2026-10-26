@@ -111,6 +111,7 @@ the tag before rerunning the workflow.
 | Highlight | Select a passage and choose Highlight, or drag across text with the highlighter |
 | Notes | Place a note on the page, enter Unicode text, and revisit it in Comments |
 | Annotations | Portable PDF appearance streams; edit note/placed-text contents, remove marks, and undo changes |
+| Fill forms | Inspect and fill supported existing AcroForm text, multiline/comb/password, checkbox, radio, list, and combo fields; apply values and embedded appearances together |
 | Organize | Move, rotate, delete, duplicate, and insert blank pages; import another PDF after the selected page |
 | Extract | Export page numbers/ranges to a separate PDF, in the requested order, without changing the working document |
 | Undo/redo | Document changes, including annotations and page operations; saved-state tracking |
@@ -132,7 +133,7 @@ discarding successfully opened tabs. Protected files prompt for passwords
 one at a time; canceling one does not cancel the others.
 
 Each tab retains its own document bytes, edits, undo/redo, page and reading
-position, zoom, search, tools, and pending redaction marks. Only the active
+position, zoom, search, tools, pending redaction marks, and unapplied form values. Only the active
 tab renders page canvases and thumbnails. Use the tab strip's arrow keys,
 Home/End, or **Control+Tab / Control+Shift+Tab** to move between documents.
 
@@ -171,8 +172,11 @@ protected bytes, not that rendering copy. Signed PDFs remain read-only and
 an unchanged saved copy retains the original bytes.
 
 User-password access with restricted editing/copying permissions is
-conservatively read-only in Folio; reopen with the owner password to edit or
-export pages. Text copying is disabled when the PDF disallows it. Encrypted
+conservatively read-only for general editing; reopen with the owner password
+to edit content or export pages. **Forms** separately permits filling when the
+PDF grants `FILLABLE` access (`ANNOTABLE` for legacy revision-2 protection),
+without enabling page, text, annotation, or extraction edits.
+Text copying is disabled when the PDF disallows it. Encrypted
 donor pages cannot be inserted into an unencrypted destination; when the
 destination is encrypted, inserted pages inherit its protection.
 
@@ -255,6 +259,59 @@ The implementation uses RustCrypto `cms`/`der`/`x509-cert` for structural
 checks and the Rust `openssl` bindings with vendored OpenSSL 3 for PKCS#12
 and CMS cryptography. No external executable or test private key is shipped.
 This feature is unrelated to macOS application signing or notarization.
+
+## Filling existing PDF forms
+
+Choose **All tools > Fill form fields**, or the **Show form fields** button
+on the utility rail. The panel lists qualified field names and accessible
+labels, with page links for each occurrence. Filter by name or the current
+page. A field repeated on several pages is one value, not independent drafts.
+
+Supported AcroForms include plain text, multiline text, comb boxes with a
+maximum length, checkboxes with a shared export/on-state, radio groups with
+unambiguous states (including `RadiosInUnison`), single/multiple-selection
+lists, and fixed/editable combo boxes. Choices show their display labels while
+writing the PDF's original export values and selected indices. Required,
+read-only, locked, maximum-length, radio no-toggle, and choice constraints
+are enforced. Signature fields are identified but are not text inputs.
+
+Changing a control creates a **document-scoped draft**, not an immediate
+full-file rewrite. Drafts survive panel changes, page virtualization, and tab
+switching. Choose **Apply form changes** to update values and every repeated
+widget appearance in one undoable mutation, then save a copy. Applying errors
+keep all drafts. Discarding requires confirmation. Ordinary Save/download,
+document-history actions, source mutations, closing, and quitting cannot
+silently omit unapplied values, including in inactive tabs.
+
+Changed text/list/combo appearances embed the existing bundled Noto Sans font
+for precomposed Latin, Greek, and Cyrillic text; the original field typeface
+may change. Font size, alignment, simple colors/borders, widget rotations,
+and page geometry are respected. Auto-size fields fit down to 4 pt; values
+that cannot fit fixed-size fields are rejected rather than silently clipped.
+Existing checkbox/radio Off/on appearance streams are retained and their
+`AS` states synchronized with `V`. No form is flattened.
+If the PDF already requests viewer-generated appearances (`NeedAppearances`),
+that global request is retained so untouched fields are not suppressed; changed
+widgets still receive their own embedded appearances and font resources.
+
+Password-type inputs and their saved appearances are masked. A PDF password
+**field** is not PDF file encryption: its value remains ordinary form data
+unless the file itself is protected. Do not enter secrets in an unprotected
+form. Folio does not log form values or execute PDF scripts.
+
+XFA, calculation dependencies, document/page actions, signed/certified/
+append-only forms, field actions/scripts, rich-text/file-selection inputs,
+multiline password fields, ambiguous names or radio states, missing button
+appearances, custom/beveled/inset/rounded borders, and unsupported geometry
+are explicitly read-only or rejected. A PDF with document JavaScript is not
+silently filled with stale calculations. This is filling existing fields,
+not form authoring, submission, JavaScript, or signature verification.
+
+Inspection is bounded to 1,024 fields, 4,096 tree nodes/options, 32 tree
+levels, and 1 MiB of field text. Values are limited to 4,000 characters or
+the PDF's lower maximum. One apply handles at most 1,024 widgets and 32 MiB
+of generated appearances. Original synthetic fixtures are generated by
+`src-tauri/tests/forms.rs`; no user forms are bundled.
 
 ## Continuous scrolling
 
@@ -497,7 +554,8 @@ package dependency.
   supported. Existing signatures remain read-only; the Digital signatures
   panel verifies the supported CMS subset above, not identity trust or all
   signature formats.
-- Interactive forms are rendered but cannot yet be filled or authored.
+- Supported existing AcroForms can be filled, but form authoring, XFA,
+  calculations, scripts/actions, and signature-field filling are not supported.
   Cropping, deleting, duplicating, importing, or extracting pages in PDFs with form
   fields or XFA is refused. Duplicate pages with popup/reply annotations
   and imported documents with optional-content layers also require a
@@ -515,7 +573,7 @@ package dependency.
 - Undo keeps up to **20 snapshots within a 64 MiB history budget**. Older
   snapshots are evicted; a document larger than the budget may have no undo
   snapshot. History is in memory only.
-- No autosave or crash recovery. Only committed annotations and page edits
+- No autosave or crash recovery. Only applied form values, annotations, and page edits
   belong to the document; save a copy before quitting.
 - Cropping, page deletion, text replacement, ordinary annotations, and extraction are
   **not secure redaction**. Use the dedicated redacted-copy export for marked

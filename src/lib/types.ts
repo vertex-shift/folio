@@ -114,7 +114,7 @@ export type Edit =
 
 export type Tool = "select" | "hand" | "highlight" | "note" | "text" | "ink" | "edit-text" | "redact" | "image" | "crop";
 export type Mode = "read" | "write" | "comment" | "organize";
-export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write" | "edit" | "redact" | "signatures" | "authoring";
+export type Panel = "tools" | "search" | "comments" | "bookmarks" | "write" | "edit" | "redact" | "signatures" | "authoring" | "forms";
 export type Zoom = { mode: "page" | "width" } | { mode: "custom"; scale: number };
 
 export interface SearchResult {

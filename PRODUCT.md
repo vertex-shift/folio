@@ -63,6 +63,15 @@ The desktop app processes document contents locally.
   Cropping is not permanent redaction, and existing-image editing remains out
   of scope. Keep cropped rendering, overlays, writing, thumbnails, and redacted
   exports on a shared MediaBox/CropBox/rotation/UserUnit geometry contract.
+- Existing AcroForm filling: inspect bounded, inherited field trees and qualified
+  names; fill supported text/multiline/comb/password, checkbox, radio, list, and
+  combo fields. Preserve export/display distinctions, repeated widgets, read-only
+  flags, constraints, encryption, and undo/redo. Apply values and portable
+  appearances together, not on every keystroke. Keep drafts at workspace scope
+  through tab switches and page virtualization; protect save, close, and quit
+  from silently exporting older values. Mask password-type fields without
+  implying file encryption. Signature fields stay non-fillable here; scripts,
+  actions, calculations, XFA, and signed/certified forms are not executed/rewritten.
 - Redaction: mark page rectangles and export a separate, fresh image-only PDF.
   Permanently replace marked pixels with opaque black before lossless image
   encoding; copy no original PDF objects, text layer, attachments, or metadata.
@@ -77,7 +86,9 @@ The desktop app processes document contents locally.
   native and preview opening flows. Preserve existing encryption, passwords,
   and permissions in saves, history, extraction, and redacted exports.
   Wrong passwords/cancellation preserve the current document. Restricted
-  user access is read-only unless the owner password is supplied. Keep
+  User access is read-only for general editing unless the owner password is
+  supplied; a separate `FILLABLE` gate permits supported form-only mutations
+  (`ANNOTABLE` for revision-2 encryption), never arbitrary content changes. Keep
   passwords in memory only and never export the decrypted rendering copy.
   Encrypted redaction retains required encryption parameters and, for legacy
   algorithms, the file identifier; disclose this exception to metadata removal.
@@ -95,15 +106,16 @@ The desktop app processes document contents locally.
 - Cryptographic signatures: inspect the supported detached CMS subset locally,
   with strict ByteRange/Contents/revision checks. Keep signed-byte integrity,
   later changes, certificate dates, and unchecked identity trust distinct.
-  Export separate unsigned, unencrypted copies using local PKCS#12 identities
-  and SHA-256/RSA or supported ECDSA. Include current working edits, preserve
+  Export separately signed copies of unsigned, unencrypted sources using local
+  PKCS#12 identities and SHA-256/RSA or supported ECDSA. Include current working edits, preserve
   source/history, guard all open-tab output paths, and block pending drafts.
   Keep keys/passwords in memory only. Reject unsupported structures, encryption,
   certification/co-signing, algorithms, and timestamp/countersignature formats.
   Do not claim trusted chains, revocation, trusted timestamps, qualified
   signatures, or PAdES-LTV; make no external certificate/document requests.
 - Password creation/removal/changes, certificate-based protection, paragraph reflow, arbitrary font/encoding support, existing-image editing,
-  interactive forms, OCR, Office conversion, advanced signing/trust validation, cloud
+  form authoring, unsupported interactive forms, OCR, Office conversion, advanced
+  signing/trust validation, cloud
   collaboration, and full Acrobat parity remain incomplete capabilities.
 - New annotations, imported pages, and created/extracted documents must remain
   real, interoperable PDFs after save/reopen. Unsupported forms, signed donors,
