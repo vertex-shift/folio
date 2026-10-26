@@ -358,7 +358,9 @@ fn handle(
         }
         (&Method::Post, "/comparison/render-bytes") => {
             let input: ComparisonSnapshot = json_body(request)?;
-            return Ok(Payload::Pdf(workspace.comparison_render_bytes(input.comparison_id, input.side)?));
+            return Ok(Payload::Pdf(
+                workspace.comparison_render_bytes(input.comparison_id, input.side)?,
+            ));
         }
         (&Method::Post, "/comparison/finish") => {
             let id = numeric_header(request, "X-Folio-Comparison-Id")?;
@@ -367,16 +369,25 @@ fn handle(
                 return Err(Error::Invalid("Comparison results exceed 4 MiB.".into()));
             }
             let mut bytes = Vec::new();
-            request.as_reader().take(limit as u64 + 1).read_to_end(&mut bytes)?;
-            if bytes.len() > limit { return Err(Error::Invalid("Comparison results exceed 4 MiB.".into())); }
-            let pages = serde_json::from_slice(&bytes)
-                .map_err(|error| Error::Invalid(format!("The comparison result is invalid: {error}")))?;
+            request
+                .as_reader()
+                .take(limit as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() > limit {
+                return Err(Error::Invalid("Comparison results exceed 4 MiB.".into()));
+            }
+            let pages = serde_json::from_slice(&bytes).map_err(|error| {
+                Error::Invalid(format!("The comparison result is invalid: {error}"))
+            })?;
             workspace.finish_comparison(id, pages)?;
             return json(());
         }
         (&Method::Post, "/comparison/report") => {
             let input: ComparisonExport = json_body(request)?;
-            return Ok(Payload::Output(workspace.comparison_report(input.comparison_id, input.allow_unencrypted)?, "application/json"));
+            return Ok(Payload::Output(
+                workspace.comparison_report(input.comparison_id, input.allow_unencrypted)?,
+                "application/json",
+            ));
         }
         (&Method::Post, "/comparison/cancel") => {
             let input: ComparisonId = json_body(request)?;
@@ -448,19 +459,31 @@ fn handle(
         }
         (&Method::Post, "/forms/designer") => {
             let input: Revision = json_body(request)?;
-            return json(workspace.check_revision(input.document_id, input.revision)?.form_designer()?);
+            return json(
+                workspace
+                    .check_revision(input.document_id, input.revision)?
+                    .form_designer()?,
+            );
         }
         (&Method::Post, "/forms/design") => {
             let input: FormDesignRequest = json_body(request)?;
-            workspace.current_mut(input.document_id, input.revision)?.design_form_fields(input.changes)?
+            workspace
+                .current_mut(input.document_id, input.revision)?
+                .design_form_fields(input.changes)?
         }
         (&Method::Post, "/forms/flatten/inspect") => {
             let input: Revision = json_body(request)?;
-            return json(workspace.check_form_flattening(input.document_id, input.revision)?.flattened_form_info()?);
+            return json(
+                workspace
+                    .check_form_flattening(input.document_id, input.revision)?
+                    .flattened_form_info()?,
+            );
         }
         (&Method::Post, "/forms/flatten") => {
             let input: Revision = json_body(request)?;
-            return Ok(Payload::Pdf(workspace.flattened_form_copy(input.document_id, input.revision)?));
+            return Ok(Payload::Pdf(
+                workspace.flattened_form_copy(input.document_id, input.revision)?,
+            ));
         }
         (&Method::Post, "/metadata") => {
             let input: Revision = json_body(request)?;

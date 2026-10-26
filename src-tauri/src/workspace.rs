@@ -225,7 +225,9 @@ impl Workspace {
     }
 
     pub(crate) fn has_redaction_job(&self, id: u64) -> bool {
-        self.redactions.values().any(|job| job.plan.document_id == id)
+        self.redactions
+            .values()
+            .any(|job| job.plan.document_id == id)
     }
 
     pub fn ensure_output_available(&self, id: u64, path: &Path) -> Result<()> {
@@ -265,7 +267,11 @@ impl Workspace {
 
     pub fn check_form_flattening(&self, id: u64, revision: u64) -> Result<&Session> {
         let session = self.ensure_export_ready(id, revision)?;
-        if self.redactions.values().any(|job| job.plan.document_id == id) {
+        if self
+            .redactions
+            .values()
+            .any(|job| job.plan.document_id == id)
+        {
             return Err(Error::Invalid(
                 "Clear pending redaction marks before making a static form copy. Flattening is not redaction.".into(),
             ));
@@ -275,15 +281,18 @@ impl Workspace {
     }
 
     pub fn flattened_form_copy(&self, id: u64, revision: u64) -> Result<Vec<u8>> {
-        self.check_form_flattening(id, revision)?.flattened_form_copy()
+        self.check_form_flattening(id, revision)?
+            .flattened_form_copy()
     }
 
     pub fn export_flattened_form_copy(&self, id: u64, revision: u64, path: &Path) -> Result<()> {
         self.ensure_output_available(id, path)?;
-        self.check_form_flattening(id, revision)?.ensure_separate_output(path)?;
+        self.check_form_flattening(id, revision)?
+            .ensure_separate_output(path)?;
         let bytes = self.flattened_form_copy(id, revision)?;
         self.ensure_output_available(id, path)?;
-        self.check_form_flattening(id, revision)?.ensure_separate_output(path)?;
+        self.check_form_flattening(id, revision)?
+            .ensure_separate_output(path)?;
         crate::document::atomic_write(path, &bytes)
     }
 

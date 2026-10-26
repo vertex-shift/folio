@@ -492,7 +492,10 @@ impl Session {
     }
 
     pub fn form_designer(&self) -> Result<crate::forms::designer::DesignerInfo> {
-        let reason = self.ensure_management_writable().err().map(|error| error.to_string());
+        let reason = self
+            .ensure_management_writable()
+            .err()
+            .map(|error| error.to_string());
         crate::forms::designer::inspect(&self.document, reason.is_none(), reason.as_deref())
     }
 
