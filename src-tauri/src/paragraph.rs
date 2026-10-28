@@ -442,9 +442,6 @@ fn layout(
             start = cursor;
             last_break = None;
         } else {
-            if breakable(glyphs[cursor].character) {
-                last_break = Some(cursor + 1);
-            }
             if occupied(&glyphs[start..=cursor]) > width + 1e-6 {
                 if let Some(end) = last_break.filter(|end| *end > start && *end <= cursor) {
                     ranges.push((start, end, false));
@@ -453,7 +450,18 @@ fn layout(
                     last_break = None;
                     continue;
                 }
+                if cursor > start
+                    && glyphs[cursor].character.is_whitespace()
+                    && breakable(glyphs[cursor].character)
+                {
+                    ranges.push((start, cursor, false));
+                    start = cursor;
+                    last_break = None;
+                    continue;
+                }
                 // An unbreakable word is kept intact and reported as overflow, never truncated.
+            } else if breakable(glyphs[cursor].character) {
+                last_break = Some(cursor + 1);
             }
             cursor += 1;
         }

@@ -315,6 +315,40 @@ fn whitespace_and_utf8_ranges_reconstruct_the_exact_draft() {
 }
 
 #[test]
+fn wrapping_whitespace_never_replaces_a_legal_boundary_with_an_overwide_space() {
+    let session = open(fixture(SOURCE));
+    let target = first(&session);
+    for text in [
+        "This real replacement uses a different font and size, but following source text must retain the inherited original font. STATE-NEW-94831.",
+        "alpha                              beta gamma delta ",
+        "One small word then a-hyphenated-word and more words.  ",
+    ] {
+        let mut request = change(&session, &target, text);
+        request.placement = [40.0, 60.0, 250.0, 140.0];
+        request.size = 14.0;
+        request.leading = 19.0;
+        let preview = session.paragraph_preview(&request).unwrap();
+        assert!(preview.layout.fits, "{text}: {:?}", preview.layout.overflow);
+        assert!(
+            preview
+                .layout
+                .lines
+                .iter()
+                .all(|line| line.advance <= 250.001)
+        );
+        assert_eq!(
+            preview
+                .layout
+                .lines
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<String>(),
+            text
+        );
+    }
+}
+
+#[test]
 fn workspace_draft_and_epoch_guards_prevent_stale_export_and_undo_resurrection() {
     let mut workspace = Workspace::default();
     let info = workspace
