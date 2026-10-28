@@ -236,15 +236,22 @@ struct ComparisonExport {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ArchiveId { archive_id: u64 }
+struct ArchiveId {
+    archive_id: u64,
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct InspectionId { inspection_id: u64 }
+struct InspectionId {
+    inspection_id: u64,
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct InspectionExport { inspection_id: u64, allow_unencrypted: bool }
+struct InspectionExport {
+    inspection_id: u64,
+    allow_unencrypted: bool,
+}
 
 enum Payload {
     Json(serde_json::Value),
@@ -370,14 +377,21 @@ fn handle(
             let result = (|| {
                 let limit = workspace.creation_plan(job_id)?.kind.file_limit();
                 if request.body_length().is_some_and(|length| length > limit) {
-                    return Err(Error::Invalid("This file exceeds its creation input limit.".into()));
+                    return Err(Error::Invalid(
+                        "This file exceeds its creation input limit.".into(),
+                    ));
                 }
                 let name = file_name(request)?;
                 let mut bytes = Vec::new();
-                request.as_reader().take(limit as u64 + 1).read_to_end(&mut bytes)?;
+                request
+                    .as_reader()
+                    .take(limit as u64 + 1)
+                    .read_to_end(&mut bytes)?;
                 workspace.stage_creation_file(job_id, name, bytes)
             })();
-            if result.is_err() { workspace.cancel_creation(job_id)?; }
+            if result.is_err() {
+                workspace.cancel_creation(job_id)?;
+            }
             return json(result?);
         }
         (&Method::Post, "/creation/prepare") => {
@@ -427,7 +441,10 @@ fn handle(
         }
         (&Method::Post, "/preflight/report") => {
             let input: InspectionExport = json_body(request)?;
-            return Ok(Payload::Output(workspace.inspection_report(input.inspection_id, input.allow_unencrypted)?, "application/json"));
+            return Ok(Payload::Output(
+                workspace.inspection_report(input.inspection_id, input.allow_unencrypted)?,
+                "application/json",
+            ));
         }
         (&Method::Post, "/preflight/cancel") => {
             let input: InspectionId = json_body(request)?;
@@ -443,17 +460,30 @@ fn handle(
         }
         (&Method::Post, "/archive/render-bytes") => {
             let input: ArchiveId = json_body(request)?;
-            return Ok(Payload::Pdf(workspace.archive_render_bytes(input.archive_id)?));
+            return Ok(Payload::Pdf(
+                workspace.archive_render_bytes(input.archive_id)?,
+            ));
         }
         (&Method::Post, "/archive/page") => {
             let archive_id = numeric_header(request, "X-Folio-Archive-Id")?;
             let index = usize::try_from(numeric_header(request, "X-Folio-Archive-Index")?)
                 .map_err(|_| Error::Invalid("The archival page index is invalid.".into()))?;
             let limit = folio_core::archive::MAX_PNG_BYTES;
-            if request.body_length().is_some_and(|length| length > limit) { return Err(Error::Invalid("An archival page exceeds 64 MiB of PNG.".into())); }
+            if request.body_length().is_some_and(|length| length > limit) {
+                return Err(Error::Invalid(
+                    "An archival page exceeds 64 MiB of PNG.".into(),
+                ));
+            }
             let mut bytes = Vec::new();
-            request.as_reader().take(limit as u64 + 1).read_to_end(&mut bytes)?;
-            if bytes.len() > limit { return Err(Error::Invalid("An archival page exceeds 64 MiB of PNG.".into())); }
+            request
+                .as_reader()
+                .take(limit as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() > limit {
+                return Err(Error::Invalid(
+                    "An archival page exceeds 64 MiB of PNG.".into(),
+                ));
+            }
             workspace.stage_archive_page(archive_id, index, &bytes)?;
             return json(());
         }

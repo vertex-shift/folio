@@ -69,18 +69,34 @@ fn replacement_staging_invalidates_technical_and_docx_jobs_even_after_cancel_res
     let replacement = workspace
         .stage_image_replacement(info.id, info.revision, &replacement_png())
         .unwrap();
-    assert!(workspace.check_inspection(inspection.inspection_id).is_err());
+    assert!(
+        workspace
+            .check_inspection(inspection.inspection_id)
+            .is_err()
+    );
     assert!(workspace.check_archive(archive.archive_id).is_err());
     assert!(workspace.check_output(docx.job_id).is_err());
     assert!(workspace.has_unsaved_changes());
-    assert!(workspace.ensure_export_ready(info.id, info.revision).is_err());
+    assert!(
+        workspace
+            .ensure_export_ready(info.id, info.revision)
+            .is_err()
+    );
     assert!(
         workspace
             .cancel_image_replacement(info.id, replacement.asset_id)
             .unwrap()
     );
-    assert!(workspace.ensure_export_ready(info.id, info.revision).is_ok());
-    assert!(workspace.check_inspection(inspection.inspection_id).is_err());
+    assert!(
+        workspace
+            .ensure_export_ready(info.id, info.revision)
+            .is_ok()
+    );
+    assert!(
+        workspace
+            .check_inspection(inspection.inspection_id)
+            .is_err()
+    );
     assert!(workspace.check_archive(archive.archive_id).is_err());
     assert!(workspace.check_output(docx.job_id).is_err());
     assert_eq!(workspace.document(info.id).unwrap().bytes(), before);
@@ -107,7 +123,11 @@ fn rejected_replacement_bytes_do_not_create_a_draft_or_cancel_valid_technical_jo
     assert!(workspace.check_inspection(inspection.inspection_id).is_ok());
     assert!(workspace.check_archive(archive.archive_id).is_ok());
     assert!(workspace.check_output(docx.job_id).is_ok());
-    assert!(workspace.ensure_export_ready(info.id, info.revision).is_ok());
+    assert!(
+        workspace
+            .ensure_export_ready(info.id, info.revision)
+            .is_ok()
+    );
     assert!(workspace.cancel_archive(archive.archive_id));
     assert!(workspace.cancel_output(docx.job_id));
     assert!(!workspace.has_unsaved_changes());
@@ -121,8 +141,16 @@ fn staged_source_replacement_blocks_scoped_close_signing_and_every_common_export
         .stage_image_replacement(info.id, info.revision, &replacement_png())
         .unwrap();
     assert!(workspace.check_signing(info.id, info.revision).is_err());
-    assert!(workspace.check_form_flattening(info.id, info.revision).is_err());
-    assert!(workspace.ensure_technical_ready(info.id, info.revision).is_err());
+    assert!(
+        workspace
+            .check_form_flattening(info.id, info.revision)
+            .is_err()
+    );
+    assert!(
+        workspace
+            .ensure_technical_ready(info.id, info.revision)
+            .is_err()
+    );
     assert!(
         workspace
             .close_document(info.id, info.revision, false)

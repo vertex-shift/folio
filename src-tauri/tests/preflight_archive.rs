@@ -625,20 +625,20 @@ fn exact_pixel_and_page_limits_never_fall_back_to_lower_quality_or_partial_selec
     };
     let geometry = sized(2880.0, 1919.9999);
     assert_eq!(
-        archive::page_plans(&[geometry.clone()], &[0], 150).unwrap()[0].pixel_width,
+        archive::page_plans(std::slice::from_ref(&geometry), &[0], 150).unwrap()[0].pixel_width,
         6000
     );
-    assert!(archive::page_plans(&[geometry.clone()], &[0], 300).is_err());
-    assert!(archive::page_plans(&[geometry.clone()], &[0], 96).is_err());
+    assert!(archive::page_plans(std::slice::from_ref(&geometry), &[0], 300).is_err());
+    assert!(archive::page_plans(std::slice::from_ref(&geometry), &[0], 96).is_err());
     let geometry = sized(2880.01, 1919.9999);
-    assert!(archive::page_plans(&[geometry.clone()], &[0], 150).is_err());
+    assert!(archive::page_plans(std::slice::from_ref(&geometry), &[0], 150).is_err());
     let geometry = sized(7864.319, 0.48);
     assert_eq!(
-        archive::page_plans(&[geometry.clone()], &[0], 150).unwrap()[0].pixel_width,
+        archive::page_plans(std::slice::from_ref(&geometry), &[0], 150).unwrap()[0].pixel_width,
         16_384
     );
     let geometry = sized(7864.329, 0.48);
-    assert!(archive::page_plans(&[geometry.clone()], &[0], 150).is_err());
+    assert!(archive::page_plans(std::slice::from_ref(&geometry), &[0], 150).is_err());
     let geometry = sized(2400.0, 1919.9999); // Exactly 20 MP after the renderer's ceiling.
     assert!(archive::page_plans(&vec![geometry.clone(); 5], &[0, 1, 2, 3, 4], 150).is_ok());
     assert!(archive::page_plans(&vec![geometry.clone(); 6], &[0, 1, 2, 3, 4, 5], 150).is_err());

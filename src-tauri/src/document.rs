@@ -321,7 +321,9 @@ impl Session {
         &self.bytes
     }
 
-    pub(crate) fn is_signed(&self) -> bool { self.signed }
+    pub(crate) fn is_signed(&self) -> bool {
+        self.signed
+    }
 
     pub(crate) fn technical_findings(&self) -> Result<Vec<crate::preflight::Finding>> {
         crate::preflight::inspect(&self.document)
@@ -362,7 +364,9 @@ impl Session {
 
     fn ensure_signing_permissions(&self) -> Result<()> {
         if crate::archive::is_folio_archive(&self.document) {
-            return Err(invalid("Folio archival copies are read-only, including signing. Sign the original PDF or create a separate non-archival workflow."));
+            return Err(invalid(
+                "Folio archival copies are read-only, including signing. Sign the original PDF or create a separate non-archival workflow.",
+            ));
         }
         if !self.permissions.modify_allowed || !self.permissions.fill_forms_allowed {
             return Err(invalid(
@@ -598,7 +602,9 @@ impl Session {
         authorization_password: Option<&str>,
     ) -> Result<Vec<u8>> {
         if crate::archive::is_folio_archive(&self.document) {
-            return Err(invalid("Folio archival copies are read-only and cannot be reprotected or unprotected. PDF/A forbids encryption; use the original PDF."));
+            return Err(invalid(
+                "Folio archival copies are read-only and cannot be reprotected or unprotected. PDF/A forbids encryption; use the original PDF.",
+            ));
         }
         if self.signed {
             return Err(invalid(

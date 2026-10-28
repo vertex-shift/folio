@@ -158,7 +158,9 @@ impl Workspace {
         }
         let session = self.ensure_export_ready(request.document_id, request.revision)?;
         if self.has_redaction_job(request.document_id) {
-            return Err(invalid("Clear pending redaction output before preparing another export."));
+            return Err(invalid(
+                "Clear pending redaction output before preparing another export.",
+            ));
         }
         validate_request(session, &request)?;
         let info = session.info()?;
@@ -230,7 +232,9 @@ impl Workspace {
         if self.outputs.job(job_id)?.plan.kind == OutputKind::Docx
             && bytes.len() > crate::conversion::MAX_DOCX_SOURCE_BYTES
         {
-            return Err(invalid("DOCX conversion requires a renderer snapshot no larger than 64 MiB."));
+            return Err(invalid(
+                "DOCX conversion requires a renderer snapshot no larger than 64 MiB.",
+            ));
         }
         Ok(bytes)
     }
@@ -423,8 +427,12 @@ fn validate_request(session: &Session, request: &OutputRequest) -> Result<()> {
         }
         return Ok(());
     }
-    if request.kind == OutputKind::Docx && info.byte_length > crate::conversion::MAX_DOCX_SOURCE_BYTES {
-        return Err(invalid("DOCX conversion requires a source snapshot no larger than 64 MiB."));
+    if request.kind == OutputKind::Docx
+        && info.byte_length > crate::conversion::MAX_DOCX_SOURCE_BYTES
+    {
+        return Err(invalid(
+            "DOCX conversion requires a source snapshot no larger than 64 MiB.",
+        ));
     }
     let max_pages = if request.kind == OutputKind::Docx {
         crate::conversion::MAX_DOCX_PAGES
@@ -610,10 +618,14 @@ fn image_dimensions(kind: OutputKind, bytes: &[u8]) -> Result<(u32, u32)> {
 
 fn image_zip(plan: &OutputPlan, entries: &[Vec<u8>]) -> Result<Vec<u8>> {
     let extension = plan.kind.extension(1);
-    let names: Vec<_> = plan.pages.iter()
+    let names: Vec<_> = plan
+        .pages
+        .iter()
         .map(|page| format!("page-{:04}.{extension}", page + 1))
         .collect();
-    let entries: Vec<_> = names.iter().zip(entries)
+    let entries: Vec<_> = names
+        .iter()
+        .zip(entries)
         .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
         .collect();
     stored_zip(&entries)
@@ -621,11 +633,19 @@ fn image_zip(plan: &OutputPlan, entries: &[Vec<u8>]) -> Result<Vec<u8>> {
 
 pub(crate) fn stored_zip(entries: &[(&str, &[u8])]) -> Result<Vec<u8>> {
     if entries.len() > u16::MAX as usize
-        || entries.iter().any(|(name, bytes)| !name.is_ascii()
-            || name.len() > u16::MAX as usize || bytes.len() > MAX_DOCUMENT_BYTES)
-        || entries.iter().map(|(name, bytes)| bytes.len() + name.len() * 2 + 98).sum::<usize>() + 22 > MAX_DOCUMENT_BYTES
+        || entries.iter().any(|(name, bytes)| {
+            !name.is_ascii() || name.len() > u16::MAX as usize || bytes.len() > MAX_DOCUMENT_BYTES
+        })
+        || entries
+            .iter()
+            .map(|(name, bytes)| bytes.len() + name.len() * 2 + 98)
+            .sum::<usize>()
+            + 22
+            > MAX_DOCUMENT_BYTES
     {
-        return Err(invalid("The ZIP exceeds the bounded 128 MiB output format."));
+        return Err(invalid(
+            "The ZIP exceeds the bounded 128 MiB output format.",
+        ));
     }
     let mut output = Vec::new();
     let mut central = Vec::new();
