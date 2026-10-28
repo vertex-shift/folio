@@ -12,6 +12,8 @@ import FormDesignerOverlay from "../features/formsDesigner/FormDesignerOverlay";
 import type { FormDesignerOverlayInput } from "../features/formsDesigner/FormDesignerOverlay";
 import ImageEditingOverlay from "../features/imageEditing/ImageEditingOverlay";
 import type { ImageEditingOverlayInput } from "../features/imageEditing/ImageEditingOverlay";
+import ParagraphEditingOverlay from "../features/paragraphEditing/ParagraphEditingOverlay";
+import type { ParagraphOverlayInput } from "../features/paragraphEditing/ParagraphEditingOverlay";
 import type { AuthoringDraft } from "../lib/authoring";
 import type { AnnotationInfo, PdfRect, Point, Quad, RedactionMark, Tool, Zoom } from "../lib/types";
 
@@ -49,6 +51,7 @@ interface Props {
   onAuthoringCrop(margins: [number, number, number, number]): void;
   formDesigner?: FormDesignerOverlayInput;
   imageEditing?: ImageEditingOverlayInput;
+  paragraphEditing?: ParagraphOverlayInput;
 }
 
 interface Layout {
@@ -424,7 +427,7 @@ export default function PdfPage(props: Props) {
         try { captureSelection(false); } catch (error) { props.onError(errorMessage(error)); }
       }}
       onClick={(event) => {
-        if (props.tool === "edit-text") { editExisting(event.target); return; }
+        if (props.tool === "edit-text") { if (!props.paragraphEditing) editExisting(event.target); return; }
         if (!["note", "text"].includes(props.tool) || props.disabled || !layout || event.target instanceof Element && event.target.closest("button")) return;
         const [x, y] = localPoint(event);
         if (props.tool === "note") {
@@ -448,6 +451,7 @@ export default function PdfPage(props: Props) {
         onPoint={props.onAuthoringPoint} onCrop={props.onAuthoringCrop} onError={props.onError} />}
       {layout && props.formDesigner && <FormDesignerOverlay {...props.formDesigner} viewport={layout.viewport} page={props.page} />}
       {layout && props.imageEditing && <ImageEditingOverlay {...props.imageEditing} viewport={layout.viewport} page={props.page} />}
+      {layout && props.paragraphEditing && <ParagraphEditingOverlay {...props.paragraphEditing} viewport={layout.viewport} page={props.page} />}
       {layout && links.filter((link) => intersectsPdfRect(link.rect, layout.viewport.viewBox)).map((link, index) => {
         const a = layout.viewport.convertToViewportPoint(link.rect[0], link.rect[1]);
         const b = layout.viewport.convertToViewportPoint(link.rect[2], link.rect[3]);

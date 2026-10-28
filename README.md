@@ -762,8 +762,101 @@ highlight operation.
 
 ## Editing existing PDF text
 
-Choose **Write** or press **E**, then click existing text on the page. The
-**Edit existing text** panel also lists the page's actual text-show operations.
+### Source paragraph reflow
+
+Choose **Write** or press **E**, then use **Paragraph reflow** in **Edit existing
+text**. Select an outlined source paragraph on the page or its numbered entry
+in the panel. These are genuine page-content `BT`/`ET` text objects, not PDF.js
+text fragments, scans, annotations or a new-text placement tool.
+
+Edit its text and physical X/Y/width/height, text size, baseline leading and
+left/center/right alignment. Coordinates are physical points from the rotated
+visible CropBox's top-left, including negative page origins and page-local
+UserUnit. The original supported right-angle orientation is retained. The
+default box conservatively encloses the original font's source footprint;
+unembedded-font bounds use declared or standard-font metrics rather than
+pretending to know exact glyph outlines.
+
+Words wrap at existing whitespace and hyphens. Visual source line endings
+become wrapping spaces; **Enter** inserts an explicit line break and an empty
+line preserves an explicit paragraph break. Spaces are retained, including
+leading/trailing/repeated spaces. Folio does not split an unbreakable word,
+insert hyphens, trim characters, shrink the font, move neighboring graphics/
+paragraphs, or continue onto another page. Overflow is shown before Apply
+and rejected atomically by the engine. Adjust the box, size, leading or text.
+
+**Actual PDF line preview** renders the same saved-font glyphs used by Apply,
+not approximated browser text. Its blue boundary is the target box; the
+isolated preview omits neighboring page artwork. Page outlines show temporary
+box and measured ink bounds while the original text remains until Apply.
+Measurements include negative glyph bearings, ascenders and descenders.
+Dragging and arrow-key movement have equivalent numeric controls.
+
+**Original font** is available only with a reliable embedded TrueType program,
+horizontal source encoding, PDF widths and exact glyph mapping (including
+supported Type0 CID-to-GID maps). It reuses that font resource rather than
+substituting or re-embedding it. If metrics are unavailable, explicitly labeled
+**Noto Sans Regular** conversion embeds supported precomposed Latin, Greek and
+Cyrillic text; original weight, tracking and kerning are not preserved. Reflow
+resets source tracking/kerning even with the original font. Missing encoded
+characters, combining marks and complex/bidirectional shaping fail clearly.
+
+**Apply paragraph reflow** removes the selected original source text-showing
+operations and writes real searchable/selectable text in an occurrence-local
+Form. State-only replay preserves text/color state inherited by later objects,
+including double-quote `Tw`/`Tc` effects. Shared page streams/resources and nested
+Form invocation chains are copied on write; unselected occurrences, pages,
+images and graphics stay unchanged. One Apply is one undoable mutation.
+Save/reopen preserves the logical paragraph and allows a second edit, including
+an empty paragraph box after clearing its text.
+
+The complete text/geometry/font/style draft lives above virtualized page
+canvases and survives panel changes, inactive tabs and page unmounts. Apply or
+Discard is explicit. The one document draft projection guards save/history/
+close/quit, signing, OCR, comparison, DOCX/output, preflight and archival export;
+live gestures use the `paragraph-editing:page` owner. Protected sources keep
+their encryption and history. Signed/certified sources, Folio archival copies
+and sources without general editing authorization remain read-only.
+
+This is a **conservative paragraph-box milestone, not full DTP/Acrobat reflow**.
+One source text object must have a uniform font/size/color, regular single-column
+baselines and a finite uniform unreflected right-angle transform. Ambiguous
+columns/indentation/paragraph gaps, unsupported font metrics/encodings,
+ligature-to-multiple-character mappings, invisible/stroked/raised/stretched
+text, source clipping, page/Form transparency, optional content, inline-image
+streams, ActualText and tagged documents are refused rather than flattened or
+misgrouped. Keep the whole box inside its page and enclosing Form BBoxes.
+Ordinary editing is **not secure redaction**: original files, old objects and
+undo history may retain previous text.
+
+Bounds are 8,000 characters and 500 layout lines per paragraph, 1,000 blocks /
+200,000 operations / 16 MiB decoded content / 16 nested Forms / 128 fonts per
+page, 8 MiB per embedded measurement font and 32 MiB font programs per inspected
+page. Source edits require an undo snapshot within 64 MiB. Actual PDF previews
+are bounded to 2 MiB and 20,000 physical points per side.
+
+For local engine integrations, `POST /paragraphs` (native
+`page_paragraph_blocks`) accepts `{documentId,revision,page}` and returns
+`{epoch,blocks,warnings}`. Blocks expose `id`, occurrence-local operation `path`,
+logical `text`, `sourceLines[{text,baseline,bounds}]`, display `placement`,
+`rotation`, physical `size`/`leading`, `alignment`, source `font`/`fontMode`,
+`originalFontAvailable`/`fontReason` and `editable`/`reason`.
+`POST /paragraphs/preview` and `/paragraphs/edit` (native `preview_paragraph`,
+`edit_paragraph`) accept `{documentId,revision,change}` where `change` is
+`{epoch,page,path,blockId,expected,text,placement,size,leading,alignment,font}`.
+The source epoch rejects undo/redo resurrection even when a revision number
+returns. Preview returns `layout` and a renderer-only `renderPdf`; each line has
+exact logical UTF-8 byte `start`/`end`, `hardBreak`, local physical top-left
+`baseline`, `advance` and actual `inkBounds`, plus layout `fits`/`overflow`.
+These ranges and `/FolioParagraph` version-1 Form metadata preserve logical
+soft-versus-hard breaks for future structure work; **they are not PDF tags,
+reading-order/accessibility remediation or a PDF/UA claim**. Reinspection checks
+the stored metadata against real source operations and measured font metrics.
+
+### Exact source runs
+
+Choose **Exact source runs** in the same panel, then click existing text on the
+page. The list shows the page's actual text-show operations.
 Choose a source run from this list when a PDF splits text differently or a
 click cannot distinguish repeated/overlapping content safely.
 
@@ -781,7 +874,7 @@ run. Undo/redo restores the actual document contents. Shared streams and
 nested Form XObjects are copied on write, so one occurrence can be changed
 without changing another page or invocation.
 
-This is run-level editing, not a paragraph layout engine. Longer text can
+This mode stays run-level editing. Longer text can
 extend beyond the original run; it does not reflow neighboring lines. Replacing
 a `TJ` array rebuilds its text and does not retain per-glyph numeric kerning.
 Review the result before saving an edited copy. Text replacement is **not
@@ -1335,8 +1428,9 @@ package dependency.
 
 ## Important boundaries
 
-- **Not full Acrobat parity.** Run-level source-text replacement is supported,
-  but not paragraph reflow, unrestricted existing-image editing, non-English OCR,
+- **Not full Acrobat parity.** Run-level source-text replacement and conservative
+  source paragraph-box reflow are supported, but not unrestricted DTP/page reflow,
+  unrestricted existing-image editing, non-English OCR,
   general Office conversion or PDF creation beyond the explicit PNG/JPEG/UTF-8 subset,
   automatic AATL/EUTL/OS trust, cloud storage, collaboration, AI assistant,
   accessibility remediation, full conformance validation/preflight, or

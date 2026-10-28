@@ -52,6 +52,21 @@ The desktop app processes document contents locally.
   Index nested Form invocations and isolate shared streams/resources so only
   the selected occurrence changes. Replacements must be searchable, selectable,
   undoable, and persistent after save/reopen, not drawn over old text.
+- Source paragraph reflow: discover genuine uniform single-column multiline
+  BT/ET blocks, edit logical text in adjustable physical boxes with word wrapping,
+  explicit newlines, size, leading and left/center/right alignment, preview
+  actual PDF glyph layout and measured ink bounds, then replace source text in
+  one atomic undoable mutation. Preserve source orientation, CropBox/rotation/
+  page-local UserUnit, neighboring content and shared Form occurrences. Reliable
+  embedded original fonts are reused; otherwise explicitly label Noto Sans
+  Regular conversion and style loss. Preserve stable logical IDs/text/UTF-8
+  line ranges across save/reopen and a second edit, without claiming PDF tags.
+  Keep complete drafts above virtualized pages and in the single aggregate
+  document draft/gesture/export authority. Reject overflow without clipping,
+  trimming, silent shrinking, moving surrounding content or spilling to another
+  page. Refuse ambiguous grouping, unsupported metrics/shaping, tags/ActualText,
+  clips, transparency, optional content and unsafe streams explicitly. This is
+  conservative paragraph-box editing, not full DTP or Acrobat reflow parity.
 - Local conversion: ordered still PNG/JPEG and strict UTF-8 text files create
   complete, independent new PDFs, never replacing source tabs or clearing
   their drafts/history. Explicit Letter/A4, orientation, margin and text-size
@@ -238,7 +253,7 @@ The desktop app processes document contents locally.
   AATL/EUTL, or external certificate/document requests. Anchor removal invalidates
   all tabs' cached trust. Do not claim revocation, trusted timestamps, qualified
   signatures, or PAdES-LTV.
-- Certificate-based protection, paragraph reflow, arbitrary font/encoding support, unrestricted existing-image editing,
+- Certificate-based protection, unrestricted paragraph/DTP reflow, arbitrary font/encoding support, unrestricted existing-image editing,
   advanced form authoring, unsupported interactive forms, non-English OCR, general Office conversion, advanced
   certification/qualified signing and authoritative trust, cloud
   collaboration, and full Acrobat parity remain incomplete capabilities.

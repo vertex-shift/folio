@@ -196,6 +196,30 @@ the document workspace so tab switching and virtualized pages do not erase
 uncommitted input. Keep the established appearance themes, focus treatment,
 reduced-motion behavior, and native/preview distinction.
 
+## Source paragraph editing
+
+The existing Edit text tool opens Paragraph reflow by default, with Exact
+source runs retained as an explicit sibling choice. Extend the document-first
+Operate shell rather than introducing a new workspace. A compact 316px panel
+lists real source blocks with line counts and honest read-only reasons, then
+keeps text, physical box coordinates, size/leading, font conversion and alignment
+together. Use system type and semantic theme tokens in all five themes.
+
+Keep Apply/Discard in a fixed footer, separate from scrolling source/settings/
+preview content. Empty/loading/error/stale/overflow states must not disappear
+or hide these actions. An unapplied-draft banner returns to the editor from any
+panel, including after an inactive-tab or virtualized-page unmount. An empty
+text value remains an intentional deletion draft.
+
+The on-paper source targets are keyboard-focusable document-blue outlines.
+Dragging/resizing and arrow keys have numeric physical-point alternatives.
+Show temporary measured ink bounds without obscuring original glyphs; never
+animate PDF geometry. The separate actual-PDF preview uses saved-font glyphs
+and a blue target-box boundary, not system-text approximations or a fake
+white-cover replacement. Explain Noto Regular style loss, original-font limits,
+explicit newlines and transparent overflow beside the controls. Neighbors and
+later pages never move automatically. Inherit reduced motion and focus rules.
+
 ## Existing-image editing
 
 Edit existing images extends the same contextual tools panel at 300px, not

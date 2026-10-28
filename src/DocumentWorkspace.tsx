@@ -60,6 +60,12 @@ import { imageEditingBridge } from "./features/imageEditing/bridge";
 import { assertImageDraft, imageChange, imagePath, withPlacement } from "./features/imageEditing/model";
 import type { ImageOccurrence, ImagePlacement as SourceImagePlacement } from "./features/imageEditing/types";
 import "./features/imageEditing/styles.css";
+import ParagraphEditingPanel from "./features/paragraphEditing/ParagraphEditingPanel";
+import { useParagraphEditing } from "./features/paragraphEditing/useParagraphEditing";
+import { paragraphBridge } from "./features/paragraphEditing/bridge";
+import { assertParagraphDraft, paragraphChange, paragraphPath, withParagraphPlacement } from "./features/paragraphEditing/model";
+import type { ParagraphBlock, ParagraphPlacement } from "./features/paragraphEditing/types";
+import "./features/paragraphEditing/styles.css";
 import { matchExistingText } from "./lib/existingText";
 import { PAGE_SIZES, parsePageRange, parseWritingNumber, rgbFromHex } from "./lib/pages";
 import { destinationPage, safeExternalUrl } from "./lib/navigation";
@@ -212,6 +218,7 @@ export default function DocumentWorkspace(props: Props) {
   const [overPage, setOverPage] = useState<number | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 800, height: 740 });
   const [textSize, setTextSize] = useState("14");
+  const [textEditScope, setTextEditScope] = useState<"paragraph" | "run">("paragraph");
   const [penWidth, setPenWidth] = useState("2");
   const [writingColor, setWritingColor] = useState("#253b57");
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -240,15 +247,16 @@ export default function DocumentWorkspace(props: Props) {
   infoRef.current = info;
   pageRef.current = page;
   const search = useSearch(pdf, info, query, matchCase, panelOpen && panel === "search");
-  const existingText = useExistingText(info, page, tool === "edit-text" || panelOpen && panel === "edit");
+  const existingText = useExistingText(info, page, textEditScope === "run" && (tool === "edit-text" || panelOpen && panel === "edit"));
   const forms = useForms(info, panelOpen && panel === "forms");
   const designer = useFormDesigner(info, panel === "form-designer" || tool === "form-widget");
   const images = useImageEditing(info, page, props.active && (panelOpen && panel === "image-edit" || tool === "edit-image"));
+  const paragraphs = useParagraphEditing(info, page, textEditScope === "paragraph" && (tool === "edit-text" || panelOpen && panel === "edit"), props.active);
   const pendingDesign = Boolean(designer.draft?.dirty);
   const readOnly = Boolean(info?.readOnlyReason);
   const disabled = Boolean(busy) || !info;
   const authoring = useAuthoring({ info, page, current: () => infoRef.current,
-    blocked: () => busyRef.current || redactionsRef.current.length > 0 || forms.pending() || designer.pending() || images.hasDraft() || writingDraftRef.current,
+    blocked: () => busyRef.current || redactionsRef.current.length > 0 || forms.pending() || designer.pending() || images.hasDraft() || paragraphs.hasDraft() || writingDraftRef.current,
     run, adopt, onError: setError, onToast: setToast,
     onSelect: (kind) => {
       setMode("write"); setPanel("authoring"); setPanelOpen(true);
@@ -260,13 +268,14 @@ export default function DocumentWorkspace(props: Props) {
     },
   });
   const pendingDraft = hasDocumentDrafts({ writing: pendingWriting || pendingMetadata || gestureDraft,
-    formFilling: forms.count > 0, formDesign: pendingDesign, pageAuthoring: authoring.pending, imageEditing: images.pending, redaction: redactions.length > 0 });
+    formFilling: forms.count > 0, formDesign: pendingDesign, pageAuthoring: authoring.pending, imageEditing: images.pending, paragraphEditing: paragraphs.pending, redaction: redactions.length > 0 });
   const pendingDraftRef = useRef(pendingDraft);
   pendingDraftRef.current = pendingDraft;
-  const authoringDisabled = disabled || readOnly || redactions.length > 0 || forms.count > 0 || pendingMetadata || pendingDesign || images.pending;
+  const authoringDisabled = disabled || readOnly || redactions.length > 0 || forms.count > 0 || pendingMetadata || pendingDesign || images.pending || paragraphs.pending;
   const editDisabled = authoringDisabled || authoring.pending;
-  const redactDisabled = disabled || readOnly || authoring.pending || forms.count > 0 || pendingMetadata || pendingDesign || images.pending;
-  const imageEditingDisabled = disabled || authoring.pending || forms.count > 0 || pendingWriting || pendingMetadata || pendingDesign || redactions.length > 0;
+  const redactDisabled = disabled || readOnly || authoring.pending || forms.count > 0 || pendingMetadata || pendingDesign || images.pending || paragraphs.pending;
+  const imageEditingDisabled = disabled || authoring.pending || forms.count > 0 || pendingWriting || pendingMetadata || pendingDesign || redactions.length > 0 || paragraphs.pending;
+  const paragraphEditingDisabled = disabled || authoring.pending || forms.count > 0 || pendingWriting || pendingMetadata || pendingDesign || images.pending || redactions.length > 0;
   const managementTooLarge = Boolean(info && info.byteLength > MAX_MANAGEMENT_SOURCE_BYTES);
   const managementEditDisabled = editDisabled || managementTooLarge;
   const utilityPanel = panelOpen && ["properties", "attachments", "bookmarks"].includes(panel);
@@ -330,6 +339,9 @@ export default function DocumentWorkspace(props: Props) {
 
   async function adopt(next: DocumentInfo) {
     const previous = infoRef.current;
+    if (paragraphs.hasDraft() && (previous?.id !== next.id || previous.revision !== next.revision)) {
+      throw new Error("Apply or explicitly discard the paragraph draft before changing this PDF.");
+    }
     if (images.hasDraft() && (previous?.id !== next.id || previous.revision !== next.revision)) {
       throw new Error("Apply or explicitly discard the image draft before changing this PDF.");
     }
@@ -459,6 +471,11 @@ export default function DocumentWorkspace(props: Props) {
     if (images.hasDraft() && action.type === "close") {
       showPanel("image-edit");
       setError("Apply or discard the image draft before closing this PDF tab.");
+      return;
+    }
+    if (paragraphs.hasDraft() && action.type === "close") {
+      reviewParagraphDraft();
+      setError("Apply or discard the paragraph draft before closing this PDF tab.");
       return;
     }
     if (designer.pending() && action.type === "close") {
@@ -594,6 +611,9 @@ export default function DocumentWorkspace(props: Props) {
     if (images.hasDraft() && !["select", "hand", "edit-image"].includes(next)) {
       showPanel("image-edit"); setError("Apply or discard the image draft before using another editing tool."); return;
     }
+    if (paragraphs.hasDraft() && !["select", "hand", "edit-text"].includes(next)) {
+      reviewParagraphDraft(); setError("Apply or discard the paragraph draft before using another editing tool."); return;
+    }
     if (authoring.hasDraft() && !["select", "hand", "image", "crop"].includes(next)) {
       setError("Apply or discard the Page authoring draft before using another editing tool.");
       return;
@@ -631,6 +651,9 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function changeMode(next: Mode) {
+    if (paragraphs.hasDraft() && (next === "write" || next === "organize")) {
+      reviewParagraphDraft(); setError("Apply or discard the paragraph draft before changing editing modes."); return;
+    }
     if (images.hasDraft() && (next === "write" || next === "organize")) {
       showPanel("image-edit"); setError("Apply or discard the image draft before changing editing modes."); return;
     }
@@ -657,6 +680,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function edit(change: Edit, label: string, onSuccess?: () => void) {
+    if (paragraphs.hasDraft()) { reviewParagraphDraft(); setError("Apply or discard the paragraph draft before changing this PDF."); return; }
     if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before changing this PDF."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before changing this PDF."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before changing this PDF."); return; }
@@ -684,6 +708,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function selectSourceText(run: ExistingTextRun, targetPage = pageRef.current) {
+    if (paragraphs.hasDraft()) { reviewParagraphDraft(); setError("Apply or discard the paragraph draft before editing an exact source run."); return; }
     if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before editing source text."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before editing source text."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before editing source text."); return; }
@@ -722,6 +747,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function importPages(file?: File) {
+    if (paragraphs.hasDraft()) { reviewParagraphDraft(); setError("Apply or discard the paragraph draft before inserting pages."); return; }
     if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before inserting pages."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before inserting pages."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before inserting pages."); return; }
@@ -768,6 +794,7 @@ export default function DocumentWorkspace(props: Props) {
       document.execCommand(redo ? "redo" : "undo");
       return;
     }
+    if (paragraphs.hasDraft()) { reviewParagraphDraft(); setError("Apply or discard the paragraph draft before undoing or redoing PDF changes."); return; }
     if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before undoing or redoing PDF changes."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before undoing or redoing PDF changes."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before undoing or redoing PDF changes."); return; }
@@ -782,6 +809,9 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function save(copy = true) {
+    if (paragraphs.hasDraft()) {
+      reviewParagraphDraft(); setError("Apply or discard the paragraph draft before saving. Its text and layout are not yet in the PDF."); return;
+    }
     if (images.hasDraft()) {
       showPanel("image-edit"); setError("Apply or discard the image draft before saving. These changes are not yet in the PDF."); return;
     }
@@ -854,7 +884,7 @@ export default function DocumentWorkspace(props: Props) {
     const draft = metadataDraft;
     if (!draft || !metadataChanged(draft)) return;
     void run("Applying descriptive metadata...", async () => {
-      if (forms.pending() || designer.pending() || images.hasDraft() || authoring.hasDraft() || pendingWriting) {
+      if (forms.pending() || designer.pending() || images.hasDraft() || paragraphs.hasDraft() || authoring.hasDraft() || pendingWriting) {
         throw new Error("Apply or discard the other pending document edits before applying metadata.");
       }
       const current = infoRef.current;
@@ -981,6 +1011,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function markRedaction(rect: PdfRect, targetPage = pageRef.current) {
+    if (paragraphs.hasDraft()) { reviewParagraphDraft(); setError("Apply or discard the paragraph draft before marking redactions."); return; }
     if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before marking redactions."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before marking redactions."); return; }
     if (authoring.hasDraft()) { setError("Apply or discard the Page authoring draft before marking redactions."); return; }
@@ -1021,17 +1052,80 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function hasPendingContentEdits() {
-    return writingDraftRef.current || forms.pending() || designer.pending() || images.hasDraft() || authoring.hasDraft() || gesturePages.current.size > 0;
+    return writingDraftRef.current || forms.pending() || designer.pending() || images.hasDraft() || paragraphs.hasDraft() || authoring.hasDraft() || gesturePages.current.size > 0;
   }
 
-  function draftProjection(exclude?: "formFilling" | "formDesign" | "imageEditing") {
+  function draftProjection(exclude?: "formFilling" | "formDesign" | "imageEditing" | "paragraphEditing") {
     return hasDocumentDrafts({
       writing: writingDraftRef.current || gesturePages.current.size > 0,
       formFilling: exclude !== "formFilling" && forms.pending(),
       formDesign: exclude !== "formDesign" && designer.pending(),
       pageAuthoring: authoring.hasDraft(),
       imageEditing: exclude !== "imageEditing" && images.hasDraft(),
+      paragraphEditing: exclude !== "paragraphEditing" && paragraphs.hasDraft(),
       redaction: redactionsRef.current.length > 0,
+    });
+  }
+
+  function reviewParagraphDraft() {
+    setTextEditScope("paragraph"); showPanel("edit");
+  }
+
+  function paragraphEditingAvailable() {
+    if (busyRef.current) return false;
+    if (draftProjection("paragraphEditing")) {
+      setError("Apply or discard other writing, forms, metadata, authoring, image and redaction drafts before editing paragraphs.");
+      return false;
+    }
+    return true;
+  }
+
+  function selectSourceParagraph(targetPage: number, block: ParagraphBlock) {
+    if (!paragraphEditingAvailable()) return;
+    try {
+      const changed = !paragraphs.draft || paragraphs.draft.page !== targetPage || paragraphPath(paragraphs.draft.source.path) !== paragraphPath(block.path);
+      paragraphs.select(targetPage, block);
+      setPage(targetPage); setTextEditScope("paragraph"); setPanel("edit"); setMode("write");
+      setError(null); setToast(null);
+      if (changed) setPanelOpen(true);
+    } catch (error) { setError(errorMessage(error)); }
+  }
+
+  function placeSourceParagraph(targetPage: number, placement: ParagraphPlacement) {
+    if (!paragraphEditingAvailable()) return;
+    try {
+      const current = infoRef.current, draft = paragraphs.draft;
+      if (!current) throw new Error("Open a PDF first.");
+      assertParagraphDraft(current, draft);
+      if (draft.page !== targetPage || !draft.source.editable) throw new Error("Select an editable source paragraph on this page first.");
+      paragraphs.change(withParagraphPlacement(draft, placement)); setError(null);
+    } catch (error) { setError(errorMessage(error)); }
+  }
+
+  function applyParagraphChanges() {
+    if (!paragraphEditingAvailable()) return;
+    void run("Applying paragraph source reflow...", async () => {
+      const current = infoRef.current;
+      if (!current) throw new Error("Open a PDF first.");
+      if (!paragraphs.hasDraft()) throw new Error("Change the paragraph text, box or line style before applying.");
+      const change = paragraphChange(current, paragraphs.draft);
+      await syncDraft(current.id, draftProjection());
+      const next = await paragraphBridge.apply(current, change);
+      paragraphs.clear();
+      await adopt(next);
+      await syncDraft(next.id, draftProjection());
+      setToast("Paragraph replaced with real wrapped PDF text. Undo is available; save a copy to keep it.");
+    });
+  }
+
+  function discardParagraphDraft() {
+    if (gesturePages.current.size) { setError("Finish or cancel the live page gesture before discarding the paragraph draft."); return; }
+    void run("Discarding paragraph draft...", async () => {
+      const current = infoRef.current;
+      if (!current) throw new Error("This PDF tab is no longer open.");
+      paragraphs.clear();
+      await syncDraft(current.id, draftProjection());
+      setToast("Paragraph draft discarded. Applied PDF content and history are unchanged.");
     });
   }
 
@@ -1120,6 +1214,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function locateFormWidget(widget: FormWidget) {
+    if (paragraphs.hasDraft()) { reviewParagraphDraft(); setError("Apply or discard the paragraph draft before filling fields."); return; }
     setPage(widget.page);
     setMode("read"); setTool("select"); setSelectedAnnotation(null);
     workspaceRef.current?.querySelector<HTMLElement>(`[data-page-slot="${widget.page + 1}"]`)?.scrollIntoView({ block: "start", inline: "nearest" });
@@ -1485,7 +1580,7 @@ export default function DocumentWorkspace(props: Props) {
           <button key={item.mode} className={mode === item.mode ? "selected" : ""}
             aria-label={item.label} title={item.label}
             aria-current={mode === item.mode ? "page" : undefined}
-            disabled={disabled || (item.mode === "organize" || item.mode === "write") && (forms.count > 0 || pendingDesign || images.pending) || item.mode === "organize" && redactions.length > 0} onClick={() => changeMode(item.mode)}>
+            disabled={disabled || (item.mode === "organize" || item.mode === "write") && (forms.count > 0 || pendingDesign || images.pending || paragraphs.pending) || item.mode === "organize" && redactions.length > 0} onClick={() => changeMode(item.mode)}>
             <item.icon size={16} /><span>{item.label}</span>
           </button>)}
       </nav>
@@ -1493,8 +1588,8 @@ export default function DocumentWorkspace(props: Props) {
         <IconButton label="Find in document (Command+F)" disabled={disabled} onClick={() => showPanel("search")}><Search size={18} /></IconButton>
         <IconButton label="Print PDF (Command+P)" disabled={disabled} onClick={() => requestOutput("print")}><Printer size={18} /></IconButton>
         <span className="toolbar-divider" />
-        <IconButton label="Undo (Command+Z)" disabled={disabled || authoring.pending || pendingMetadata || pendingDesign || images.pending || redactions.length > 0 || forms.count > 0 || !info?.canUndo} onClick={() => history(false)}><Undo2 size={18} /></IconButton>
-        <IconButton label="Redo (Command+Shift+Z)" disabled={disabled || authoring.pending || pendingMetadata || pendingDesign || images.pending || redactions.length > 0 || forms.count > 0 || !info?.canRedo} onClick={() => history(true)}><Redo2 size={18} /></IconButton>
+        <IconButton label="Undo (Command+Z)" disabled={disabled || authoring.pending || pendingMetadata || pendingDesign || images.pending || paragraphs.pending || redactions.length > 0 || forms.count > 0 || !info?.canUndo} onClick={() => history(false)}><Undo2 size={18} /></IconButton>
+        <IconButton label="Redo (Command+Shift+Z)" disabled={disabled || authoring.pending || pendingMetadata || pendingDesign || images.pending || paragraphs.pending || redactions.length > 0 || forms.count > 0 || !info?.canRedo} onClick={() => history(true)}><Redo2 size={18} /></IconButton>
         <button className="button primary save-button" aria-label={saveLabel} title={saveLabel} disabled={disabled || redactionIntent && !redactions.length} onClick={() => save(true)}>
           {redactionIntent ? <FileOutput size={15} /> : <Copy size={15} />}<span>{saveLabel}</span>
         </button>
@@ -1514,10 +1609,13 @@ export default function DocumentWorkspace(props: Props) {
     {images.pending && <div className="protected-banner image-draft-banner" role="status"><ImagePlus size={15} />
       Unapplied source image edit. Apply or discard it before saving or exporting.
       <button className="text-button" onClick={() => showPanel("image-edit")}>Review image</button></div>}
+    {paragraphs.pending && <div className="protected-banner paragraph-draft-banner" role="status"><SquarePen size={15} />
+      Unapplied paragraph text or layout. Apply or discard it before saving or exporting.
+      <button className="text-button" onClick={reviewParagraphDraft}>Review paragraph</button></div>}
     {ocrProgress && <OcrJobProgress progress={ocrProgress} canceling={ocrCanceling} onCancel={cancelOcr} />}
 
     <div className="workspace">
-      {panelOpen && <aside key={panel} className={`tools-panel panel-${panel}`} aria-label={panel === "tools" ? "PDF tools" : panelLabels[panel]}>
+      {panelOpen && <aside key={panel} className={`tools-panel panel-${panel}${panel === "edit" && textEditScope === "paragraph" ? " paragraph-panel" : ""}`} aria-label={panel === "tools" ? "PDF tools" : panelLabels[panel]}>
         <div className="panel-heading">
           <h2>{panelLabels[panel]}</h2>
           {panel === "comments" && <span className="count-badge">{info?.annotations.length ?? 0}</span>}
@@ -1569,7 +1667,7 @@ export default function DocumentWorkspace(props: Props) {
             <button disabled={authoringDisabled} onClick={() => authoring.choose(authoring.draft?.kind ?? "image")}>
               <span className="tool-icon blue"><ImagePlus size={19} /></span><span>Page authoring</span><ChevronRight size={14} className="list-arrow" />
             </button>
-            <button className={mode === "organize" ? "chosen" : ""} disabled={disabled || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign || images.pending} onClick={() => changeMode("organize")}>
+            <button className={mode === "organize" ? "chosen" : ""} disabled={disabled || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign || images.pending || paragraphs.pending} onClick={() => changeMode("organize")}>
               <span className="tool-icon teal"><LayoutGrid size={19} /></span><span>Organize pages</span><ChevronRight size={14} className="list-arrow" />
             </button>
             <button disabled={disabled} onClick={() => showPanel("properties")}><span className="tool-icon neutral"><Info size={18} /></span><span>Document properties</span><ChevronRight size={14} className="list-arrow" /></button>
@@ -1636,13 +1734,13 @@ export default function DocumentWorkspace(props: Props) {
           draft={forms.draft} count={forms.count} loading={forms.loading} error={forms.error}
           actionError={error} notice={toast}
           fieldErrors={forms.fieldErrors} stale={forms.stale} retry={forms.retry}
-          disabled={disabled || redactions.length > 0 || authoring.pending || pendingWriting || pendingMetadata || pendingDesign || images.pending} onChange={forms.change} onApply={applyForms}
+          disabled={disabled || redactions.length > 0 || authoring.pending || pendingWriting || pendingMetadata || pendingDesign || images.pending || paragraphs.pending} onChange={forms.change} onApply={applyForms}
           onDiscard={() => { setError(null); setModal({ type: "form-discard" }); }} onLocate={locateFormWidget}
           onDesign={() => showPanel("form-designer")} onFlatten={reviewStaticFormCopy} />}
         {panel === "form-designer" && info && <FormDesignerPanel info={info} page={page} designer={designer.designer}
           draft={designer.draft} widgetIndex={designerWidget} loading={designer.loading} stale={designer.stale}
           error={error ?? designer.error} notice={toast}
-          disabled={disabled || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || images.pending || redactions.length > 0}
+          disabled={disabled || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || images.pending || paragraphs.pending || redactions.length > 0}
           retry={designer.retry} onNew={createDesignerField} onSelect={selectDesignerField} onChange={designer.change}
           onWidget={setDesignerWidget} onTarget={() => {
             if (!designerAvailable()) return;
@@ -1660,13 +1758,26 @@ export default function DocumentWorkspace(props: Props) {
           onRemove={(entry) => { setError(null); setModal({ type: "bookmark-delete", entry }); }}
           onMove={(entry, parent, at) => edit({ type: "bookmark_move", id: entry.id, parent, at }, "Organizing bookmarks...", () => setToast("Bookmark moved. Its destination and children are unchanged."))} />}
         {panel === "properties" && <DocumentPropertiesPanel info={info} draft={metadataDraft}
-          disabled={disabled || readOnly || managementTooLarge || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign || images.pending} onDraft={(draft) => setMetadataDraft(metadataChanged(draft) ? draft : null)}
+          disabled={disabled || readOnly || managementTooLarge || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign || images.pending || paragraphs.pending} onDraft={(draft) => setMetadataDraft(metadataChanged(draft) ? draft : null)}
           onApply={applyMetadata} onDiscard={() => setMetadataDraft(null)} />}
         {panel === "attachments" && <AttachmentsPanel info={info} editDisabled={managementEditDisabled} exportDisabled={disabled || pendingDraft}
           onAdd={() => addAttachment()}
           onExport={(attachment) => { setError(null); setModal({ type: "attachment-export", attachment }); }}
           onRemove={(attachment) => { setError(null); setModal({ type: "attachment-remove", attachment }); }} />}
-        {panel === "edit" && <ExistingTextPanel key={`${info?.id}:${info?.revision}:${page}`}
+        {panel === "edit" && <div className="source-edit-scope" role="group" aria-label="Source text editing scope">
+          <button type="button" aria-pressed={textEditScope === "paragraph"} onClick={() => setTextEditScope("paragraph")}>Paragraph reflow</button>
+          <button type="button" aria-pressed={textEditScope === "run"} onClick={() => setTextEditScope("run")}>Exact source runs</button>
+        </div>}
+        {panel === "edit" && textEditScope === "paragraph" && info && <ParagraphEditingPanel
+          active={props.active} page={page} inspection={paragraphs.inspection(page)} draft={paragraphs.draft} preview={paragraphs.preview}
+          disabled={paragraphEditingDisabled} stale={paragraphs.stale} error={error} notice={toast}
+          onSelect={selectSourceParagraph} onChange={(draft) => { paragraphs.change(draft); setError(null); setToast(null); }}
+          onApply={applyParagraphChanges} onDiscard={discardParagraphDraft} onLocate={setPage} retry={paragraphs.retry}
+          onTarget={() => {
+            setToast(null); setError(null); setTextEditScope("paragraph"); chooseTool("edit-text");
+            if (window.matchMedia("(max-width: 899px)").matches) setPanelOpen(false);
+          }} />}
+        {panel === "edit" && textEditScope === "run" && <ExistingTextPanel key={`${info?.id}:${info?.revision}:${page}`}
           runs={existingText.runs} loading={existingText.loading} error={existingText.error} retry={existingText.retry}
           page={page} disabled={editDisabled} onSelect={selectSourceText} />}
         {panel === "redact" && <RedactionPanel pdf={pdf} page={page} marks={redactions} disabled={redactDisabled}
@@ -1819,13 +1930,13 @@ export default function DocumentWorkspace(props: Props) {
               width={viewportSize.width} height={viewportSize.height} container={viewerRef}
               onPage={setPage} onScale={onScale} onError={notifyError}
               renderPage={(index, frame) => pdf && <PdfPage pdf={pdf} page={index} initialSize={frame} zoom={zoom} width={viewportSize.width} height={viewportSize.height} copyAllowed={info.copyAllowed}
-                tool={tool} disabled={tool === "edit-image" ? imageEditingDisabled : tool === "image" || tool === "crop" ? authoringDisabled : tool === "redact" ? redactDisabled : editDisabled} annotations={info.annotations.filter((annotation) => annotation.page === index)}
+                tool={tool} disabled={tool === "edit-text" && textEditScope === "paragraph" ? paragraphEditingDisabled : tool === "edit-image" ? imageEditingDisabled : tool === "image" || tool === "crop" ? authoringDisabled : tool === "redact" ? redactDisabled : editDisabled} annotations={info.annotations.filter((annotation) => annotation.page === index)}
                 authoringDraft={authoring.draft} onAuthoringPoint={(point) => authoring.place(index, point)}
                 onAuthoringCrop={(margins) => authoring.crop(index, margins)}
                 formDesigner={panelOpen && panel === "form-designer" || tool === "form-widget" ? {
                   fields: designer.designer?.fields ?? [], draft: designer.draft, widgetIndex: designerWidget,
                   active: tool === "form-widget",
-                  disabled: disabled || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || images.pending || redactions.length > 0,
+                  disabled: disabled || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || images.pending || paragraphs.pending || redactions.length > 0,
                   onSelect: selectDesignerField, onPlace: placeDesignerWidget,
                   onGesture: (pending) => onGestureDraft(index, pending, "form-design"),
                 } : undefined}
@@ -1834,6 +1945,12 @@ export default function DocumentWorkspace(props: Props) {
                   geometry: info.pages[index].geometry, disabled: imageEditingDisabled, active: tool === "edit-image",
                   inspect: images.inspectPage, onSelect: selectSourceImage, onPlace: placeSourceImage,
                   onGesture: (pending) => onGestureDraft(index, pending, "image-editing"), onError: notifyError,
+                } : undefined}
+                paragraphEditing={tool === "edit-text" && textEditScope === "paragraph" ? {
+                  blocks: paragraphs.inspection(index).result?.blocks ?? [], draft: paragraphs.stale ? null : paragraphs.draft,
+                  layout: paragraphs.preview.result?.layout ?? null, geometry: info.pages[index].geometry,
+                  disabled: paragraphEditingDisabled, inspect: paragraphs.inspectPage, onSelect: selectSourceParagraph, onPlace: placeSourceParagraph,
+                  onGesture: (pending) => onGestureDraft(index, pending, "paragraph-editing"),
                 } : undefined}
                 redactions={redactions.filter((mark) => mark.page === index)} onRedaction={(rect) => markRedaction(rect, index)}
                 selectedAnnotation={selectedAnnotation}
@@ -1861,7 +1978,8 @@ export default function DocumentWorkspace(props: Props) {
               <IconButton label={item.label} active={tool === item.tool}
                 disabled={disabled || readOnly && !["select", "hand"].includes(item.tool)
                   || redactions.length > 0 && !["select", "hand", "redact"].includes(item.tool)
-                  || (forms.count > 0 || pendingDesign || images.pending) && !["select", "hand"].includes(item.tool)}
+                  || (forms.count > 0 || pendingDesign || images.pending) && !["select", "hand"].includes(item.tool)
+                  || paragraphs.pending && !["select", "hand", "edit-text"].includes(item.tool)}
                 onClick={() => chooseTool(item.tool)}><item.icon size={19} />
                 {item.tool === "highlight" && <span className="highlighter-swatch" />}
               </IconButton>
@@ -1899,7 +2017,7 @@ export default function DocumentWorkspace(props: Props) {
           {tool === "highlight" && !disabled && <div className="tool-instruction" role="status"><Highlighter size={14} />Drag across text to highlight.</div>}
           {tool === "text" && !disabled && <div className="tool-instruction" role="status"><Type size={14} />Click to place a text box.</div>}
           {tool === "ink" && !disabled && <div className="tool-instruction" role="status"><Pencil size={14} />Drag to draw. Undo removes a stroke.</div>}
-          {tool === "edit-text" && !disabled && <div className="tool-instruction" role="status"><SquarePen size={14} />Click existing text to replace it.</div>}
+          {tool === "edit-text" && !disabled && <div className="tool-instruction" role="status"><SquarePen size={14} />{textEditScope === "paragraph" ? "Select a source paragraph. Review wrapped lines, then Apply." : "Click existing text to replace its exact source run."}</div>}
         </>}
         {busy && info && <div className="document-busy" role="status"><LoaderCircle size={14} className="spin" />{busy}</div>}
       </main>
@@ -1914,7 +2032,7 @@ export default function DocumentWorkspace(props: Props) {
               <Thumbnail pdf={pdf} page={index} /><span className="thumbnail-number">{index + 1}</span>
             </button>)}
         </div>
-        <button className="rail-organize" disabled={disabled || redactions.length > 0 || forms.count > 0 || pendingDesign || images.pending} onClick={() => changeMode("organize")}><LayoutGrid size={14} />Organize pages</button>
+        <button className="rail-organize" disabled={disabled || redactions.length > 0 || forms.count > 0 || pendingDesign || images.pending || paragraphs.pending} onClick={() => changeMode("organize")}><LayoutGrid size={14} />Organize pages</button>
       </aside>}
       <nav className="utility-rail" aria-label="Document panels">
         <IconButton label="Toggle page thumbnails" active={railOpen && mode !== "organize"} disabled={disabled} onClick={() => { setRailOpen((open) => !open); if (mode === "organize") setMode("read"); }}><FileText size={18} /></IconButton>
@@ -1931,13 +2049,13 @@ export default function DocumentWorkspace(props: Props) {
     </div>
 
     <footer className="statusbar">
-      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : images.pending ? <><span className="status-dot dirty" />Unapplied source image edit</> : redactions.length ? <><span className="status-dot dirty" />{redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}</> : forms.count ? <><span className="status-dot dirty" />{forms.count} unapplied form {forms.count === 1 ? "field" : "fields"}</> : authoring.pending ? <><span className="status-dot dirty" />Unapplied page authoring</> : pendingMetadata ? <><span className="status-dot dirty" />Unapplied metadata draft</> : pendingWriting || gestureDraft ? <><span className="status-dot dirty" />Uncommitted writing or area</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
+      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : paragraphs.pending ? <><span className="status-dot dirty" />Unapplied paragraph text or layout</> : images.pending ? <><span className="status-dot dirty" />Unapplied source image edit</> : redactions.length ? <><span className="status-dot dirty" />{redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}</> : forms.count ? <><span className="status-dot dirty" />{forms.count} unapplied form {forms.count === 1 ? "field" : "fields"}</> : authoring.pending ? <><span className="status-dot dirty" />Unapplied page authoring</> : pendingMetadata ? <><span className="status-dot dirty" />Unapplied metadata draft</> : pendingWriting || gestureDraft ? <><span className="status-dot dirty" />Uncommitted writing or area</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
       <div className="document-status">{info && <><span>{info.pageCount} {info.pageCount === 1 ? "page" : "pages"}</span><span className="status-separator" /><span>{formatBytes(info.byteLength)}</span></>}</div>
       <div className="privacy-status"><ShieldCheck size={12} /><span>{runtimeIssue ? "Desktop runtime unavailable" : native ? "Local files. No uploads." : "Preview uses the real Rust engine"}</span></div>
     </footer>
 
-    {error && !modal && !outputMode && !archiveOpen && !utilityPanel && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "image-edit" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
-    {toast && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "image-edit" || panel === "authoring" && authoring.draft)) && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
+    {error && !modal && !outputMode && !archiveOpen && !utilityPanel && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "image-edit" || panel === "edit" && textEditScope === "paragraph" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
+    {toast && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "image-edit" || panel === "edit" && textEditScope === "paragraph" || panel === "authoring" && authoring.draft)) && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
 
     {modal?.type === "protection-copy" && info && <ProtectionCopyDialog info={info} busy={Boolean(busy)} error={error}
       onClose={() => setModal(null)} onSubmit={exportProtectionCopy} />}
