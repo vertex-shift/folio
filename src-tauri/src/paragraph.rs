@@ -584,8 +584,7 @@ impl Builder {
         geometry: &PageGeometry,
         graphics: &Graphics,
         tm: Matrix,
-        character: char,
-        bytes: &[u8],
+        (character, bytes): (char, &[u8]),
         metric: &font::Metric,
         advance: f64,
     ) -> Result<()> {
@@ -1158,7 +1157,7 @@ fn show(
                 let advance =
                     (metric.advance * graphics.size / 1000.0 + graphics.char_space + word_space)
                         * graphics.scale;
-                builder.glyph(geometry, graphics, *tm, character, &code, &metric, advance)?;
+                builder.glyph(geometry, graphics, *tm, (character, &code), &metric, advance)?;
                 *tm = multiply(*tm, [1.0, 0.0, 0.0, 1.0, advance, 0.0]);
             }
         } else if operation.operator == "TJ" {
