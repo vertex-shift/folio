@@ -117,6 +117,18 @@ impl PageGeometry {
         }
     }
 
+    pub(crate) fn display_to_pdf_precise(&self, [x, y]: [f64; 2]) -> [f64; 2] {
+        let [left, bottom, right, top] = self.bounds.map(f64::from);
+        let (x, y) = (x / f64::from(self.user_unit), y / f64::from(self.user_unit));
+        match self.rotation {
+            0 => [left + x, top - y],
+            90 => [left + y, bottom + x],
+            180 => [right - x, bottom + y],
+            270 => [right - y, top - x],
+            _ => unreachable!("page_rotation normalizes right-angle rotations"),
+        }
+    }
+
     pub(crate) fn pdf_to_display(&self, [x, y]: [f64; 2]) -> [f64; 2] {
         let [left, bottom, right, top] = self.bounds.map(f64::from);
         let point = match self.rotation {

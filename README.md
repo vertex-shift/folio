@@ -832,7 +832,9 @@ undo history may retain previous text.
 Bounds are 8,000 characters and 500 layout lines per paragraph, 1,000 blocks /
 200,000 operations / 16 MiB decoded content / 16 nested Forms / 128 fonts per
 page, 8 MiB per embedded measurement font and 32 MiB font programs per inspected
-page. Source edits require an undo snapshot within 64 MiB. Actual PDF previews
+page, with 200,000 font character mappings per inspected page. Malformed font
+bindings are cached as explicit refusals, not repeatedly decoded on each `Tf`.
+Source edits require an undo snapshot within 64 MiB. Actual PDF previews
 are bounded to 2 MiB and 20,000 physical points per side.
 
 For local engine integrations, `POST /paragraphs` (native

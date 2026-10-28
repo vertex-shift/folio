@@ -29,6 +29,7 @@ const MAX_LINES: usize = 500;
 const MAX_OPERATIONS: usize = 200_000;
 const MAX_PREVIEW_BYTES: usize = 2 * 1024 * 1024;
 type Matrix = [f64; 6];
+type FontBinding = std::result::Result<Arc<Font>, String>;
 const IDENTITY: Matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -197,9 +198,10 @@ struct Scanner {
     bytes: usize,
     operations: usize,
     blocks: Vec<LocatedBlock>,
-    fonts: HashMap<ObjectId, Arc<Font>>,
-    inline_fonts: Vec<(Object, Arc<Font>)>,
+    fonts: HashMap<ObjectId, FontBinding>,
+    inline_fonts: Vec<(Object, FontBinding)>,
     font_bytes: usize,
+    font_mappings: usize,
     visiting: HashSet<ObjectId>,
 }
 
@@ -883,30 +885,32 @@ impl Scanner {
     fn bind(&mut self, document: &Document, object: &Object) -> Result<Arc<Font>> {
         if let Object::Reference(id) = object {
             if let Some(font) = self.fonts.get(id) {
-                return Ok(font.clone());
+                return font.clone().map_err(invalid);
             }
         } else if let Some((_, font)) = self.inline_fonts.iter().find(|(value, _)| value == object)
         {
-            return Ok(font.clone());
+            return font.clone().map_err(invalid);
         }
         if self.fonts.len() + self.inline_fonts.len() >= 128 {
             return Err(invalid(
                 "Paragraph inspection is limited to 128 source fonts per page.",
             ));
         }
-        let font = Font::load(document, object)?;
-        self.font_bytes += font.program_bytes;
-        if self.font_bytes > 32 * 1024 * 1024 {
-            return Err(invalid(
-                "Paragraph source fonts exceed the 32 MiB measurement budget.",
-            ));
-        }
+        let font = Font::load(document, object).and_then(|font| {
+            if font.program_bytes > 32 * 1024 * 1024 - self.font_bytes
+                || font.mapping_count > 200_000 - self.font_mappings {
+                return Err(invalid("Paragraph source fonts exceed the 32 MiB program or 200,000 character-mapping budget."));
+            }
+            self.font_bytes += font.program_bytes;
+            self.font_mappings += font.mapping_count;
+            Ok(font)
+        }).map_err(|error| error.to_string());
         if let Object::Reference(id) = object {
             self.fonts.insert(*id, font.clone());
         } else {
             self.inline_fonts.push((object.clone(), font.clone()));
         }
-        Ok(font)
+        font.map_err(invalid)
     }
 
     fn set_font(&mut self, document: &Document, object: Result<&Object>, graphics: &mut Graphics) {
@@ -1157,7 +1161,14 @@ fn show(
                 let advance =
                     (metric.advance * graphics.size / 1000.0 + graphics.char_space + word_space)
                         * graphics.scale;
-                builder.glyph(geometry, graphics, *tm, (character, &code), &metric, advance)?;
+                builder.glyph(
+                    geometry,
+                    graphics,
+                    *tm,
+                    (character, &code),
+                    &metric,
+                    advance,
+                )?;
                 *tm = multiply(*tm, [1.0, 0.0, 0.0, 1.0, advance, 0.0]);
             }
         } else if operation.operator == "TJ" {
@@ -1193,7 +1204,7 @@ fn placement_matrix(
         270 => [x + width, y + height],
         _ => return Err(invalid("The paragraph orientation is not a right angle.")),
     };
-    let anchor = geometry.display_to_pdf(anchor).map(f64::from);
+    let anchor = geometry.display_to_pdf_precise(anchor.map(f64::from));
     let scale = 1.0 / f64::from(geometry.user_unit);
     // Display rotation is clockwise, while page rotation maps PDF baselines oppositely.
     let axes = match (rotation - geometry.rotation).rem_euclid(360) {
@@ -1227,6 +1238,14 @@ fn text_body(
         Operation::new(&fill.operator, objects(&fill.values)),
     ];
     for line in &layout.lines {
+        if [line.baseline[0], layout.height - line.baseline[1]]
+            .iter()
+            .any(|value| (f64::from(*value as f32) - value).abs() > 0.001)
+        {
+            return Err(invalid(
+                "The paragraph line coordinates cannot preserve 0.001 physical-point precision. Use a smaller box or less extreme alignment; the source is unchanged.",
+            ));
+        }
         operations.push(Operation::new(
             "Tm",
             objects(&[
@@ -1748,4 +1767,54 @@ pub(crate) fn apply(document: &mut Document, change: &ParagraphChange) -> Result
         },
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_font_bindings_are_cached_and_mapping_budget_is_aggregate() {
+        let mut document = Document::with_version("1.7");
+        let invalid_font = document.add_object(dictionary! {
+            "Type"=>"Font","Subtype"=>"Type3","BaseFont"=>"SyntheticUnsupported",
+        });
+        let mut scanner = Scanner::default();
+        let first = scanner
+            .bind(&document, &invalid_font.into())
+            .err()
+            .unwrap()
+            .to_string();
+        for _ in 0..20 {
+            assert_eq!(
+                scanner
+                    .bind(&document, &invalid_font.into())
+                    .err()
+                    .unwrap()
+                    .to_string(),
+                first
+            );
+        }
+        assert_eq!(scanner.fonts.len(), 1);
+        let unicode = document.add_object(Stream::new(dictionary! {},
+            b"/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /Synthetic def /CMapType 2 def 1 begincodespacerange <0000> <FFFF> endcodespacerange 1 beginbfrange <0000> <FFFF> <0000> endbfrange endcmap CMapName currentdict /CMap defineresource pop end end".to_vec()));
+        for index in 0..4 {
+            let font = document.add_object(dictionary! {
+                "Type"=>"Font","Subtype"=>"Type0","BaseFont"=>"SyntheticCID","Encoding"=>"Identity-H","ToUnicode"=>unicode,
+                "DescendantFonts"=>vec![Object::Dictionary(dictionary! {
+                    "Type"=>"Font","Subtype"=>"CIDFontType2",
+                    "FontDescriptor"=>dictionary! {"FontBBox"=>objects(&[0.0,-200.0,1000.0,800.0])},
+                })],
+            });
+            let result = scanner.bind(&document, &font.into());
+            if index < 3 {
+                assert!(result.is_ok());
+            } else {
+                assert!(result.err().unwrap().to_string().contains("200,000"));
+                assert!(scanner.bind(&document, &font.into()).is_err());
+            }
+        }
+        assert_eq!(scanner.font_mappings, 3 * 65_536);
+        assert_eq!(scanner.fonts.len(), 5);
+    }
 }

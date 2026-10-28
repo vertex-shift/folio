@@ -4,7 +4,12 @@ use folio_core::{
     text_edit::ReplacementFont,
     workspace::Workspace,
 };
-use lopdf::{Document, Object, Stream, content::Content, dictionary};
+use lopdf::{
+    Document, LoadOptions, Object, Stream,
+    content::Content,
+    dictionary,
+    encryption::{EncryptionState, EncryptionVersion, Permissions},
+};
 
 fn numbers(values: &[f32]) -> Object {
     Object::Array(values.iter().map(|value| Object::Real(*value)).collect())
@@ -564,6 +569,18 @@ fn isolates_one_nested_repeated_form_and_shared_page_stream_with_inherited_resou
     request.placement = target.placement.unwrap();
     request.placement[2] = 230.0;
     request.placement[3] = 100.0;
+    let before = session.bytes().to_vec();
+    let mut clipped = request.clone();
+    clipped.placement[0] += 30.0;
+    assert!(
+        session
+            .edit_paragraph(&clipped)
+            .unwrap_err()
+            .to_string()
+            .contains("Form BBoxes")
+    );
+    assert_eq!(session.bytes(), before);
+    assert!(!session.info().unwrap().can_undo);
     session.edit_paragraph(&request).unwrap();
     let blocks = session.paragraph_blocks(0).unwrap();
     assert!(
@@ -595,4 +612,321 @@ fn isolates_one_nested_repeated_form_and_shared_page_stream_with_inherited_resou
             .unwrap(),
         &Object::Reference(content)
     );
+}
+
+fn encrypted(mut pdf: Document, version: u8, permissions: Permissions) -> Vec<u8> {
+    pdf.trailer.set(
+        "ID",
+        vec![
+            Object::string_literal("paragraph-synthetic-id"),
+            Object::string_literal("paragraph-synthetic-id"),
+        ],
+    );
+    let version = if version == 1 {
+        EncryptionVersion::V1 {
+            document: &pdf,
+            owner_password: "owner",
+            user_password: "reader",
+            permissions,
+        }
+    } else {
+        EncryptionVersion::V2 {
+            document: &pdf,
+            owner_password: "owner",
+            user_password: "reader",
+            permissions,
+            key_length: 128,
+        }
+    };
+    pdf.encrypt(&EncryptionState::try_from(version).unwrap())
+        .unwrap();
+    bytes(pdf)
+}
+
+#[test]
+fn legacy_protected_paragraphs_preserve_exact_history_passwords_and_file_identifier() {
+    for version in [1, 2] {
+        let original = encrypted(fixture(SOURCE), version, Permissions::all());
+        let mut session = Session::from_bytes_with_password(
+            original.clone(),
+            "legacy.pdf".into(),
+            None,
+            1,
+            Some("reader"),
+        )
+        .unwrap();
+        let request = change(
+            &session,
+            &first(&session),
+            "A protected paragraph is real wrapped PDF text. Café.",
+        );
+        let preview = session.paragraph_preview(&request).unwrap();
+        assert!(preview.layout.fits);
+        assert_eq!(
+            session.bytes(),
+            original,
+            "renderer-only preview cannot change protected bytes"
+        );
+        session.edit_paragraph(&request).unwrap();
+        let edited = session.bytes().to_vec();
+        assert!(Document::load_mem(&edited).unwrap().is_encrypted());
+        for password in ["reader", "owner"] {
+            let before =
+                Document::load_mem_with_options(&original, LoadOptions::with_password(password))
+                    .unwrap();
+            let after =
+                Document::load_mem_with_options(&edited, LoadOptions::with_password(password))
+                    .unwrap();
+            assert_eq!(
+                before.trailer.get(b"ID").unwrap(),
+                after.trailer.get(b"ID").unwrap()
+            );
+            assert!(after.was_encrypted());
+            let reopened = Session::from_bytes_with_password(
+                edited.clone(),
+                "legacy.pdf".into(),
+                None,
+                2,
+                Some(password),
+            )
+            .unwrap();
+            assert_eq!(
+                first(&reopened).text.as_deref(),
+                Some(request.text.as_str())
+            );
+        }
+        session.undo().unwrap();
+        assert_eq!(session.bytes(), original);
+        session.redo().unwrap();
+        assert_eq!(session.bytes(), edited);
+        let mut bad = change(
+            &session,
+            &first(&session),
+            "Overflow must not replace protected state.",
+        );
+        bad.placement = [40.0, 60.0, 30.0, 4.0];
+        assert!(session.edit_paragraph(&bad).is_err());
+        assert_eq!(session.bytes(), edited);
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("protected-reflow.pdf");
+        session.save_as(&path).unwrap();
+        let mut reopened = Session::from_bytes_with_password(
+            std::fs::read(path).unwrap(),
+            "protected-reflow.pdf".into(),
+            None,
+            3,
+            Some("owner"),
+        )
+        .unwrap();
+        let request = change(&reopened, &first(&reopened), "A second protected edit.");
+        reopened.edit_paragraph(&request).unwrap();
+        assert!(Document::load_mem(reopened.bytes()).unwrap().is_encrypted());
+    }
+}
+
+#[test]
+fn general_edit_authority_signed_and_archival_restrictions_cannot_be_bypassed_by_paragraph_apis() {
+    let restricted = encrypted(
+        fixture(SOURCE),
+        2,
+        Permissions::COPYABLE | Permissions::FILLABLE,
+    );
+    let mut session = Session::from_bytes_with_password(
+        restricted.clone(),
+        "fill-only.pdf".into(),
+        None,
+        1,
+        Some("reader"),
+    )
+    .unwrap();
+    assert!(session.info().unwrap().permissions.fill_forms_allowed);
+    let block = first(&session);
+    assert!(!block.editable);
+    let request = change(&session, &block, "Not authorized for source editing.");
+    assert!(session.paragraph_preview(&request).is_err());
+    assert!(session.edit_paragraph(&request).is_err());
+    assert_eq!(session.bytes(), restricted);
+    for marker in ["signed", "certified", "archival"] {
+        let mut pdf = fixture(SOURCE);
+        if marker == "archival" {
+            pdf.catalog_mut().unwrap().set("FolioRasterArchive", true);
+        } else if marker == "certified" {
+            pdf.catalog_mut().unwrap().set("Perms", dictionary! {});
+        } else {
+            let signature = pdf.add_object(dictionary! {"Type"=>"Sig","ByteRange"=>vec![0.into(),1.into(),2.into(),3.into()],
+                "Contents"=>Object::string_literal("synthetic read-only marker; not a valid signature")});
+            pdf.catalog_mut()
+                .unwrap()
+                .set("SyntheticSignature", signature);
+        }
+        let mut session = open(pdf);
+        let before = session.bytes().to_vec();
+        let block = first(&session);
+        assert!(!block.editable, "{marker}");
+        let request = change(&session, &block, "A forbidden edit.");
+        assert!(session.paragraph_preview(&request).is_err(), "{marker}");
+        assert!(session.edit_paragraph(&request).is_err(), "{marker}");
+        assert_eq!(session.bytes(), before);
+        assert!(!session.info().unwrap().can_undo);
+    }
+}
+
+#[test]
+fn managed_logical_metadata_is_checked_against_real_glyph_operations_before_reediting() {
+    let mut session = open(fixture(SOURCE));
+    let request = change(&session, &first(&session), "Managed actual source text.");
+    session.edit_paragraph(&request).unwrap();
+    let mut pdf = Document::load_mem(session.bytes()).unwrap();
+    let form = pdf
+        .objects
+        .values_mut()
+        .find_map(|value| {
+            value
+                .as_stream_mut()
+                .ok()
+                .filter(|stream| stream.dict.has(b"FolioParagraph"))
+        })
+        .unwrap();
+    form.dict
+        .get_mut(b"FolioParagraph")
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set(
+            "Text",
+            lopdf::text_string("Tampered metadata, not visible source."),
+        );
+    let session = open(pdf);
+    let error = session.paragraph_blocks(0).unwrap_err().to_string();
+    assert!(
+        error.contains("metadata") || error.contains("encode"),
+        "{error}"
+    );
+}
+
+#[test]
+fn enclosing_form_bounds_and_unstable_absolute_origins_fail_without_partial_source_changes() {
+    let mut pdf = fixture(SOURCE);
+    let page = pdf.get_pages()[&1];
+    pdf.get_dictionary_mut(page).unwrap().set(
+        "MediaBox",
+        numbers(&[100000000.0, 100000000.0, 100001024.0, 100001024.0]),
+    );
+    pdf.get_dictionary_mut(page).unwrap().set(
+        "CropBox",
+        numbers(&[100000000.0, 100000000.0, 100001024.0, 100001024.0]),
+    );
+    let stream = pdf.add_object(Stream::new(dictionary! {},b"BT /F1 12 Tf 16 TL 1 0 0 1 100000081 100000700 Tm (Finite source line) Tj T* (Another source line) Tj ET".to_vec()));
+    pdf.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", stream);
+    let mut session = open(pdf);
+    let before = session.bytes().to_vec();
+    let block = first(&session);
+    assert!(block.editable, "{:?}", block.reason);
+    let mut request = change(
+        &session,
+        &block,
+        "A safe refusal rather than rounded placement.",
+    );
+    request.placement = [85.0, 60.0, 240.0, 110.0];
+    assert!(
+        session
+            .edit_paragraph(&request)
+            .unwrap_err()
+            .to_string()
+            .contains("precision")
+    );
+    assert_eq!(session.bytes(), before);
+}
+
+#[test]
+fn write_original_synthetic_paragraph_fixtures_when_requested() {
+    let Ok(folder) = std::env::var("FOLIO_PARAGRAPH_EVIDENCE_DIR") else {
+        return;
+    };
+    let folder = std::path::Path::new(&folder);
+    std::fs::create_dir_all(folder).unwrap();
+    let mut pdf = fixture(SOURCE);
+    let first = pdf.get_pages()[&1];
+    let parent = pdf
+        .get_dictionary(first)
+        .unwrap()
+        .get(b"Parent")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let image = pdf.add_object(Stream::new(
+        dictionary! {
+            "Type"=>"XObject","Subtype"=>"Image","Width"=>2,"Height"=>1,
+            "ColorSpace"=>"DeviceRGB","BitsPerComponent"=>8,
+        },
+        vec![240, 30, 40, 20, 60, 230],
+    ));
+    pdf.get_dictionary_mut(parent)
+        .unwrap()
+        .get_mut(b"Resources")
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("XObject", dictionary! {"KeepImage"=>image});
+    let mut source = SOURCE.to_vec();
+    source.extend_from_slice(b" q 100 0 0 50 330 200 cm /KeepImage Do Q BT /F1 10 Tf 1 0 0 1 40 60 Tm (KEEP-FOOTER-90451) Tj ET");
+    let content = pdf.add_object(Stream::new(dictionary! {}, source));
+    pdf.get_dictionary_mut(first)
+        .unwrap()
+        .set("Contents", content);
+    let mut pages = vec![first];
+    for (rotation, unit) in [(90, 1.5_f32), (180, 0.75), (270, 2.0)] {
+        pages.push(pdf.add_object(dictionary! {"Type"=>"Page","Parent"=>parent,"Contents"=>content,"Rotate"=>rotation,"UserUnit"=>unit}));
+    }
+    pdf.get_dictionary_mut(parent).unwrap().set(
+        "Kids",
+        pages
+            .iter()
+            .map(|id| Object::Reference(*id))
+            .collect::<Vec<_>>(),
+    );
+    pdf.get_dictionary_mut(parent)
+        .unwrap()
+        .set("Count", pages.len() as i64);
+    let appearance = pdf.add_object(Stream::new(
+        dictionary! {
+            "Type"=>"XObject","Subtype"=>"Form","BBox"=>numbers(&[0.0,0.0,60.0,40.0]),
+        },
+        b"0.9 0.6 0.1 rg 0 0 60 40 re f".to_vec(),
+    ));
+    let annotation = pdf.add_object(dictionary! {
+        "Type"=>"Annot","Subtype"=>"Stamp","P"=>first,"Rect"=>numbers(&[400.0,100.0,460.0,140.0]),
+        "F"=>4,"AP"=>dictionary! {"N"=>appearance},
+    });
+    pdf.get_dictionary_mut(first)
+        .unwrap()
+        .set("Annots", vec![Object::Reference(annotation)]);
+    let payload = pdf.add_object(Stream::new(
+        dictionary! {"Type"=>"EmbeddedFile"},
+        b"Original synthetic attachment remains byte-identical.".to_vec(),
+    ));
+    let attachment = pdf.add_object(
+        dictionary! {"Type"=>"Filespec","F"=>Object::string_literal("keep.txt"),
+        "UF"=>lopdf::text_string("keep.txt"),"EF"=>dictionary! {"F"=>payload}},
+    );
+    pdf.catalog_mut().unwrap().set(
+        "Names",
+        dictionary! {"EmbeddedFiles"=>dictionary! {
+            "Names"=>vec![Object::string_literal("keep.txt"),Object::Reference(attachment)],
+        }},
+    );
+    std::fs::write(folder.join("source.pdf"), bytes(pdf)).unwrap();
+    let mut embedded = open(fixture(SOURCE));
+    let request = change(
+        &embedded,
+        &first_block(&embedded),
+        "Original embedded paragraph. Café Ω Привет.\nA separate logical line.",
+    );
+    embedded.edit_paragraph(&request).unwrap();
+    std::fs::write(folder.join("embedded.pdf"), embedded.bytes()).unwrap();
+    fn first_block(session: &Session) -> ParagraphBlock {
+        session.paragraph_blocks(0).unwrap().blocks.remove(0)
+    }
 }

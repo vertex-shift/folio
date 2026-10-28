@@ -934,12 +934,14 @@ fn handle(
         }
         (&Method::Post, "/undo") => {
             let input: Revision = json_body(request)?;
+            workspace.ensure_export_ready(input.document_id, input.revision)?;
             workspace
                 .current_mut(input.document_id, input.revision)?
                 .undo()?
         }
         (&Method::Post, "/redo") => {
             let input: Revision = json_body(request)?;
+            workspace.ensure_export_ready(input.document_id, input.revision)?;
             workspace
                 .current_mut(input.document_id, input.revision)?
                 .redo()?

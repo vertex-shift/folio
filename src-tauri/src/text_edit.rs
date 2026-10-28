@@ -53,7 +53,7 @@ pub(crate) enum Codec {
 }
 
 impl Codec {
-    fn mapping_count(&self) -> usize {
+    pub(crate) fn mapping_count(&self) -> usize {
         match self {
             Self::Simple(_) => 256,
             Self::Unicode {

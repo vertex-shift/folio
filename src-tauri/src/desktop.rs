@@ -684,6 +684,7 @@ async fn undo_document(
     revision: u64,
 ) -> std::result::Result<DocumentInfo, String> {
     with_state(app, move |state| {
+        state.workspace.ensure_export_ready(document_id, revision)?;
         state.workspace.current_mut(document_id, revision)?.undo()
     })
     .await
@@ -696,6 +697,7 @@ async fn redo_document(
     revision: u64,
 ) -> std::result::Result<DocumentInfo, String> {
     with_state(app, move |state| {
+        state.workspace.ensure_export_ready(document_id, revision)?;
         state.workspace.current_mut(document_id, revision)?.redo()
     })
     .await

@@ -18,6 +18,7 @@ pub(super) struct Font {
     pub codec: Codec,
     pub original_reason: Option<String>,
     pub program_bytes: usize,
+    pub mapping_count: usize,
     program: Option<Program>,
     widths: Widths,
     bbox: [f64; 4],
@@ -89,6 +90,7 @@ impl Font {
     pub fn load(document: &Document, object: &Object) -> Result<Arc<Self>> {
         let dictionary = resolve(document, object)?.as_dict()?;
         let codec = strict_codec(document, dictionary).map_err(invalid)?;
+        let mapping_count = codec.mapping_count();
         let label: String = dictionary
             .get(b"BaseFont")
             .and_then(Object::as_name)
@@ -233,6 +235,7 @@ impl Font {
             codec,
             original_reason,
             program_bytes,
+            mapping_count,
             program,
             widths,
             bbox,
