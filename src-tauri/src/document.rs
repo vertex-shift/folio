@@ -495,6 +495,42 @@ impl Session {
         crate::text_edit::page_runs(&self.document, page)
     }
 
+    pub fn paragraph_blocks(&self, page: usize) -> Result<crate::paragraph::ParagraphPage> {
+        let mut result = crate::paragraph::inspect(&self.document, page, self.mutation_epoch)?;
+        if let Err(error) = self.ensure_management_writable() {
+            for block in &mut result.blocks {
+                block.editable = false;
+                block.reason = Some(error.to_string());
+            }
+        }
+        Ok(result)
+    }
+
+    pub fn paragraph_preview(
+        &self,
+        change: &crate::paragraph::ParagraphChange,
+    ) -> Result<crate::paragraph::ParagraphPreview> {
+        self.ensure_management_writable()?;
+        self.check_paragraph_epoch(change.epoch)?;
+        crate::paragraph::preview(&self.document, change)
+    }
+
+    pub(crate) fn check_paragraph_epoch(&self, epoch: u64) -> Result<()> {
+        if epoch != self.mutation_epoch {
+            return Err(invalid("The paragraph source epoch changed, including an edit or undo/redo. Reload its source block before applying; your draft is kept."));
+        }
+        Ok(())
+    }
+
+    pub fn edit_paragraph(
+        &mut self,
+        change: &crate::paragraph::ParagraphChange,
+    ) -> Result<DocumentInfo> {
+        self.ensure_management_writable()?;
+        self.check_paragraph_epoch(change.epoch)?;
+        self.mutate(|next| crate::paragraph::apply(next, change))
+    }
+
     pub fn image_occurrences(&self, page: usize) -> Result<crate::image_edit::ImagePage> {
         let mut result = crate::image_edit::inspect(&self.document, page)?;
         if let Some(reason) = &self.read_only_reason {

@@ -287,6 +287,16 @@ impl Workspace {
         self.image_replacements.cancel(id, asset_id)
     }
 
+    pub fn edit_paragraph(
+        &mut self,
+        id: u64,
+        revision: u64,
+        change: crate::paragraph::ParagraphChange,
+    ) -> Result<DocumentInfo> {
+        self.check_revision(id, revision)?.check_paragraph_epoch(change.epoch)?;
+        self.current_mut(id, revision)?.edit_paragraph(&change)
+    }
+
     pub fn ensure_export_ready(&self, id: u64, revision: u64) -> Result<&Session> {
         let session = self.check_revision(id, revision)?;
         if self.drafts.contains(&id)

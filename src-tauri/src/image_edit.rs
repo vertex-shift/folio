@@ -428,7 +428,7 @@ impl Scanner {
     }
 }
 
-fn unsupported_graphics(document: &Document, state: &Dictionary) -> Result<bool> {
+pub(crate) fn unsupported_graphics(document: &Document, state: &Dictionary) -> Result<bool> {
     for (key, value) in state.iter() {
         let value = resolve(document, value)?;
         match key.as_slice() {

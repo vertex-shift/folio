@@ -122,6 +122,14 @@ struct ImageEditRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ParagraphRequest {
+    document_id: u64,
+    revision: u64,
+    change: folio_core::paragraph::ParagraphChange,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RedactionRequest {
     document_id: u64,
     revision: u64,
@@ -734,6 +742,18 @@ fn handle(
             return Ok(Payload::Json(serde_json::to_value(runs).map_err(
                 |error| Error::Invalid(format!("Could not serialize source text: {error}")),
             )?));
+        }
+        (&Method::Post, "/paragraphs") => {
+            let input: TextRunsRequest = json_body(request)?;
+            return json(workspace.check_revision(input.document_id, input.revision)?.paragraph_blocks(input.page)?);
+        }
+        (&Method::Post, "/paragraphs/preview") => {
+            let input: ParagraphRequest = json_body(request)?;
+            return json(workspace.check_revision(input.document_id, input.revision)?.paragraph_preview(&input.change)?);
+        }
+        (&Method::Post, "/paragraphs/edit") => {
+            let input: ParagraphRequest = json_body(request)?;
+            workspace.edit_paragraph(input.document_id, input.revision, input.change)?
         }
         (&Method::Post, "/signatures/inspect") => {
             let input: Revision = json_body(request)?;

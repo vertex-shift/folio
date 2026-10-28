@@ -179,6 +179,18 @@ pub(crate) fn rewrite_operation(
     path: &[usize],
     mut change: impl FnMut(&mut Document, &mut Dictionary, &Operation) -> Result<Vec<Operation>>,
 ) -> Result<()> {
+    rewrite_range(document, page, path, *path.last().unwrap_or(&0), |document, resources, operations| {
+        change(document, resources, &operations[0])
+    })
+}
+
+pub(crate) fn rewrite_range(
+    document: &mut Document,
+    page: usize,
+    path: &[usize],
+    end: usize,
+    mut change: impl FnMut(&mut Document, &mut Dictionary, &[Operation]) -> Result<Vec<Operation>>,
+) -> Result<()> {
     if path.is_empty() || path.len() > 17 {
         return Err(invalid(
             "The source operation path is invalid or too deeply nested.",
@@ -198,7 +210,7 @@ pub(crate) fn rewrite_operation(
     }
     let bytes = document.get_page_content_with_limit(id, MAX_EDIT_CONTENT_BYTES)?;
     let resources = page_resources(document, id)?;
-    let (bytes, resources) = rewrite_container(document, bytes, resources, path, &mut change)?;
+    let (bytes, resources) = rewrite_container(document, bytes, resources, path, end, &mut change)?;
     let mut stream = Stream::new(dictionary! {}, bytes);
     stream.compress()?;
     let contents = document.add_object(stream);
@@ -214,10 +226,11 @@ fn rewrite_container<F>(
     bytes: Vec<u8>,
     mut resources: Dictionary,
     path: &[usize],
+    end: usize,
     change: &mut F,
 ) -> Result<(Vec<u8>, Dictionary)>
 where
-    F: FnMut(&mut Document, &mut Dictionary, &Operation) -> Result<Vec<Operation>>,
+    F: FnMut(&mut Document, &mut Dictionary, &[Operation]) -> Result<Vec<Operation>>,
 {
     let mut content = Content::decode(&bytes)?;
     if content
@@ -236,8 +249,10 @@ where
         .ok_or_else(|| invalid("The selected content operation no longer exists."))?
         .clone();
     if path.len() == 1 {
-        let replacement = change(document, &mut resources, &operation)?;
-        content.operations.splice(index..=index, replacement);
+        let selected = content.operations.get(index..=end)
+            .ok_or_else(|| invalid("The selected source range no longer exists."))?;
+        let replacement = change(document, &mut resources, selected)?;
+        content.operations.splice(index..=end, replacement);
     } else {
         if operation.operator != "Do" || operation.operands.len() != 1 {
             return Err(invalid("The selected Form invocation path changed."));
@@ -255,6 +270,7 @@ where
             stream.get_plain_content_with_limit(MAX_EDIT_CONTENT_BYTES)?,
             child_resources,
             &path[1..],
+            end,
             change,
         )?;
         stream.set_plain_content(bytes);

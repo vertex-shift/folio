@@ -117,6 +117,18 @@ impl PageGeometry {
         }
     }
 
+    pub(crate) fn pdf_to_display(&self, [x, y]: [f64; 2]) -> [f64; 2] {
+        let [left, bottom, right, top] = self.bounds.map(f64::from);
+        let point = match self.rotation {
+            0 => [x - left, top - y],
+            90 => [y - bottom, x - left],
+            180 => [right - x, y - bottom],
+            270 => [top - y, right - x],
+            _ => unreachable!("page_rotation normalizes right-angle rotations"),
+        };
+        point.map(|value| value * f64::from(self.user_unit))
+    }
+
     pub(crate) fn display_rect(&self, placement: [f32; 4]) -> Result<[f32; 4]> {
         let [x, y, width, height] = placement;
         if placement.iter().any(|value| !value.is_finite())

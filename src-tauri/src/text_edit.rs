@@ -37,14 +37,14 @@ pub struct TextRun {
     pub reason: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplacementFont {
     Original,
     Noto,
 }
 
-enum Codec {
+pub(crate) enum Codec {
     Simple(Box<[Option<char>; 256]>),
     Unicode {
         encoding: Encoding<'static>,
@@ -69,7 +69,7 @@ impl Codec {
         }
     }
 
-    fn units(&self, bytes: &[u8]) -> std::result::Result<Vec<(String, Vec<u8>)>, String> {
+    pub(crate) fn units(&self, bytes: &[u8]) -> std::result::Result<Vec<(String, Vec<u8>)>, String> {
         match self {
             Self::Simple(map) => bytes
                 .iter()
@@ -108,7 +108,7 @@ impl Codec {
         }
     }
 
-    fn decode(&self, bytes: &[u8]) -> std::result::Result<String, String> {
+    pub(crate) fn decode(&self, bytes: &[u8]) -> std::result::Result<String, String> {
         Ok(self
             .units(bytes)?
             .into_iter()
@@ -116,7 +116,7 @@ impl Codec {
             .collect())
     }
 
-    fn encode(&self, text: &str, original: &[u8]) -> Result<Vec<u8>> {
+    pub(crate) fn encode(&self, text: &str, original: &[u8]) -> Result<Vec<u8>> {
         let preferred: BTreeMap<_, _> =
             self.units(original).map_err(invalid)?.into_iter().collect();
         let mut result = Vec::new();
@@ -600,7 +600,7 @@ impl Scanner {
     }
 }
 
-fn strict_codec(document: &Document, font: &Dictionary) -> std::result::Result<Codec, String> {
+pub(crate) fn strict_codec(document: &Document, font: &Dictionary) -> std::result::Result<Codec, String> {
     let subtype = font
         .get(b"Subtype")
         .and_then(Object::as_name)
@@ -978,7 +978,7 @@ fn point(matrix: Matrix, point: [f64; 2]) -> [f64; 2] {
     ]
 }
 
-fn requires_shaping(text: &str) -> bool {
+pub(crate) fn requires_shaping(text: &str) -> bool {
     text.chars().any(|character| {
         matches!(character as u32,
         0x0300..=0x036f | 0x0590..=0x109f | 0x1100..=0x11ff |
