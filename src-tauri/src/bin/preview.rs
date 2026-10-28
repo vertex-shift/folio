@@ -443,6 +443,34 @@ fn handle(
             let input: folio_core::archive::SourceRef = json_body(request)?;
             return json(workspace.inspect_technical(input)?);
         }
+        (&Method::Post, "/accessibility/inspect") => {
+            let input: folio_core::archive::SourceRef = json_body(request)?;
+            return json(workspace.inspect_accessibility(input)?);
+        }
+        (&Method::Post, "/accessibility/inspection/check") => {
+            let input: InspectionId = json_body(request)?;
+            return json(workspace.check_accessibility_inspection(input.inspection_id)?);
+        }
+        (&Method::Post, "/accessibility/inspection/cancel") => {
+            let input: InspectionId = json_body(request)?;
+            return json(workspace.cancel_accessibility_inspection(input.inspection_id));
+        }
+        (&Method::Post, "/accessibility/begin") => {
+            let input: folio_core::accessibility::CopyRequest = json_body(request)?;
+            return json(workspace.begin_accessibility_copy(input)?);
+        }
+        (&Method::Post, "/accessibility/check") => {
+            let input: RedactionJob = json_body(request)?;
+            return json(workspace.check_accessibility_copy(input.job_id)?);
+        }
+        (&Method::Post, "/accessibility/file") => {
+            let input: RedactionJob = json_body(request)?;
+            return Ok(Payload::Pdf(workspace.accessibility_copy_bytes(input.job_id)?));
+        }
+        (&Method::Post, "/accessibility/cancel") => {
+            let input: RedactionJob = json_body(request)?;
+            return json(workspace.cancel_accessibility_copy(input.job_id));
+        }
         (&Method::Post, "/preflight/check") => {
             let input: InspectionId = json_body(request)?;
             return json(workspace.check_inspection(input.inspection_id)?);

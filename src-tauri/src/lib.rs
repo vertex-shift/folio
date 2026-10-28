@@ -1,3 +1,4 @@
+pub mod accessibility;
 pub mod archive;
 pub mod attachments;
 pub mod authoring;

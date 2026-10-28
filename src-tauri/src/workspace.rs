@@ -28,6 +28,7 @@ pub struct Workspace {
     pub(crate) comparisons: crate::comparison::ComparisonJobs,
     pub(crate) archives: crate::archive::ArchiveJobs,
     pub(crate) inspections: crate::preflight::Inspections,
+    pub(crate) accessibility: crate::accessibility::AccessibilityJobs,
     technical_epochs: BTreeMap<u64, u64>,
     signature_trust: crate::signatures::TrustStore,
 }
@@ -141,7 +142,8 @@ impl Workspace {
                 || self.authoring_images.contains(id)
                 || self.image_replacements.contains(id)
                 || self.outputs.has_document(id)
-                || self.archives.has_document(id))
+                || self.archives.has_document(id)
+                || self.accessibility.has_document(id))
         {
             return Err(Error::Invalid("This PDF has unsaved changes or pending marks. Save or explicitly discard them before closing the tab.".into()));
         }
@@ -191,6 +193,7 @@ impl Workspace {
             || !self.image_replacements.is_empty()
             || self.outputs.is_pending()
             || self.archives.is_pending()
+            || self.accessibility.is_pending()
             || self.creations.is_pending()
     }
 
@@ -665,6 +668,7 @@ impl Workspace {
         *epoch = epoch.saturating_add(1);
         self.archives.invalidate(id);
         self.inspections.invalidate(id);
+        self.accessibility.invalidate(id);
     }
 
     pub(crate) fn technical_epoch(&self, id: u64) -> u64 {

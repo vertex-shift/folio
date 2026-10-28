@@ -44,6 +44,9 @@ mod image_commands;
 #[path = "desktop_paragraph.rs"]
 mod paragraph_commands;
 
+#[path = "desktop_accessibility.rs"]
+mod accessibility_commands;
+
 async fn with_state<T: Send + 'static>(
     app: AppHandle,
     action: impl FnOnce(&mut DesktopState) -> Result<T> + Send + 'static,
@@ -1017,6 +1020,13 @@ pub fn run() {
             archive_commands::stage_archive_page,
             archive_commands::save_archive_copy,
             archive_commands::cancel_archive,
+            accessibility_commands::inspect_accessibility,
+            accessibility_commands::check_accessibility_inspection,
+            accessibility_commands::cancel_accessibility_inspection,
+            accessibility_commands::begin_accessibility_copy,
+            accessibility_commands::check_accessibility_copy,
+            accessibility_commands::save_accessibility_copy,
+            accessibility_commands::cancel_accessibility_copy,
         ])
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();

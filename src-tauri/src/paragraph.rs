@@ -1490,6 +1490,19 @@ pub(crate) fn inspect(document: &Document, page: usize, epoch: u64) -> Result<Pa
     })
 }
 
+pub(crate) struct SemanticBlock {
+    pub view: ParagraphBlock,
+    pub end: usize,
+    pub managed: bool,
+}
+
+pub(crate) fn semantic_blocks(document: &Document, page: usize) -> Result<Vec<SemanticBlock>> {
+    let (scanner, _) = scan_page(document, page)?;
+    Ok(scanner.blocks.into_iter().map(|block| SemanticBlock {
+        view: block.view, end: block.end, managed: block.managed,
+    }).collect())
+}
+
 fn validate_style(size: f64, leading: f64) -> Result<()> {
     if !size.is_finite()
         || !(2.0..=144.0).contains(&size)
