@@ -214,7 +214,7 @@ try {
   await bytes(initial, pending);
   for (const route of ["/undo", "/redo", "/preflight/inspect"]) await api(route, ref(initial), pending);
   await api("/close", { ...ref(initial), discardChanges: false }, pending);
-  await api("/ocr/begin", { ...ref(initial), options: { pages: [0], dpi: 150, language: "eng", existingText: "skip" } }, pending);
+  await api("/ocr/begin", { ...ref(initial), options: { pages: [0], dpi: 150, languages: ["eng"], layout: "horizontal_print", segmentation: "auto", existingText: "skip" } }, pending);
   await api("/comparison/begin", { before: ref(initial), after: ref(peer), settings: { dpi: 72, tolerance: 0 } }, pending);
   await api("/archive/begin", { ...ref(initial), pages: [0], dpi: 150, acknowledgeLoss: true, allowUnencrypted: false, acknowledgeUnsigned: false }, pending);
   await api("/signatures/export", { ...ref(initial), identity: [], password: "", fieldId: null }, pending);

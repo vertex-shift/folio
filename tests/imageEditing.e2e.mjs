@@ -243,7 +243,7 @@ try {
   assert.ok(await page.getByRole("tab", { name: "Image occurrences.pdf", exact: true }).count());
   await api("/extract", { ...ref(opened), pages: [0] }, /Apply or discard pending/);
   await api("/output/begin", { ...ref(opened), kind: "png", pages: [0], dpi: 96, quality: null, allowUnencrypted: false }, /Apply or discard pending/);
-  await api("/ocr/begin", { ...ref(opened), options: { pages: [0], dpi: 150, language: "eng", existingText: "force" } }, /Apply or discard pending/);
+  await api("/ocr/begin", { ...ref(opened), options: { pages: [0], dpi: 150, languages: ["eng"], layout: "horizontal_print", segmentation: "auto", existingText: "force" } }, /Apply or discard pending/);
   await api("/signatures/export", { ...ref(opened), identity: [], password: "", fieldId: null }, /Apply or discard pending/);
   await api("/comparison/begin", { before: ref(opened), after: ref(peerInfo), settings: { dpi: 96, tolerance: 0 } }, /Apply or discard pending/);
   assert.equal((await activeInfo()).revision, opened.revision);
