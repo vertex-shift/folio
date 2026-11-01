@@ -35,7 +35,7 @@ await new Promise((resolve, reject) => {
 });
 const address = server.address(), origin = `http://127.0.0.1:${address.port}`, url = origin + "/folio/";
 let browser;
-const errors = [], externalRequests = [], evidence = { url, viewports: [], behavior: [], screenshots: [] };
+const errors = [], externalRequests = [], evidence = { url, viewports: [], behavior: [], screenshots: [], motion: [] };
 const cases = [
   { name: "desktop", width: 1440, height: 1000 },
   { name: "user-1280", width: 1280, height: 720, deviceScaleFactor: 2 },
@@ -73,6 +73,8 @@ try {
     await page.evaluate(() => document.fonts.ready);
     await page.locator("#preview-image").evaluate((image) => image.decode());
     assert.equal(await page.getByRole("combobox", { name: "Website appearance", exact: true }).inputValue(), "system");
+    assert.equal(await page.evaluate(() => document.getAnimations().filter((value) => value.id.startsWith("folio-")).length), 0,
+      "Reduced motion must skip the document-opening geometry.");
     const measurements = await page.evaluate(() => {
       const rect = (id) => {
         const value = document.getElementById(id).getBoundingClientRect();
@@ -133,6 +135,134 @@ try {
     evidence.viewports.push({ name: item.name, ...measurements });
     await ctx.close();
   }
+
+  for (const item of [
+    { name: "motion-desktop", width: 1280, height: 720, colorScheme: "light" },
+    { name: "motion-mobile-dark", width: 390, height: 844, colorScheme: "dark" },
+  ]) {
+    const motionContext = await context({ reducedMotion: "no-preference", colorScheme: item.colorScheme,
+      viewport: { width: item.width, height: item.height } });
+    const moving = await motionContext.newPage();
+    moving.on("pageerror", (error) => errors.push(error.message));
+    await moving.addInitScript(() => {
+      window.folioPauseMotion = true;
+      window.folioMotionCalls = [];
+      window.folioMotionLayoutShift = 0;
+      new PerformanceObserver((list) => {
+        for (const value of list.getEntries()) if (!value.hadRecentInput) window.folioMotionLayoutShift += value.value;
+      }).observe({ type: "layout-shift", buffered: true });
+      const animate = Element.prototype.animate;
+      Element.prototype.animate = function (frames, options) {
+        const animation = animate.call(this, frames, options);
+        window.folioMotionCalls.push({ target: this.id || this.tagName, frames, duration: options.duration });
+        if (window.folioPauseMotion) { animation.pause(); animation.currentTime = 90; }
+        return animation;
+      };
+    });
+    await moving.goto(url);
+    await moving.waitForFunction(() => document.getAnimations().some((value) => value.id === "folio-document-open"));
+    const entrance = await moving.evaluate(() => {
+      const frame = document.getElementById("workspace-preview"), download = document.getElementById("primary-download");
+      return {
+        animations: document.getAnimations().filter((value) => value.id.startsWith("folio-"))
+          .map((value) => ({ id: value.id, duration: value.effect.getTiming().duration, iterations: value.effect.getTiming().iterations })),
+        transform: getComputedStyle(frame).transform, clipPath: getComputedStyle(frame).clipPath,
+        downloadBottom: download.getBoundingClientRect().bottom,
+        overflow: document.documentElement.scrollWidth > innerWidth,
+      };
+    });
+    assert.deepEqual(entrance.animations.map((value) => value.id).sort(), ["folio-document-open", "folio-ownership-reveal"]);
+    assert.ok(entrance.animations.every((value) => value.iterations === 1 && value.duration <= 800));
+    assert.notEqual(entrance.transform, "none");
+    assert.notEqual(entrance.clipPath, "none");
+    assert.ok(entrance.downloadBottom <= item.height);
+    assert.equal(entrance.overflow, false);
+    const entranceFile = path.join(output, `${item.name}-opening.png`);
+    await moving.screenshot({ path: entranceFile, animations: "allow" });
+    evidence.screenshots.push(entranceFile);
+    const timing = await moving.evaluate(async () => {
+      window.folioPauseMotion = false;
+      for (const animation of document.getAnimations()) animation.play();
+      const deltas = [];
+      let last = performance.now();
+      for (let index = 0; index < 48; index++) {
+        await new Promise(requestAnimationFrame);
+        const now = performance.now(); deltas.push(now - last); last = now;
+      }
+      deltas.sort((a, b) => a - b);
+      return { frameP95: deltas[Math.floor(deltas.length * .95)], layoutShift: window.folioMotionLayoutShift };
+    });
+    assert.ok(timing.frameP95 < 50, JSON.stringify(timing));
+    assert.ok(timing.layoutShift < .01, JSON.stringify(timing));
+    await moving.waitForFunction(() => document.getAnimations().filter((value) => value.id.startsWith("folio-")).length === 0);
+    assert.equal(await moving.locator("#workspace-preview").evaluate((node) => getComputedStyle(node).transform), "none");
+    assert.equal(await moving.locator("#workspace-preview").evaluate((node) => node.style.willChange), "");
+    const note = moving.getByRole("tab", { name: "Leave a note", exact: true });
+    const organize = moving.getByRole("tab", { name: "Organize pages", exact: true });
+    await moving.evaluate(() => { window.folioPauseMotion = true; });
+    await note.click();
+    await moving.waitForFunction(() => document.getAnimations().some((value) => value.id === "folio-preview-sheet"));
+    await organize.click();
+    await moving.waitForFunction(() => document.getElementById("preview-image").complete
+      && document.getAnimations().some((value) => value.id === "folio-preview-sheet"));
+    assert.match(await moving.locator("#preview-image").getAttribute("src"), /workspace-organize\.webp$/);
+    assert.equal(await organize.getAttribute("aria-selected"), "true");
+    assert.equal(await note.getAttribute("aria-selected"), "false");
+    assert.equal(await moving.evaluate(() => document.getAnimations().filter((value) => value.id === "folio-preview-sheet").length), 1);
+    await moving.emulateMedia({ reducedMotion: "reduce" });
+    await moving.waitForFunction(() => document.getAnimations().filter((value) => value.id.startsWith("folio-")).length === 0);
+    await note.focus();
+    await moving.keyboard.press("Enter");
+    await moving.waitForFunction(() => document.getAnimations().some((value) => value.id === "folio-preview-sheet"));
+    const reduced = await moving.evaluate(() => document.getAnimations().filter((value) => value.id.startsWith("folio-"))
+      .map((value) => ({ duration: value.effect.getTiming().duration, frames: value.effect.getKeyframes() })));
+    assert.ok(reduced.every((value) => value.duration === 120 && value.frames.every((frame) => !frame.transform && !frame.clipPath)));
+    await moving.emulateMedia({ media: "print" });
+    await moving.evaluate(() => dispatchEvent(new Event("beforeprint")));
+    await moving.waitForFunction(() => document.getAnimations().filter((value) => value.id.startsWith("folio-")).length === 0);
+    await moving.emulateMedia({ media: "screen", reducedMotion: "no-preference" });
+    await organize.click();
+    await moving.waitForFunction(() => document.getAnimations().some((value) => value.id === "folio-preview-sheet"));
+    await moving.evaluate(() => {
+      Object.defineProperty(document, "hidden", { configurable: true, value: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    assert.equal(await moving.evaluate(() => document.getAnimations().filter((value) => value.id.startsWith("folio-")).length), 0);
+    await moving.evaluate(() => delete document.hidden);
+    await moving.evaluate(() => dispatchEvent(new Event("pagehide")));
+    await moving.evaluate(() => new Promise(requestAnimationFrame));
+    assert.equal(await moving.locator("#workspace-preview").evaluate((node) => node.style.willChange), "");
+    evidence.motion.push({ name: item.name, entrance, timing, reducedMotion: "crossfade only", interruption: "latest preview wins",
+      hiddenPage: "canceled", print: "canceled", noLoops: true });
+    await motionContext.close();
+  }
+  evidence.behavior.push("Prominent document-opening and preview-sheet motion passes on desktop/mobile; bounded frame timing, no layout shift, interruption, reduced-motion crossfades and hidden/print cancellation.");
+
+  const delayed = await context({ reducedMotion: "no-preference", viewport: { width: 1280, height: 900 } });
+  let releaseInitialImage;
+  const initialImage = new Promise((resolve) => { releaseInitialImage = resolve; });
+  await delayed.route("**/assets/workspace-read.webp", async (route) => {
+    await initialImage;
+    await route.fulfill({ status: 200, contentType: "image/webp",
+      body: await readFile(path.join(site, "assets/workspace-read.webp")) });
+  });
+  const latest = await delayed.newPage();
+  latest.on("pageerror", (error) => errors.push(error.message));
+  await latest.goto(url, { waitUntil: "domcontentloaded" });
+  await latest.getByRole("tab", { name: "Organize pages", exact: true }).click();
+  await latest.waitForFunction(() => document.getElementById("preview-image").complete
+    && document.getElementById("preview-image").currentSrc.endsWith("/workspace-organize.webp"));
+  releaseInitialImage();
+  await latest.waitForLoadState("networkidle");
+  assert.equal(await latest.getByRole("tab", { name: "Organize pages", exact: true }).getAttribute("aria-selected"), "true");
+  assert.match(await latest.locator("#preview-caption").innerText(), /Every page in its place/);
+  assert.equal(await latest.evaluate(() => document.getAnimations().some((value) => value.id === "folio-document-open")), false);
+  await latest.setViewportSize({ width: 390, height: 844 });
+  await latest.waitForFunction(() => document.getElementById("preview-image").complete
+    && document.getElementById("preview-image").currentSrc.endsWith("/workspace-organize-detail.webp"));
+  assert.match(await latest.locator("#preview-caption").innerText(), /Every page in its place/);
+  await delayed.close();
+  evidence.behavior.push("A delayed/canceled initial image cannot replay the entrance or replace the latest preview; responsive source changes preserve the selected view.");
 
   const ctx = await context({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();

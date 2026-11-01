@@ -59,3 +59,22 @@ Dark surfaces inherit the desktop's graphite/slate and pale blue semantics;
 the original blue source chapter and original PDF/screenshot pixels stay true.
 Palette changes are atomic to retain contrast, including controls, selection,
 focus, disclosure and sharing recovery. Storage failures remain explicit.
+
+## Motion extension
+
+FOCAL MOMENT: The actual document opens like Folio's folded-page mark: a bounded
+740 ms sheet-corner mask and shallow perspective, paired with a 560 ms ownership
+reveal. Content and download actions remain available; this is a photographed
+workspace presentation, not invented PDF editing.
+
+CONTINUITY: User-selected Read / Note / Organize views receive one 420 ms sheet
+transition only after the selected real image loads, with matching captions.
+Rapid input interrupts the old effect; no automatic preview carousel.
+
+FEEDBACK: Download arrows move downward, source/link arrows move forward on
+hover or keyboard focus. Hit targets and layout do not move.
+
+BUDGET: Native Web Animations/CSS only, no loops, shaders, repeated scroll
+reveals, libraries or raster changes. Reduced motion retains a brief crossfade
+without sheet geometry; hidden pages, printing and preference changes cancel
+effects. Bound transforms/masks to the headline and proof, with temporary hints.

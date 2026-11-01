@@ -75,6 +75,20 @@ test("blocked or corrupt appearance storage stays visible and never prevents vis
   assert.match(blocked.controller.snapshot().message ?? "", /could not be saved/);
 });
 
+test("website motion stays progressive, bounded and independent of desktop preferences", async () => {
+  const script = await readFile(path.join(site, "app.mjs"), "utf8");
+  assert.match(script, /prefers-reduced-motion: reduce/);
+  assert.match(script, /"visibilitychange"/);
+  assert.match(script, /"beforeprint"/);
+  assert.match(script, /"pagehide"/);
+  assert.match(script, /"load", previewReady/);
+  assert.match(script, /previewImage\.currentSrc/);
+  assert.doesNotMatch(script, /setInterval|requestAnimationFrame|localStorage|IntersectionObserver/);
+  assert.doesNotMatch(css, /animation:[^;]*infinite|\.hero[^{}]*\{[^}]*opacity:\s*0/);
+  assert.match(css, /prefers-reduced-motion: reduce[\s\S]*transform: none !important/);
+  assert.match(css, /transform-origin: center top/);
+});
+
 test("the introduction names the actual independent PDF product and its release/source boundary", () => {
   assert.match(html, /An independent, open-source alternative to Adobe Acrobat/);
   assert.match(html, /local-first desktop PDF workspace/);
