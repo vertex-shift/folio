@@ -1029,6 +1029,13 @@ finish/cancel every pending writing, metadata, form, paragraph, accessibility,
 image, page-authoring or live-gesture draft and clear redaction marks first.
 Prepared tagged-copy jobs also block OCR. Settings live with the document
 workspace, not a mounted page, so switching panels or inactive tabs keeps them.
+The default **Automatic horizontal page** retains the existing page-segmentation
+behavior. It can miss complete lines, not just misread characters. For clean
+one-column printed text, explicitly choose **Single-column printed text**:
+it finds horizontal dark-ink bands and recognizes them sequentially with the
+same selected local models, preserving each band's exact page-relative geometry.
+This is not table/column inference, vertical layout, handwriting recognition or
+an automatic fallback; faint/dark-background/over-budget inputs fail explicitly.
 
 The default **Skip existing text** policy conservatively skips pages containing
 text-show operations, including hidden text and nested Form XObjects. **Force
@@ -1051,6 +1058,9 @@ mapped back into unrotated PDF coordinates, respecting the visible CropBox,
 nonzero box origins, right-angle rotation, and UserUnit. Private font resources
 and a prefixed, balanced graphics/text-state scope prevent changes to the
 original visible content.
+Actual line boxes are carried alongside each word, so above-baseline punctuation
+such as Japanese `ー` keeps the real line baseline instead of being rejected or
+assigned a fabricated baseline.
 
 Recognition is sequential and cancellable, including while loading the
 engine/model. **Cancel OCR** releases the worker/canvas and discards all staged
@@ -1080,6 +1090,9 @@ per recognition job**, **one to three distinct models / 20 MiB model input**,
 **32 MiB actual embedded font input**, and **256 Unicode scalars per word**.
 The workspace permits one owned sequential OCR job/worker, not simultaneous
 language/page workers. Initialization itself has a two-minute hard deadline.
+Single-column mode adds at most **128 ink bands/page**, yields cooperatively
+during pixel analysis, keeps the original DPI, and limits all PNG inputs for one
+page together to **64 MiB**. Its full job still has the same 15-minute deadline.
 Oversize/unsupported results fail explicitly rather than lowering resolution,
 dropping words, or committing partial text.
 
@@ -1143,8 +1156,9 @@ worker recognition with networking disabled under the native CSP:
 ```sh
 npx playwright install chromium
 npm run test:ocr
+npm run test:ocr:languages
 # Optional: retain original synthetic fixtures, PDFs, screenshots, and JSON evidence.
-FOLIO_OCR_ARTIFACTS=/absolute/output/folder npm run test:ocr
+FOLIO_OCR_ARTIFACTS=/absolute/output/folder npm run test:ocr:languages
 ```
 
 The runner starts/stops only its own loopback servers on dynamically selected

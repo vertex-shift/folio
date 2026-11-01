@@ -1,6 +1,6 @@
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { awaitOcrStep, recognitionWords } from "../src/lib/ocr.ts";
+import { awaitOcrStep, horizontalOcrBands, recognitionWords, shiftOcrWords } from "../src/lib/ocr.ts";
 import { LocalOcrWorker } from "../src/lib/ocrWorker.ts";
 import { verifiedOcrAsset } from "../src/lib/ocrWorker.ts";
 import { OCR_LANGUAGES, selectedOcrLanguages } from "../src/lib/ocrLanguages.ts";
@@ -21,7 +21,8 @@ test("OCR range limits are checked before expanding large source page ranges", (
 
 function output() {
   return { text: "FOLIO OFFLINE", blocks: [{ paragraphs: [{ is_ltr: true, lines: [{
-    text: "FOLIO OFFLINE", baseline: { x0: 50, y0: 100, x1: 500, y1: 109, has_baseline: true },
+    text: "FOLIO OFFLINE", bbox: { x0: 50, y0: 70, x1: 500, y1: 110 },
+    baseline: { x0: 50, y0: 100, x1: 500, y1: 109, has_baseline: true },
     words: [{ text: "FOLIO", bbox: { x0: 50, y0: 70, x1: 180, y1: 100 } },
       { text: "OFFLINE", bbox: { x0: 220, y0: 75, x1: 500, y1: 109 } }],
   }] }] }] };
@@ -31,7 +32,7 @@ test("OCR preserves actual word boxes and interpolates each word's line baseline
   const words = recognitionWords(output(), page);
   assert.equal(words.length, 2);
   assert.deepEqual(words[0], { text: "FOLIO", bounds: [50, 70, 180, 100],
-    baseline: [50, 100, 180, 102.6], line: 0, direction: "ltr", separator: " " });
+    baseline: [50, 100, 180, 102.6], line: 0, lineBounds: [50,70,500,110], direction: "ltr", separator: " " });
   assert.deepEqual(words[1].baseline, [220, 103.4, 500, 109]);
 });
 
@@ -60,6 +61,42 @@ test("invalid coordinates and unsupported direction fail the entire page", () =>
   assert.throws(() => recognitionWords(invalidDirection, page));
 });
 
+test("above-baseline Japanese punctuation retains its real line box rather than manufacturing a word baseline", () => {
+  const result = { text: "ー\n", blocks: [{ blocktype:1, paragraphs:[{is_ltr:1,lines:[{
+    text:"ー\n",bbox:{x0:50,y0:70,x1:500,y1:110},
+    baseline:{x0:50,y0:105,x1:500,y1:105},words:[{text:"ー",bbox:{x0:100,y0:75,x1:180,y1:80}}],
+  }]}]}] };
+  const [word] = recognitionWords(result,page);
+  assert.deepEqual(word.baseline,[100,105,180,105]);
+  assert.deepEqual(word.lineBounds,[50,70,500,110]);
+  result.blocks[0].blocktype=7;
+  assert.throws(()=>recognitionWords(result,page),/Vertical/);
+});
+
+test("single-column bands preserve actual DPI and positions, merge nearby marks and reject dark/excessive inputs", async () => {
+  const width=40,height=100,pixels=new Uint8ClampedArray(width*height*4).fill(255);
+  const row=(y:number)=>{for(let x=10;x<30;x++)pixels.fill(0,(y*width+x)*4,(y*width+x)*4+3);};
+  for(const y of [10,11,12,17,18,19,50,51,52])row(y);
+  const signal=new AbortController().signal;
+  const bands=await horizontalOcrBands(pixels,width,height,300,signal);
+  assert.equal(bands.length,2);
+  assert.ok(bands[0].top<=10 && bands[0].top+bands[0].height>=20);
+  assert.ok(bands[0].top+bands[0].height<=bands[1].top);
+  assert.deepEqual(await horizontalOcrBands(new Uint8ClampedArray(width*height*4).fill(255),width,height,300,signal),[]);
+  await assert.rejects(horizontalOcrBands(new Uint8ClampedArray(width*height*4),width,height,300,signal),/light-background/);
+  const abort=new AbortController();
+  const scan=horizontalOcrBands(pixels,width,height,300,abort.signal);
+  abort.abort(new Error("Cancel band scan"));
+  await assert.rejects(scan,/Cancel band scan/);
+  const words=recognitionWords(output(),page),shifted=shiftOcrWords(words,40,7);
+  assert.equal(shifted[0].text,words[0].text);
+  assert.equal(shifted[0].separator,words[0].separator);
+  assert.equal(shifted[0].bounds[1],words[0].bounds[1]+40);
+  assert.equal(shifted[0].baseline[1],words[0].baseline[1]+40);
+  assert.equal(shifted[0].lineBounds[1],words[0].lineBounds[1]+40);
+  assert.equal(shifted[0].line,7);
+});
+
 test("all fifteen fixed languages and one-to-three distinct combinations are validated without path injection or fallback", () => {
   assert.equal(OCR_LANGUAGES.length, 15);
   for (const language of OCR_LANGUAGES) assert.deepEqual(selectedOcrLanguages([language.id]), [language.id]);
@@ -71,11 +108,11 @@ test("all fifteen fixed languages and one-to-three distinct combinations are val
 
 test("logical RTL/Indic text and separators preserve every combining mark and joiner without normalization", () => {
   const result = { text: "هذا كِتاب\nक्‍षि e\u0301\n", blocks: [{ paragraphs: [{
-    is_ltr: 0, lines: [{ text: "هذا كِتاب\n",
+    is_ltr: 0, lines: [{ text: "هذا كِتاب\n", bbox: { x0:50,y0:70,x1:500,y1:102 },
       baseline: { x0: 50, y0: 100, x1: 500, y1: 100 },
       words: [{ text: "هذا", bbox: { x0: 300, y0: 70, x1: 500, y1: 100 } },
         { text: "كِتاب", bbox: { x0: 50, y0: 70, x1: 200, y1: 100 } }] }],
-  }, { is_ltr: 1, lines: [{ text: "क्‍षि e\u0301\n",
+  }, { is_ltr: 1, lines: [{ text: "क्‍षि e\u0301\n", bbox: { x0:50,y0:160,x1:500,y1:203 },
     baseline: { x0: 50, y0: 200, x1: 500, y1: 200 },
     words: [{ text: "क्‍षि", bbox: { x0: 50, y0: 160, x1: 200, y1: 200 } },
       { text: "e\u0301", bbox: { x0: 300, y0: 160, x1: 400, y1: 200 } }] }],

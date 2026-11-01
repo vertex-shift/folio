@@ -387,6 +387,8 @@ one primary and up to two additional bundled models, with selected scripts and
 directions visible and the full catalog in a disclosure. Model checking,
 unsupported language/layout, force duplication and no-text outcomes stay
 explicit. Language settings belong to the document workspace, not page mounts.
+Automatic layout remains the default; a distinct native select offers bounded
+single-column printed text with its quality/layout limitations visible.
 Pages form a continuous vertical stack with 24px gaps and their own dimensions.
 Only the viewport neighborhood mounts full renderers; off-screen page positions
 are reserved by geometry, not miniature document screenshots. Page navigation

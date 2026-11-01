@@ -6,6 +6,7 @@ export interface OcrOptions {
   dpi: 150 | 300;
   languages: OcrLanguage[];
   layout: "horizontal_print";
+  segmentation: "auto" | "single_column";
   existingText: "skip" | "force";
 }
 
@@ -29,6 +30,7 @@ export interface OcrPlan {
   dpi: 150 | 300;
   languages: OcrLanguage[];
   layout: "horizontal_print";
+  segmentation: "auto" | "single_column";
   pages: OcrPagePlan[];
 }
 
@@ -37,6 +39,7 @@ export interface OcrWord {
   bounds: PdfRect;
   baseline: [number, number, number, number];
   line: number;
+  lineBounds: PdfRect;
   direction: "ltr" | "rtl";
   separator: string;
 }
@@ -56,7 +59,7 @@ export interface OcrOutcome {
 }
 
 export interface OcrProgress {
-  stage: "preparing" | "loading" | "rendering" | "recognizing" | "staging" | "committing";
+  stage: "preparing" | "loading" | "rendering" | "segmenting" | "recognizing" | "staging" | "committing";
   page: number;
   completed: number;
   total: number;

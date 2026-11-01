@@ -20,6 +20,40 @@ const children = [];
 let browser;
 const failures = [];
 const evidence = { externalRequests: [], offline: [], pages: [] };
+const languageCases = [
+  { language: "eng", font: "NotoSans-Regular.ttf", direction: "ltr", lines: ["Local documents stay on this computer.", "Offline reading and review 48271."] },
+  { language: "fra", font: "NotoSans-Regular.ttf", direction: "ltr", lines: ["Les documents restent sur cet ordinateur.", "Lecture locale et révision 48271."] },
+  { language: "spa", font: "NotoSans-Regular.ttf", direction: "ltr", lines: ["Los documentos quedan en este equipo.", "Lectura local y revisión 48271."] },
+  { language: "deu", font: "NotoSans-Regular.ttf", direction: "ltr", lines: ["Dokumente bleiben auf diesem Computer.", "Lokales Lesen und Prüfung 48271."] },
+  { language: "ita", font: "NotoSans-Regular.ttf", direction: "ltr", lines: ["I documenti restano su questo computer.", "Lettura locale e revisione 48271."] },
+  { language: "por", font: "NotoSans-Regular.ttf", direction: "ltr", lines: ["Os documentos ficam neste computador.", "Leitura local e revisão 48271."] },
+  { language: "nld", font: "NotoSans-Regular.ttf", direction: "ltr", lines: ["Documenten blijven op deze computer.", "Lokaal lezen en controleren 48271."] },
+  { language: "ell", font: "NotoSans-Regular.ttf", direction: "ltr", lines: ["Τα έγγραφα μένουν σε αυτόν τον υπολογιστή.", "Τοπική ανάγνωση και έλεγχος 48271."] },
+  { language: "rus", font: "NotoSans-Regular.ttf", direction: "ltr", lines: ["Документы остаются на этом компьютере.", "Местное чтение и проверка 48271."] },
+  { language: "ara", font: "FolioOcrArabic-Regular.ttf", direction: "rtl", lines: ["تبقى المستندات على هذا الكمبيوتر.", "قراءة محلية ومراجعة 48271."] },
+  { language: "hin", font: "FolioOcrDevanagari-Regular.ttf", direction: "ltr", lines: ["यह दस्तावेज़ कंप्यूटर पर रहता है।", "स्थानीय पढ़ना और समीक्षा 48271।"] },
+  { language: "chi_sim", font: "FolioOcrCjkSC-Regular.ttf", direction: "ltr", lines: ["文件保留在本机。", "离线阅读和检查文件 48271。"] },
+  { language: "chi_tra", font: "FolioOcrCjkSC-Regular.ttf", direction: "ltr", lines: ["文件保留在本機。", "離線閱讀和檢查文件 48271。"] },
+  { language: "jpn", font: "FolioOcrCjkJP-Regular.ttf", direction: "ltr", lines: ["文書はこのコンピューターに保存されます。", "文書を読んで確認します 48271。"] },
+  { language: "kor", font: "FolioOcrCjkKR-Regular.ttf", direction: "ltr", lines: ["문서는 이 컴퓨터에 보관됩니다.", "문서를 읽고 확인합니다 48271."] },
+];
+const selectedLanguageCases = process.env.FOLIO_OCR_LANGUAGES
+  ? languageCases.filter((item) => process.env.FOLIO_OCR_LANGUAGES.split(",").includes(item.language))
+  : languageCases;
+function accuracy(expected, recognized) {
+  const a = Array.from(expected.normalize("NFC").replace(/\s/gu, ""));
+  const b = Array.from(recognized.normalize("NFC").replace(/\s/gu, ""));
+  const row = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    let previous = row[0]; row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const current = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1));
+      previous = current;
+    }
+  }
+  return 1 - row[b.length] / Math.max(a.length, b.length, 1);
+}
 const env = { ...process.env, CARGO_INCREMENTAL: "0", CARGO_PROFILE_DEV_DEBUG: "0",
   CARGO_PROFILE_TEST_DEBUG: "0", CARGO_BUILD_JOBS: "2" };
 
@@ -365,6 +399,128 @@ try {
   assert.equal(await page.evaluate(() => window.__ocrWorkers.active), 0);
   assert.deepEqual(await bytes(cancelSource), cancelBytes);
   evidence.workerLifecycle = await page.evaluate(() => window.__ocrWorkers);
+  if (process.env.FOLIO_OCR_MULTILINGUAL || process.argv.includes("--multilingual")) {
+    const fixtures = await page.evaluate(async (cases) => {
+      const loaded = new Set();
+      const images = [];
+      for (const item of cases) {
+        if (!loaded.has(item.font)) {
+          const font = new FontFace(item.font.replaceAll(".", "_"), `url(/vendor/ocr/fonts/${item.font})`);
+          document.fonts.add(await font.load()); loaded.add(item.font);
+        }
+        const canvas = document.createElement("canvas"); canvas.width = 1500; canvas.height = 750;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "white"; ctx.fillRect(0, 0, 1500, 750);
+        ctx.fillStyle = "black"; ctx.direction = item.direction;
+        ctx.textAlign = item.direction === "rtl" ? "right" : "left";
+        let size = 72;
+        ctx.font = `${size}px "${item.font.replaceAll(".", "_")}"`;
+        const widest = Math.max(...item.lines.map((line) => ctx.measureText(line).width));
+        size *= Math.min(1, 1350 / widest);
+        ctx.font = `${size}px "${item.font.replaceAll(".", "_")}"`;
+        for (const [index, line] of item.lines.entries()) ctx.fillText(line, item.direction === "rtl" ? 1425 : 75, 220 + index * 200);
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+        images.push(Array.from(new Uint8Array(await blob.arrayBuffer())));
+        canvas.width = canvas.height = 0;
+      }
+      return images;
+    }, selectedLanguageCases);
+    evidence.languages = [];
+    for (const [index, item] of selectedLanguageCases.entries()) {
+      const doc = await PDFDocument.create();
+      const target = doc.addPage([360, 180]), image = await doc.embedPng(new Uint8Array(fixtures[index]));
+      target.drawImage(image, { x: 0, y: 0, width: 360, height: 180 });
+      const original = process.env.FOLIO_OCR_CORPUS
+        ? new Uint8Array(await readFile(join(process.env.FOLIO_OCR_CORPUS, `${item.language}.pdf`)))
+        : await doc.save({ useObjectStreams: false });
+      const sourcePath = join(artifacts, `${item.language}-scan.pdf`);
+      await writeFile(sourcePath, original);
+      await writeFile(join(artifacts, `${item.language}-scan.png`), process.env.FOLIO_OCR_CORPUS
+        ? await readFile(join(process.env.FOLIO_OCR_CORPUS, `${item.language}.png`)) : new Uint8Array(fixtures[index]));
+      await fileInput.setInputFiles(sourcePath);
+      await page.waitForFunction((name) => document.querySelector(".document-tab.selected")?.textContent.includes(name), `${item.language}-scan.pdf`);
+      await page.getByRole("button", { name: "Recognize scanned text", exact: true }).click();
+      const active = page.locator('.document-workspace:not([hidden])');
+      await active.getByLabel("Pages to recognize").fill("1");
+      await active.getByLabel("Scan resolution").selectOption("300");
+      await active.getByLabel("OCR language", { exact: true }).selectOption(item.language);
+      await active.getByLabel("OCR text layout", { exact: true }).selectOption("single_column");
+      const resultStart = staged.length;
+      await page.getByRole("button", { name: "Recognize text", exact: true }).click();
+      await page.waitForFunction(() => document.querySelector(".document-workspace:not([hidden]) .ocr-outcome h3")?.textContent === "Searchable text added"
+        || Boolean(document.querySelector(".document-workspace:not([hidden]) .error-notification")), { timeout: 120_000 });
+      const error = await active.locator(".error-notification").count();
+      if (error) throw new Error(`${item.language}: ${await active.locator(".error-notification").innerText()}`);
+      assert.equal(staged.length, resultStart + 1, `${item.language}: exact staged page`);
+      const recognized = staged[resultStart].words.map((word) => word.text + word.separator).join("");
+      assert.ok(accuracy(item.lines.join("\n"), recognized) >= 0.9, `${item.language}: recognition below 90% ${JSON.stringify(recognized)}`);
+      const download = page.waitForEvent("download");
+      await page.getByRole("button", { name: "Download PDF", exact: true }).click();
+      const savedPath = join(artifacts, `${item.language}-recognized.pdf`);
+      await (await download).saveAs(savedPath);
+      const saved = new Uint8Array(await readFile(savedPath));
+      await fileInput.setInputFiles(savedPath);
+      await page.waitForFunction((name) => document.querySelector(".document-tab.selected")?.textContent.includes(name), `${item.language}-recognized.pdf`);
+      const inspection = await page.evaluate(async ({ original, saved, words, plan }) => {
+        const { loadPdf } = await import("/src/lib/pdf.ts");
+        const { TextLayer } = await import("/node_modules/pdfjs-dist/legacy/build/pdf.mjs");
+        const { mapText, findMatches } = await import("/src/lib/search.ts");
+        const before = await loadPdf(new Uint8Array(original)).promise, after = await loadPdf(new Uint8Array(saved)).promise;
+        try {
+          const originalPage = await before.getPage(1), outputPage = await after.getPage(1);
+          const text = await outputPage.getTextContent();
+          const items = text.items.filter((item) => "str" in item);
+          const logical = mapText(items).text;
+          const viewport = outputPage.getViewport({ scale: 1 });
+          const canvases = [];
+          for (const pdfPage of [originalPage, outputPage]) {
+            const canvas = document.createElement("canvas"); canvas.width = viewport.width; canvas.height = viewport.height;
+            await pdfPage.render({ canvas, viewport }).promise; canvases.push(canvas);
+          }
+          const pixels = canvases.map((canvas) => canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data);
+          let changes = 0;
+          for (let offset = 0; offset < pixels[0].length; offset++) if (pixels[0][offset] !== pixels[1][offset]) changes++;
+          for (const canvas of canvases) canvas.width = canvas.height = 0;
+          const container = document.createElement("div"); container.className = "textLayer";
+          container.style.cssText = `position:fixed;left:0;top:0;width:${viewport.width}px;height:${viewport.height}px;`;
+          container.style.setProperty("--total-scale-factor", String(outputPage.userUnit)); document.body.append(container);
+          const layer = new TextLayer({ textContentSource: text, container, viewport }); await layer.render();
+          const positions = [];
+          for (const word of words.filter((word) => word.text.length > 1).slice(0, 5)) {
+            const item = items.find((item) => item.str === word.text);
+            const span = layer.textDivs.find((div) => div.textContent === word.text);
+            if (!item || !span) throw new Error(`Logical word missing after saved reopen: ${word.text}`);
+            const range = document.createRange(); range.selectNodeContents(span);
+            const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+            const box = range.getBoundingClientRect(), origin = container.getBoundingClientRect();
+            const baseline = viewport.convertToViewportPoint(item.transform[4], item.transform[5]);
+            const expected = word.bounds.map((value) => value * 72 / plan.dpi);
+            positions.push({ text: word.text, direction: item.dir, selection: selection.toString(),
+              baselineError: Math.abs(baseline[1] - word.baseline[1] * 72 / plan.dpi),
+              actual: [box.left - origin.left, box.top - origin.top, box.right - origin.left, box.bottom - origin.top], expected });
+            selection.removeAllRanges();
+          }
+          layer.cancel(); container.remove();
+          return { logical, changedChannels: changes, positions, queryMatches: findMatches(logical, words[0].text).length };
+        } finally { await before.loadingTask.destroy(); await after.loadingTask.destroy(); }
+      }, { original: Array.from(original), saved: Array.from(saved), words: staged[resultStart].words, plan: capturedPlan });
+      assert.equal(inspection.logical, recognized, `${item.language}: exact recognized Unicode after saved reopen`);
+      assert.equal(inspection.changedChannels, 0, `${item.language}: source pixels`);
+      assert.ok(inspection.queryMatches > 0, `${item.language}: logical search`);
+      for (const position of inspection.positions) {
+        assert.equal(position.selection, position.text, `${item.language}: exact Unicode selection`);
+        assert.equal(position.direction, item.direction, `${item.language}: actual direction`);
+        assert.ok(position.baselineError < 0.05, `${item.language}: baseline`);
+        assert.ok(Math.abs(position.actual[0] - position.expected[0]) < 2 && Math.abs(position.actual[2] - position.expected[2]) < 3,
+          `${item.language}: actual word width ${JSON.stringify(position)}`);
+      }
+      assert.equal(await page.evaluate(() => window.__ocrWorkers.active), 0);
+      evidence.languages.push({ ...item, recognized, accuracy: accuracy(item.lines.join("\n"), recognized), ...inspection,
+        sourceSha256: createHash("sha256").update(original).digest("hex"), outputSha256: createHash("sha256").update(saved).digest("hex") });
+      await writeFile(join(artifacts, "multilingual-evidence.json"), JSON.stringify(evidence.languages, null, 2) + "\n");
+      console.log(`${item.language}: actual UI OCR/save/reopen, ${(evidence.languages.at(-1).accuracy * 100).toFixed(1)}% fixture character accuracy; exact Unicode/direction/search/selection; 0 changed RGBA`);
+    }
+  }
   await context.close();
 
   await build({ root, logLevel: "error" });

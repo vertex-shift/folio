@@ -102,11 +102,12 @@ export class LocalOcrWorker {
     });
   }
 
-  async initialize(dpi: number, languages: readonly OcrLanguage[] = ["eng"]): Promise<void> {
+  async initialize(dpi: number, languages: readonly OcrLanguage[] = ["eng"], segmentation: "auto" | "single_column" = "auto"): Promise<void> {
     const timeout = setTimeout(() => this.close(new Error("OCR initialization exceeded its two-minute limit. No text was added.")), 120_000);
     try {
       const selected = selectedOcrLanguages(languages);
       if (dpi !== 150 && dpi !== 300) throw new Error("Choose 150 or 300 DPI for OCR.");
+      if (segmentation !== "auto" && segmentation !== "single_column") throw new Error("Choose automatic horizontal text or single-column printed text.");
       const langs = [];
       for (const model of ocrLanguageResources(selected)) {
         const data = await verifiedOcrAsset(model.name, model.bytes, model.sha256, this.signal);
@@ -120,7 +121,7 @@ export class LocalOcrWorker {
       await this.request("initialize", { langs: selected.join("+"), oem: 1,
         config: "debug_file /dev/null\ntessedit_load_sublangs\ntextord_tabfind_vertical_text 0\ntextord_tabfind_force_vertical_text 0" });
       await this.request("setParameters", { params: {
-        tessedit_pageseg_mode: "3", preserve_interword_spaces: "1", user_defined_dpi: String(dpi),
+        tessedit_pageseg_mode: segmentation === "auto" ? "3" : "6", preserve_interword_spaces: "1", user_defined_dpi: String(dpi),
         textord_tabfind_vertical_text: "0", textord_tabfind_force_vertical_text: "0",
       } });
     } catch (error) {

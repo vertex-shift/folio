@@ -4,6 +4,53 @@ import { LocalOcrWorker } from "./ocrWorker.ts";
 import { selectedOcrLanguages } from "./ocrLanguages.ts";
 
 export const MAX_OCR_PAGES = 50;
+export const MAX_OCR_BANDS = 128;
+
+export async function horizontalOcrBands(pixels: Uint8ClampedArray, width: number, height: number, dpi: number,
+  signal: AbortSignal): Promise<{ top: number; height: number }[]> {
+  signal.throwIfAborted();
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0
+    || width > 16_384 || height > 16_384 || width * height > 24_000_000 || pixels.length !== width * height * 4 || ![150, 300].includes(dpi)) {
+    throw new Error("The single-column OCR image has invalid or excessive geometry.");
+  }
+  const gap = Math.max(3, Math.round(dpi / 40));
+  const bands: [number, number][] = [];
+  let start = -1, last = -1, ink = 0, nonWhite = 0;
+  for (let y = 0; y < height; y++) {
+    if (y % 64 === 0) { await new Promise((resolve) => setTimeout(resolve, 0)); signal.throwIfAborted(); }
+    let count = 0;
+    for (let x = 0, offset = y * width * 4; x < width; x++, offset += 4) {
+      const luminance = pixels[offset] * 54 + pixels[offset + 1] * 183 + pixels[offset + 2] * 19;
+      if (luminance < 192 * 256) count++;
+      if (luminance < 250 * 256) nonWhite++;
+    }
+    ink += count;
+    if (count === 0) continue;
+    if (start < 0) start = y;
+    else if (y - last > gap) { bands.push([start, last + 1]); start = y; }
+    last = y;
+  }
+  if (start >= 0) bands.push([start, last + 1]);
+  if (bands.length > MAX_OCR_BANDS) throw new Error("Single-column OCR exceeds 128 horizontal ink bands. Choose fewer pages or automatic layout; no text was added.");
+  if (ink > width * height * 0.4) throw new Error("Single-column OCR requires clean, light-background printed scans. Choose automatic layout for this image; no text was added.");
+  if (!bands.length && nonWhite) throw new Error("Single-column OCR could not resolve the faint scan into ink bands. Improve contrast or choose automatic layout; no text was added.");
+  signal.throwIfAborted();
+  return bands.map(([top, bottom], index) => {
+    const padding = Math.ceil(Math.max(dpi / 24, (bottom - top) * 0.3));
+    const before = index ? Math.ceil((bands[index - 1][1] + top) / 2) : 0;
+    const after = index + 1 < bands.length ? Math.floor((bottom + bands[index + 1][0]) / 2) : height;
+    const begin = Math.max(before, top - padding);
+    return { top: begin, height: Math.min(after, bottom + padding) - begin };
+  });
+}
+
+export function shiftOcrWords(words: OcrWord[], top: number, lineOffset: number): OcrWord[] {
+  return words.map((word) => ({ ...word, line: word.line + lineOffset,
+    bounds: [word.bounds[0], word.bounds[1] + top, word.bounds[2], word.bounds[3] + top],
+    lineBounds: [word.lineBounds[0], word.lineBounds[1] + top, word.lineBounds[2], word.lineBounds[3] + top],
+    baseline: [word.baseline[0], word.baseline[1] + top, word.baseline[2], word.baseline[3] + top],
+  }));
+}
 
 export function awaitOcrStep<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -46,52 +93,65 @@ export function recognitionWords(output: unknown, page: OcrPagePlan): OcrWord[] 
   if (data.blocks === null && !data.text.trim()) return [];
   const words: OcrWord[] = [];
   let lineIndex = 0;
-  for (const block of array(data.blocks)) for (const paragraph of array(record(block).paragraphs)) {
-    const paragraphData = record(paragraph);
-    if (![true, false, 0, 1].includes(paragraphData.is_ltr as boolean | number)) {
-      throw new Error("The OCR engine returned no supported horizontal reading direction. No text was added.");
-    }
-    const direction = paragraphData.is_ltr === false || paragraphData.is_ltr === 0 ? "rtl" : "ltr";
-    for (const line of array(paragraphData.lines)) {
-      const row = record(line);
-      if (typeof row.text !== "string") throw new Error("The OCR engine returned a line without its logical text. No text was added.");
-      const baseline = record(row.baseline);
-      const x0 = coordinate(baseline.x0), y0 = coordinate(baseline.y0);
-      const x1 = coordinate(baseline.x1), y1 = coordinate(baseline.y1);
-      if (baseline.has_baseline === false || x1 <= x0 || Math.abs((y1 - y0) / (x1 - x0)) > 0.25) {
-        throw new Error(`Page ${page.page + 1} has unsupported OCR text orientation. Deskew or rotate the scan first; no text was added.`);
+  for (const block of array(data.blocks)) {
+    const blockData = record(block);
+    if (blockData.blocktype === 7) throw new Error("Vertical OCR blocks are not supported. Use a horizontal printed scan; no text was added.");
+    for (const paragraph of array(blockData.paragraphs)) {
+      const paragraphData = record(paragraph);
+      const ltr = paragraphData.is_ltr;
+      if (ltr !== true && ltr !== false && ltr !== 0 && ltr !== 1) {
+        throw new Error("The OCR engine returned no supported horizontal reading direction. No text was added.");
       }
-      const y = (x: number) => y0 + (x - x0) * (y1 - y0) / (x1 - x0);
-      const lineWords = array(row.words);
-      let textOffset = 0;
-      for (const [index, item] of lineWords.entries()) {
-        const word = record(item);
-        if (typeof word.text !== "string" || !word.text || /\s/u.test(word.text)) throw new Error("The OCR engine returned an empty or unsupported word. No text was added.");
-        const start = row.text.indexOf(word.text, textOffset);
-        if (start < 0 || row.text.slice(textOffset, start).trim()) {
-          throw new Error("The OCR engine returned inconsistent logical line/word text. No characters were discarded and no text was added.");
+      const direction = ltr === false || ltr === 0 ? "rtl" : "ltr";
+      for (const line of array(paragraphData.lines)) {
+        const row = record(line);
+        if (typeof row.text !== "string") throw new Error("The OCR engine returned a line without its logical text. No text was added.");
+        const lineBox = record(row.bbox);
+        const lineBounds: [number, number, number, number] = [
+          coordinate(lineBox.x0), coordinate(lineBox.y0), coordinate(lineBox.x1), coordinate(lineBox.y1),
+        ];
+        if (lineBounds[0] < 0 || lineBounds[1] < 0 || lineBounds[2] > page.pixelWidth || lineBounds[3] > page.pixelHeight
+          || lineBounds[2] <= lineBounds[0] || lineBounds[3] <= lineBounds[1]) {
+          throw new Error("The OCR engine returned an invalid line box. No text was added.");
         }
-        const next = index + 1 < lineWords.length ? record(lineWords[index + 1]).text : undefined;
-        if (next !== undefined && typeof next !== "string") throw new Error("The OCR engine returned an incomplete line. No text was added.");
-        const end = start + word.text.length;
-        const nextStart = typeof next === "string" ? row.text.indexOf(next, end) : row.text.length;
-        if (nextStart < end || row.text.slice(end, nextStart).trim()) {
-          throw new Error("The OCR engine returned text outside its word geometry. No characters were discarded and no text was added.");
+        const baseline = record(row.baseline);
+        const x0 = coordinate(baseline.x0), y0 = coordinate(baseline.y0);
+        const x1 = coordinate(baseline.x1), y1 = coordinate(baseline.y1);
+        if (baseline.has_baseline === false || x1 <= x0 || Math.abs((y1 - y0) / (x1 - x0)) > 0.25) {
+          throw new Error(`Page ${page.page + 1} has unsupported OCR text orientation. Deskew or rotate the scan first; no text was added.`);
         }
-        const separator = row.text.slice(end, nextStart);
-        if (!/^[ \t\r\n]{0,256}$/.test(separator)) throw new Error("The OCR engine returned unsupported line separators. No text was added.");
-        textOffset = nextStart;
-        const box = record(word.bbox);
-        const left = coordinate(box.x0), top = coordinate(box.y0);
-        const right = coordinate(box.x1), bottom = coordinate(box.y1);
-        if (left < 0 || top < 0 || right > page.pixelWidth || bottom > page.pixelHeight || right <= left || bottom <= top) {
-          throw new Error(`Page ${page.page + 1} has OCR words outside its rendered bounds. No text was added.`);
+        const y = (x: number) => y0 + (x - x0) * (y1 - y0) / (x1 - x0);
+        const lineWords = array(row.words);
+        let textOffset = 0;
+        for (const [index, item] of lineWords.entries()) {
+          const word = record(item);
+          if (typeof word.text !== "string" || !word.text || /\s/u.test(word.text)) throw new Error("The OCR engine returned an empty or unsupported word. No text was added.");
+          const start = row.text.indexOf(word.text, textOffset);
+          if (start < 0 || row.text.slice(textOffset, start).trim()) {
+            throw new Error("The OCR engine returned inconsistent logical line/word text. No characters were discarded and no text was added.");
+          }
+          const next = index + 1 < lineWords.length ? record(lineWords[index + 1]).text : undefined;
+          if (next !== undefined && typeof next !== "string") throw new Error("The OCR engine returned an incomplete line. No text was added.");
+          const end = start + word.text.length;
+          const nextStart = typeof next === "string" ? row.text.indexOf(next, end) : row.text.length;
+          if (nextStart < end || row.text.slice(end, nextStart).trim()) {
+            throw new Error("The OCR engine returned text outside its word geometry. No characters were discarded and no text was added.");
+          }
+          const separator = row.text.slice(end, nextStart);
+          if (!/^[ \t\r\n]{0,256}$/.test(separator)) throw new Error("The OCR engine returned unsupported line separators. No text was added.");
+          textOffset = nextStart;
+          const box = record(word.bbox);
+          const left = coordinate(box.x0), top = coordinate(box.y0);
+          const right = coordinate(box.x1), bottom = coordinate(box.y1);
+          if (left < 0 || top < 0 || right > page.pixelWidth || bottom > page.pixelHeight || right <= left || bottom <= top) {
+            throw new Error(`Page ${page.page + 1} has OCR words outside its rendered bounds. No text was added.`);
+          }
+          words.push({ text: word.text, bounds: [left, top, right, bottom],
+            baseline: [left, y(left), right, y(right)], line: lineIndex, lineBounds, direction, separator });
+          if (words.length > 10_000) throw new Error(`Page ${page.page + 1} exceeds the 10,000-word OCR limit. No text was added.`);
         }
-        words.push({ text: word.text, bounds: [left, top, right, bottom],
-          baseline: [left, y(left), right, y(right)], line: lineIndex, direction, separator });
-        if (words.length > 10_000) throw new Error(`Page ${page.page + 1} exceeds the 10,000-word OCR limit. No text was added.`);
+        lineIndex++;
       }
-      lineIndex++;
     }
   }
   if (!words.length && data.text.trim()) throw new Error("The OCR engine returned text without word geometry. No text was added.");
@@ -111,6 +171,7 @@ export async function recognizeOcrPages(
   const pages = plan.pages.filter((page) => !page.skipped);
   const languages = selectedOcrLanguages(plan.languages);
   if (plan.layout !== "horizontal_print") throw new Error("Offline OCR supports horizontal printed text only.");
+  if (plan.segmentation !== "auto" && plan.segmentation !== "single_column") throw new Error("The OCR plan has an unsupported text layout.");
   if (plan.pages.length > MAX_OCR_PAGES || !plan.pages.length || plan.pages.some((page) => page.page >= pdf.numPages)) {
     throw new Error("The OCR plan does not match this PDF or exceeds the 50-page job limit.");
   }
@@ -123,12 +184,13 @@ export async function recognizeOcrPages(
   let worker: LocalOcrWorker | undefined;
   let completed = 0;
   let currentPage = pages[0].page;
+  let bandIndex = 0, bandCount = 1;
   try {
     worker = new LocalOcrWorker(controller.signal, (fraction) => progress({
-      stage: "recognizing", page: currentPage, completed, total: pages.length, fraction,
+      stage: "recognizing", page: currentPage, completed, total: pages.length, fraction: (bandIndex + fraction) / bandCount,
     }));
     progress({ stage: "loading", page: currentPage, completed, total: pages.length, fraction: 0 });
-    await worker.initialize(plan.dpi, languages);
+    await worker.initialize(plan.dpi, languages, plan.segmentation);
     for (const target of pages) {
       controller.signal.throwIfAborted();
       currentPage = target.page;
@@ -154,15 +216,41 @@ export async function recognizeOcrPages(
         render = page.render({ canvas, canvasContext: context, viewport, background: "#ffffff", annotationMode: 0 });
         await awaitOcrStep(render.promise, controller.signal);
         controller.signal.throwIfAborted();
-        const blob = await awaitOcrStep(new Promise<Blob>((resolve, reject) => {
-          canvas.toBlob((value) => value ? resolve(value) : reject(new Error("The OCR scan could not be encoded. No text was added.")), "image/png");
-        }), controller.signal);
-        if (blob.size > 64 * 1024 * 1024) throw new Error("The rendered OCR page exceeds 64 MiB. Try 150 DPI; no text was added.");
-        controller.signal.throwIfAborted();
-        progress({ stage: "recognizing", page: currentPage, completed, total: pages.length, fraction: 0 });
-        const output = await worker.recognize(await awaitOcrStep(blob.arrayBuffer(), controller.signal));
-        controller.signal.throwIfAborted();
-        const words = recognitionWords(output, target);
+        if (plan.segmentation === "single_column") progress({ stage: "segmenting", page: currentPage, completed, total: pages.length, fraction: 0 });
+        const bands = plan.segmentation === "single_column"
+          ? await horizontalOcrBands(context.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height, plan.dpi, controller.signal)
+          : [{ top: 0, height: canvas.height }];
+        bandCount = Math.max(1, bands.length); bandIndex = 0;
+        const words: OcrWord[] = [];
+        let lineOffset = 0, pngBytes = 0;
+        for (const band of bands) {
+          controller.signal.throwIfAborted();
+          const image = plan.segmentation === "single_column" ? document.createElement("canvas") : canvas;
+          try {
+            if (image !== canvas) {
+              image.width = canvas.width; image.height = band.height;
+              const cropped = image.getContext("2d", { alpha: false, colorSpace: "srgb" });
+              if (!cropped) throw new Error("A local OCR line canvas could not be created. No text was added.");
+              cropped.drawImage(canvas, 0, band.top, canvas.width, band.height, 0, 0, canvas.width, band.height);
+            }
+            const blob = await awaitOcrStep(new Promise<Blob>((resolve, reject) => {
+              image.toBlob((value) => value ? resolve(value) : reject(new Error("The OCR scan could not be encoded. No text was added.")), "image/png");
+            }), controller.signal);
+            pngBytes += blob.size;
+            if (pngBytes > 64 * 1024 * 1024) throw new Error("The rendered OCR page inputs exceed 64 MiB. Try 150 DPI; no text was added.");
+            controller.signal.throwIfAborted();
+            progress({ stage: "recognizing", page: currentPage, completed, total: pages.length, fraction: bandIndex / bandCount });
+            const output = await worker.recognize(await awaitOcrStep(blob.arrayBuffer(), controller.signal));
+            controller.signal.throwIfAborted();
+            const recognized = recognitionWords(output, { ...target, pixelHeight: band.height });
+            words.push(...shiftOcrWords(recognized, band.top, lineOffset));
+            if (words.length > 10_000) throw new Error(`Page ${target.page + 1} exceeds the 10,000-word OCR limit. No text was added.`);
+            if (recognized.length) lineOffset += recognized[recognized.length - 1].line + 1;
+            bandIndex++;
+          } finally {
+            if (image !== canvas) { image.width = 0; image.height = 0; }
+          }
+        }
         progress({ stage: "staging", page: currentPage, completed, total: pages.length, fraction: 1 });
         await awaitOcrStep(stage(plan.jobId, { page: target.page, words }, controller.signal), controller.signal);
         controller.signal.throwIfAborted();

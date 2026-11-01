@@ -10,6 +10,7 @@ interface Props {
   dpi: OcrOptions["dpi"];
   policy: OcrOptions["existingText"];
   languages: OcrLanguage[];
+  segmentation: OcrOptions["segmentation"];
   disabled: boolean;
   blockedReason: string | null;
   pageCount: number;
@@ -18,6 +19,7 @@ interface Props {
   onDpi(value: OcrOptions["dpi"]): void;
   onPolicy(value: OcrOptions["existingText"]): void;
   onLanguages(value: OcrLanguage[]): void;
+  onSegmentation(value: OcrOptions["segmentation"]): void;
   onStart(): void;
 }
 
@@ -46,6 +48,7 @@ export default function OcrPanel(props: Props) {
       {[0, 1, 2].map((index) => <label className="setting-field" key={index}>
         {index === 0 ? "OCR language" : `Additional language ${index}`}
         <select value={props.languages[index] ?? ""} disabled={props.disabled}
+          aria-label={index === 0 ? "OCR language" : `Additional language ${index}`}
           aria-describedby={languageHelp} onChange={(event) => changeLanguage(index, event.target.value)}>
           {index > 0 && <option value="">None</option>}
           {OCR_LANGUAGES.map((language) => <option key={language.id} value={language.id}
@@ -64,6 +67,16 @@ export default function OcrPanel(props: Props) {
           {language.name} ({language.id}): {language.scripts.join(", ")}; {language.direction.toUpperCase()}.
         </li>)}</ul>
       </details>
+      <label className="setting-field">Text layout
+        <select aria-label="OCR text layout" value={props.segmentation} disabled={props.disabled}
+          onChange={(event) => props.onSegmentation(event.target.value === "single_column" ? "single_column" : "auto")}>
+          <option value="auto">Automatic horizontal page</option>
+          <option value="single_column">Single-column printed text</option>
+        </select>
+      </label>
+      <p className="ocr-help">{props.segmentation === "single_column"
+        ? "Recognizes horizontal ink bands in top-to-bottom order. Use clean, one-column printed scans; tables, columns, dark backgrounds, and handwriting are not supported by this layout."
+        : "Automatic layout can omit or split lines. For clean, one-column scans, choose Single-column printed text; always review every line."}</p>
       <label className="setting-field">Scan resolution<select value={props.dpi} disabled={props.disabled}
         onChange={(event) => props.onDpi(event.target.value === "150" ? 150 : 300)}>
         <option value={300}>300 DPI — finer text</option>
@@ -100,7 +113,7 @@ export function OcrJobProgress({ progress, canceling, onCancel }: {
   const message = progress.stage === "preparing" ? "Preparing offline OCR"
     : progress.stage === "loading" ? "Checking and loading selected local models"
     : progress.stage === "committing" ? "Adding searchable text"
-    : `${progress.stage === "rendering" ? "Rendering" : progress.stage === "recognizing" ? "Recognizing" : "Checking"} page ${progress.page + 1}`;
+    : `${progress.stage === "rendering" ? "Rendering" : progress.stage === "segmenting" ? "Finding horizontal ink bands on" : progress.stage === "recognizing" ? "Recognizing" : "Checking"} page ${progress.page + 1}`;
   const value = progress.stage === "committing" ? progress.total
     : progress.completed + (progress.stage === "staging" ? 1 : progress.stage === "recognizing" ? progress.fraction : 0);
   return <div className="ocr-job-banner">

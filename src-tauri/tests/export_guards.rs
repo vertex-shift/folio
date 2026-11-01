@@ -198,6 +198,7 @@ fn staged_images_block_exports_and_signing_before_a_frontend_draft_update() {
                     dpi: 150,
                     languages: vec!["eng".into()],
                     layout: "horizontal_print".into(),
+                    segmentation: Default::default(),
                     existing_text: folio_core::ocr::ExistingTextPolicy::Force,
                 },
             )

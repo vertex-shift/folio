@@ -959,6 +959,7 @@ fn replacement_assets_and_geometry_drafts_guard_outputs_signing_ocr_comparison_a
                     dpi: 150,
                     languages: vec!["eng".into()],
                     layout: "horizontal_print".into(),
+                    segmentation: Default::default(),
                     existing_text: folio_core::ocr::ExistingTextPolicy::Force
                 }
             )

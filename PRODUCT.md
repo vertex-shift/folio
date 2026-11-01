@@ -160,6 +160,10 @@ The desktop app processes document contents locally.
   Russian, Arabic, Hindi, Simplified/Traditional Chinese, Japanese and Korean.
   One to three explicit models; horizontal printed scans only, not handwriting,
   vertical CJK, unlisted languages or automatic language detection.
+  Keep automatic page segmentation as the default. An explicit single-column
+  mode recognizes bounded horizontal ink bands sequentially with cooperative
+  cancellation and exact offsets; it never silently replaces automatic layout.
+  It does not infer tables/columns and requires clean light-background scans.
   Stage sequential logical word boxes/baselines against ID/revision/source and
   workspace epochs, then
   add real invisible, Unicode-mapped PDF text in one undoable mutation.

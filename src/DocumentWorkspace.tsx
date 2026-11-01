@@ -203,6 +203,7 @@ export default function DocumentWorkspace(props: Props) {
   const [ocrDpi, setOcrDpi] = useState<OcrOptions["dpi"]>(300);
   const [ocrPolicy, setOcrPolicy] = useState<OcrOptions["existingText"]>("skip");
   const [ocrLanguages, setOcrLanguages] = useState<OcrLanguage[]>(["eng"]);
+  const [ocrSegmentation, setOcrSegmentation] = useState<OcrOptions["segmentation"]>("auto");
   const [ocrOutcome, setOcrOutcome] = useState<OcrOutcome | null>(null);
   const [ocrProgress, setOcrProgress] = useState<OcrProgress | null>(null);
   const [ocrCanceling, setOcrCanceling] = useState(false);
@@ -582,7 +583,7 @@ export default function DocumentWorkspace(props: Props) {
       let cleanupFailure: unknown;
       try {
         plan = await bridge.beginOcr(current, { pages, dpi: ocrDpi,
-          languages: selectedOcrLanguages(ocrLanguages), layout: "horizontal_print", existingText: ocrPolicy });
+          languages: selectedOcrLanguages(ocrLanguages), layout: "horizontal_print", segmentation: ocrSegmentation, existingText: ocrPolicy });
         controller.signal.throwIfAborted();
         await recognizeOcrPages(pdf, plan, bridge.stageOcrPage, (progress) => {
           setOcrProgress((previous) => previous?.stage === progress.stage && previous.page === progress.page
@@ -1958,12 +1959,12 @@ export default function DocumentWorkspace(props: Props) {
           onRemove={(id) => updateRedactions(redactionsRef.current.filter((mark) => mark.id !== id))}
           onClear={() => { setError(null); setModal({ type: "redaction-clear" }); }} onExport={reviewRedactions}
           onDraw={() => setPanelOpen(false)} />}
-        {panel === "ocr" && <OcrPanel range={ocrRange} dpi={ocrDpi} policy={ocrPolicy} languages={ocrLanguages}
+        {panel === "ocr" && <OcrPanel range={ocrRange} dpi={ocrDpi} policy={ocrPolicy} languages={ocrLanguages} segmentation={ocrSegmentation}
           pageCount={info?.pageCount ?? 0} disabled={disabled || !pdf}
           blockedReason={info?.readOnlyReason ?? (info?.copyAllowed === false ? "This PDF does not allow copying. Reopen it with the owner password."
             : pendingDraft ? "Finish or cancel writing/form drafts and clear pending redaction marks before using OCR." : null)}
           outcome={ocrOutcome} onRange={setOcrRange} onDpi={setOcrDpi} onPolicy={setOcrPolicy}
-          onLanguages={setOcrLanguages} onStart={startOcr} />}
+          onLanguages={setOcrLanguages} onSegmentation={setOcrSegmentation} onStart={startOcr} />}
         {panel === "write" && <div className="panel-scroll writing-settings">
           <p>Add text annotations or freehand marks. To replace original page text, choose Edit existing text.</p>
           <button className="button secondary existing-text-launch" disabled={editDisabled} onClick={() => chooseTool("edit-text")}><SquarePen size={15} />Edit existing text</button>

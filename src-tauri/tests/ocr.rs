@@ -62,6 +62,7 @@ fn options(pages: Vec<usize>) -> Options {
         dpi: 150,
         languages: vec!["eng".into()],
         layout: "horizontal_print".into(),
+        segmentation: Default::default(),
         existing_text: ExistingTextPolicy::Skip,
     }
 }
@@ -75,6 +76,7 @@ fn words(page: usize) -> PageResult {
                 bounds: [50.0, 70.0, 150.0, 100.0],
                 baseline: [50.0, 101.0, 150.0, 101.0],
                 line: 0,
+                line_bounds: [50.0, 70.0, 310.0, 103.0],
                 direction: Direction::Ltr,
                 separator: " ".into(),
             },
@@ -83,6 +85,7 @@ fn words(page: usize) -> PageResult {
                 bounds: [170.0, 70.0, 310.0, 100.0],
                 baseline: [170.0, 101.0, 310.0, 101.0],
                 line: 0,
+                line_bounds: [50.0, 70.0, 310.0, 103.0],
                 direction: Direction::Ltr,
                 separator: "".into(),
             },
@@ -136,6 +139,7 @@ fn dedicated_ocr_fonts_preserve_logical_unicode_combining_joiners_and_cjk_after_
                         bounds: [left, 70.0, left + 160.0, 100.0],
                         baseline: [left, 101.0, left + 160.0, 101.0],
                         line: 0,
+                        line_bounds: [50.0, 70.0, 760.0, 105.0],
                         direction,
                         separator: if index + 1 < segments.len() {
                             " ".into()
@@ -243,6 +247,7 @@ fn catalog_layout_glyph_and_structure_failures_are_atomic_and_cannot_resurrect_o
         selected.languages = ids.iter().map(|id| (*id).into()).collect();
         assert!(workspace.begin_ocr(info.id, 0, selected).is_err());
     }
+
     let mut selected = options(vec![0]);
     selected.layout = "vertical".into();
     assert!(workspace.begin_ocr(info.id, 0, selected).is_err());
@@ -268,6 +273,39 @@ fn catalog_layout_glyph_and_structure_failures_are_atomic_and_cannot_resurrect_o
         assert!(workspace.begin_ocr(info.id, 0, options(vec![0])).is_err());
         assert_eq!(workspace.document(info.id).unwrap().bytes(), bytes);
     }
+}
+
+#[test]
+fn horizontal_japanese_prolonged_sound_marks_keep_the_actual_line_baseline() {
+    let mut workspace = Workspace::default();
+    let info = workspace
+        .open_bytes(synthetic(1, false), "Japanese punctuation.pdf".into())
+        .unwrap();
+    let mut selected = options(vec![0]);
+    selected.languages = vec!["jpn".into()];
+    let plan = workspace.begin_ocr(info.id, 0, selected).unwrap();
+    let result = PageResult {
+        page: 0,
+        words: vec![Word {
+            text: "ー".into(),
+            bounds: [100.0, 75.0, 180.0, 80.0],
+            baseline: [100.0, 105.0, 180.0, 105.0],
+            line: 0,
+            line_bounds: [50.0, 70.0, 500.0, 110.0],
+            direction: Direction::Ltr,
+            separator: "".into(),
+        }],
+    };
+    workspace.stage_ocr_page(plan.job_id, result).unwrap();
+    workspace.commit_ocr(plan.job_id).unwrap();
+    assert_eq!(
+        Document::load_mem(workspace.document(info.id).unwrap().bytes())
+            .unwrap()
+            .extract_text(&[1])
+            .unwrap()
+            .trim(),
+        "ー"
+    );
 }
 
 #[test]

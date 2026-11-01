@@ -29,6 +29,14 @@ pub enum ExistingTextPolicy {
     Force,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Segmentation {
+    #[default]
+    Auto,
+    SingleColumn,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Options {
@@ -36,6 +44,8 @@ pub struct Options {
     pub dpi: u16,
     pub languages: Vec<String>,
     pub layout: String,
+    #[serde(default)]
+    pub segmentation: Segmentation,
     pub existing_text: ExistingTextPolicy,
 }
 
@@ -63,6 +73,7 @@ pub struct Plan {
     pub dpi: u16,
     pub languages: Vec<String>,
     pub layout: String,
+    pub segmentation: Segmentation,
     pub pages: Vec<Page>,
 }
 
@@ -73,6 +84,8 @@ pub struct Word {
     pub bounds: [f64; 4],
     pub baseline: [f64; 4],
     pub line: u32,
+    #[serde(rename = "lineBounds")]
+    pub line_bounds: [f64; 4],
     pub direction: Direction,
     pub separator: String,
 }
@@ -202,6 +215,7 @@ pub(crate) fn plan(
         dpi: options.dpi,
         languages: options.languages,
         layout: options.layout,
+        segmentation: options.segmentation,
         pages,
     })
 }
@@ -359,6 +373,7 @@ impl Job {
         let languages = catalog::selection(&self.plan.languages)?;
         let mut bytes = 0;
         let mut previous_line = 0;
+        let mut previous_word: Option<&Word> = None;
         for word in &result.words {
             validate_word(word, expected)?;
             font::word_font(word, &languages)?;
@@ -367,7 +382,17 @@ impl Job {
                     "The OCR reading order is invalid. No text was added.",
                 ));
             }
+            if let Some(previous) = previous_word
+                && previous.line == word.line
+                && (previous.line_bounds != word.line_bounds
+                    || previous.direction != word.direction)
+            {
+                return Err(invalid(
+                    "OCR words in one logical line must share its actual line box and reading direction. No text was added.",
+                ));
+            }
             previous_line = word.line;
+            previous_word = Some(word);
             bytes += word.text.len() + word.separator.len();
         }
         if self.text_bytes + bytes > MAX_TEXT_BYTES {
@@ -391,10 +416,13 @@ fn validate_word(word: &Word, page: &Page) -> Result<()> {
     let [left, top, right, bottom] = word.bounds;
     let [x0, y0, x1, y1] = word.baseline;
     let height = bottom - top;
+    let [line_left, line_top, line_right, line_bottom] = word.line_bounds;
+    let line_margin = (line_bottom - line_top) * 0.5 + 2.0;
     if word
         .bounds
         .iter()
         .chain(word.baseline.iter())
+        .chain(word.line_bounds.iter())
         .any(|value| !value.is_finite())
         || left < 0.0
         || top < 0.0
@@ -402,12 +430,22 @@ fn validate_word(word: &Word, page: &Page) -> Result<()> {
         || bottom > f64::from(page.pixel_height)
         || right <= left
         || height <= 0.0
+        || line_left < 0.0
+        || line_top < 0.0
+        || line_right > f64::from(page.pixel_width)
+        || line_bottom > f64::from(page.pixel_height)
+        || line_right <= line_left
+        || line_bottom <= line_top
+        || left < line_left - line_margin
+        || right > line_right + line_margin
+        || top < line_top - line_margin
+        || bottom > line_bottom + line_margin
         || (x0 - left).abs() > 0.5
         || (x1 - right).abs() > 0.5
         || x1 <= x0
         || ((y1 - y0) / (x1 - x0)).abs() > 0.25
-        || y0.min(y1) <= top
-        || y0.max(y1) > bottom + height * 1.5 + 2.0
+        || y0.min(y1) < line_top - line_margin
+        || y0.max(y1) > line_bottom + line_margin
     {
         return Err(invalid(format!(
             "Page {} has unsupported OCR word/baseline geometry. No text was added.",
@@ -523,7 +561,12 @@ pub(crate) fn apply(source: &mut Document, plan: &Plan, results: &[PageResult]) 
                 ));
             }
             let width = (x1 - x0) * normalizer;
-            let height = ((y0 + y1) / 2.0 - word.bounds[1]) / normalizer / ascent;
+            let height = ((y0 + y1) / 2.0 - word.line_bounds[1]) / normalizer / ascent;
+            if !height.is_finite() || height <= 0.0 {
+                return Err(invalid(
+                    "OCR has an unsupported line baseline above its line box. No text was added.",
+                ));
+            }
             let horizontal = pdf_vector(
                 page,
                 plan.dpi,
