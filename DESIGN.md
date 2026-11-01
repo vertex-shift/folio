@@ -389,6 +389,9 @@ unsupported language/layout, force duplication and no-text outcomes stay
 explicit. Language settings belong to the document workspace, not page mounts.
 Automatic layout remains the default; a distinct native select offers bounded
 single-column printed text with its quality/layout limitations visible.
+Its submit action uses the existing primary-button style in a fixed footer;
+only settings/results scroll. Keep keyboard focus visible and use the same
+form action at full and compact desktop widths.
 Pages form a continuous vertical stack with 24px gaps and their own dimensions.
 Only the viewport neighborhood mounts full renderers; off-screen page positions
 are reserved by geometry, not miniature document screenshots. Page navigation

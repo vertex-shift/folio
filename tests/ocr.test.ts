@@ -235,3 +235,28 @@ test("model hash, missing and unknown-size failures never reach engine initializ
   assert.equal(FakeWorker.instances[0].packets.length, 0);
   assert.equal(FakeWorker.instances[0].terminated, true);
 });
+
+test("hard initialization deadline releases the worker and ignores late replies", async (context) => {
+  fakeBrowser(context);
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const worker=new LocalOcrWorker(new AbortController().signal,()=>{});
+  const initializing=worker.initialize(150);
+  const rejected=assert.rejects(initializing,/two-minute limit/);
+  await new Promise<void>((resolve)=>setImmediate(resolve));
+  const raw=FakeWorker.instances[0];
+  assert.equal(raw.packets.length,1);
+  context.mock.timers.tick(120_000);
+  await rejected;
+  raw.reply(raw.packets[0],{loaded:true});
+  await Promise.resolve();
+  assert.equal(raw.terminated,true);
+  assert.equal(raw.packets.length,1);
+});
+
+test("single-column scanning refuses faint and over-budget bands without a success-shaped empty result", async () => {
+  const signal=new AbortController().signal;
+  await assert.rejects(horizontalOcrBands(new Uint8ClampedArray(40*100*4).fill(230),40,100,300,signal),/faint/);
+  const width=10,height=1500,pixels=new Uint8ClampedArray(width*height*4).fill(255);
+  for(let y=0;y<height;y+=10)pixels.fill(0,y*width*4,y*width*4+3);
+  await assert.rejects(horizontalOcrBands(pixels,width,height,150,signal),/128 horizontal/);
+});

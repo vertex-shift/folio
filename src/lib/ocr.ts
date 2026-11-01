@@ -2,6 +2,7 @@ import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import type { OcrPagePlan, OcrPageResult, OcrPlan, OcrProgress, OcrWord } from "./ocrTypes.ts";
 import { LocalOcrWorker } from "./ocrWorker.ts";
 import { selectedOcrLanguages } from "./ocrLanguages.ts";
+export { LocalOcrWorker } from "./ocrWorker.ts";
 
 export const MAX_OCR_PAGES = 50;
 export const MAX_OCR_BANDS = 128;

@@ -11,6 +11,7 @@ export function preparePdfWorker(root) {
     throw new Error("The PDF.js 6.4.299 OCR extraction adapter requires the pinned worker. Restore the npm lockfile instead of patching an unknown renderer.");
   }
   const anchors = [
+    ["          fontFamily: font.fallbackName,", `          fontFamily: font.fallbackName,\n          folioOcrLogical: /^${prefix}(?:latin|arabic|devanagari|cjk_sc|cjk_jp|cjk_kr)_(?:ltr|rtl)$/.test(font.name),`],
     ["        if (saveLastChar(glyphUnicode)) {", `        if (!/^${prefix}(?:latin|arabic|devanagari|cjk_sc|cjk_jp|cjk_kr)_(?:ltr|rtl)$/.test(font.name)\n          && saveLastChar(glyphUnicode)) {`],
     ["        if (!category.isZeroWidthDiacritic && !compareWithLastPosition(scaledDim)) {", `        if (!/^${prefix}(?:latin|arabic|devanagari|cjk_sc|cjk_jp|cjk_kr)_(?:ltr|rtl)$/.test(font.name)\n          && !category.isZeroWidthDiacritic && !compareWithLastPosition(scaledDim)) {`],
     ["          category,\n          originalCharCode\n        } = glyph;", `          originalCharCode\n        } = glyph;\n        const category = /^${prefix}(?:latin|arabic|devanagari|cjk_sc|cjk_jp|cjk_kr)_(?:ltr|rtl)$/.test(font.name)\n          ? { isWhitespace: false, isZeroWidthDiacritic: false, isInvisibleFormatMark: false }\n          : glyph.category;`],

@@ -1045,6 +1045,8 @@ finish/cancel every pending writing, metadata, form, paragraph, accessibility,
 image, page-authoring or live-gesture draft and clear redaction marks first.
 Prepared tagged-copy jobs also block OCR. Settings live with the document
 workspace, not a mounted page, so switching panels or inactive tabs keeps them.
+The submit action stays in a fixed panel footer while language/layout settings
+scroll, including compact desktop views; keyboard submission uses the same form.
 The default **Automatic horizontal page** retains the existing page-segmentation
 behavior. It can miss complete lines, not just misread characters. For clean
 one-column printed text, explicitly choose **Single-column printed text**:
@@ -1077,6 +1079,9 @@ original visible content.
 Actual line boxes are carried alongside each word, so above-baseline punctuation
 such as Japanese `ー` keeps the real line baseline instead of being rejected or
 assigned a fabricated baseline.
+Raster plans and inverse coordinates mirror PDF.js's `(dpi / 72) * UserUnit`
+multiplication order before exact pixel ceilings. Fractional units and offset,
+rotated crops are not squeezed or silently resampled to hide mismatches.
 
 Recognition is sequential and cancellable, including while loading the
 engine/model. **Cancel OCR** releases the worker/canvas and discards all staged
@@ -1156,12 +1161,17 @@ neither Python/fonttools nor font/model downloads.
 `scripts/prepare-pdf-worker.mjs` adapts the checksum-pinned PDF.js 6.4.299 worker
 only for the exact `FolioOCRLogicalV1_<font>_<direction>` font names. Those
 word-sized logical mappings bypass visual-order bidi/normalization and
-single-character mark classification and inferred whitespace, preserving combining/joiner sequences
+single-character mark classification and inferred whitespace, preserving
+combining/joiner sequences
 and declared direction during search/selection/text export. Every other PDF
 font keeps upstream behavior. The saved PDF still contains standard
 `ToUnicode`, `ActualText` and embedded fonts; it does not depend on private
 renderer bytes being saved. Other viewers may present extraction spacing or
 selection differently; Folio does not claim arbitrary-reader parity.
+The adapter identifies only its logical OCR font styles for selection geometry.
+Single-character CJK/Arabic word spans use the actual saved PDF width, rather
+than PDF.js's ordinary single-letter width heuristic. Ordinary source font
+styles and visible content are unchanged; this is not font/program trust.
 
 Run `node --test tests/ocr.test.ts` and
 `npm run test:rust -- --test ocr` for focused checks. For real synthetic scan
@@ -1175,6 +1185,8 @@ npm run test:ocr
 npm run test:ocr:languages
 # Optional: retain original synthetic fixtures, PDFs, screenshots, and JSON evidence.
 FOLIO_OCR_ARTIFACTS=/absolute/output/folder npm run test:ocr:languages
+# Optional actual native draft/staging guard roundtrips and protected Arabic UI save.
+FOLIO_OCR_GUARDS=1 FOLIO_OCR_PROTECTED_ENGINE=1 npm run test:ocr:languages
 ```
 
 The runner starts/stops only its own loopback servers on dynamically selected
@@ -1182,6 +1194,11 @@ ports and its own browser profile; it does not stop an existing Folio process.
 `FOLIO_OCR_BROWSER=/absolute/path/to/chrome` can select an existing complete
 Chromium/Chrome binary for verification. Tests use only newly generated,
 original synthetic content, never private documents or copyrighted fixtures.
+The language runner also tests a three-model English/Arabic/Hindi scan and
+per-document settings through tab switches. Every selected model is exercised
+again with networking disabled and bundled assets under the native CSP.
+Character-recognition error rates are reported separately from exact preservation
+of every staged Unicode word/separator, direction, saved baseline and word box.
 Rust OCR tests separately verify RC4/AES save/reopen with both passwords,
 permission/signature guards, original resource isolation, and atomic stale-job
 rejection. Native Windows/Linux execution and real-world OCR quality still

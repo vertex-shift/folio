@@ -30,15 +30,16 @@ function pageList(pages: number[]): string {
 export default function OcrPanel(props: Props) {
   const rangeHelp = useId();
   const languageHelp = useId();
+  const formId = useId();
   const changeLanguage = (index: number, value: string) => {
     const languages = props.languages.filter((language, position) => position !== index && language !== value);
     if (value) languages.splice(Math.min(index, languages.length), 0, ...selectedOcrLanguages([value]));
     props.onLanguages(selectedOcrLanguages(languages));
   };
-  return <div className="panel-scroll ocr-panel">
+  return <div className="ocr-panel"><div className="panel-scroll ocr-panel-content">
     <p>Add an invisible, searchable text layer to scanned pages. Original images and page content stay intact.</p>
     <div className="ocr-local"><ShieldCheck size={15} /><span>15 models included. Recognition and fonts stay on this device, even offline.</span></div>
-    <form onSubmit={(event) => { event.preventDefault(); props.onStart(); }}>
+    <form id={formId} onSubmit={(event) => { event.preventDefault(); props.onStart(); }}>
       <label className="setting-field">Pages to recognize
         <input type="text" value={props.range} placeholder={`1-${props.pageCount}`} maxLength={400}
           aria-describedby={rangeHelp} disabled={props.disabled}
@@ -89,9 +90,6 @@ export default function OcrPanel(props: Props) {
       </select></label>
       {props.policy === "force" && <p className="ocr-warning">Force can duplicate searchable text, including previous OCR. It does not replace or remove the old text layer.</p>}
       {props.blockedReason && <p className="ocr-warning">{props.blockedReason}</p>}
-      <button type="submit" className="button primary ocr-start" disabled={props.disabled || Boolean(props.blockedReason)}>
-        <ScanText size={16} />Recognize text
-      </button>
     </form>
     {props.outcome && <div className="ocr-outcome" role="status">
       <h3>{props.outcome.wordCount ? "Searchable text added" : "No text added"}</h3>
@@ -104,7 +102,11 @@ export default function OcrPanel(props: Props) {
     <p className="ocr-limits">Horizontal printed scans only. Review misread words, spacing, and reading order. Handwriting, vertical Japanese/Chinese, and languages outside the catalog are not supported. Annotations and form fields are not recognition input.</p>
     <p className="ocr-limits">The invisible layer preserves logical Unicode, including Arabic and Hindi. It does not enable visible Arabic/Indic paragraph editing. Tagged PDFs are refused; recognize the untagged original before making a new tagged copy.</p>
     <p className="ocr-limits">This adds PDF text, not accessibility tags or PDF/UA conformance. No original content is removed or redacted.</p>
-  </div>;
+  </div><div className="ocr-actions">
+    <button type="submit" form={formId} className="button primary ocr-start" disabled={props.disabled || Boolean(props.blockedReason)}>
+      <ScanText size={16} />Recognize text
+    </button>
+  </div></div>;
 }
 
 export function OcrJobProgress({ progress, canceling, onCancel }: {

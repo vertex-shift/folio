@@ -36,6 +36,10 @@ const languageCases = [
   { language: "chi_tra", font: "FolioOcrCjkSC-Regular.ttf", direction: "ltr", lines: ["文件保留在本機。", "離線閱讀和檢查文件 48271。"] },
   { language: "jpn", font: "FolioOcrCjkJP-Regular.ttf", direction: "ltr", lines: ["文書はこのコンピューターに保存されます。", "文書を読んで確認します 48271。"] },
   { language: "kor", font: "FolioOcrCjkKR-Regular.ttf", direction: "ltr", lines: ["문서는 이 컴퓨터에 보관됩니다.", "문서를 읽고 확인합니다 48271."] },
+  { language: "mixed", font: "NotoSans-Regular.ttf", direction: "mixed", languages: ["eng","ara","hin"],
+    rowFonts: ["NotoSans-Regular.ttf","FolioOcrArabic-Regular.ttf","FolioOcrDevanagari-Regular.ttf"],
+    rowDirections: ["ltr","rtl","ltr"],
+    lines: ["Local review stays offline.", "هذا كتاب جديد في بيت جميل", "यह किताब एक सुंदर कहानी है"] },
 ];
 const selectedLanguageCases = process.env.FOLIO_OCR_LANGUAGES
   ? languageCases.filter((item) => process.env.FOLIO_OCR_LANGUAGES.split(",").includes(item.language))
@@ -138,6 +142,9 @@ try {
   assert.throws(() => prepareOcr(corruptRoot), /worker\.min\.js failed SHA-256/);
   await writeFile(join(corruptRoot, "src-tauri/resources/ocr/eng.traineddata"), "altered model");
   assert.throws(() => prepareOcr(corruptRoot), /eng\.traineddata failed SHA-256/);
+  await cp(join(root,"src-tauri/resources/ocr/eng.traineddata"),join(corruptRoot,"src-tauri/resources/ocr/eng.traineddata"));
+  await writeFile(join(corruptRoot,"src-tauri/resources/ocr/fonts/FolioOcrArabic-Regular.ttf"),"altered font");
+  assert.throws(()=>prepareOcr(corruptRoot),/FolioOcrArabic-Regular\.ttf failed SHA-256/);
   evidence.corruptedAssetsRejected = true;
   await command("cargo", ["build", "--manifest-path", "src-tauri/Cargo.toml", "--no-default-features", "--features", "preview", "--bin", "folio-preview", "--quiet"]);
   const backendPort = await freePort(), frontendPort = await freePort();
@@ -172,6 +179,7 @@ try {
   const page = await context.newPage();
   page.on("pageerror", (error) => failures.push(error.message));
   const staged = [];
+  const offlineFixtures=[];
   let capturedPlan;
   page.on("request", (request) => {
     if (request.url().endsWith("/__folio/ocr/page")) staged.push(request.postDataJSON().result);
@@ -267,6 +275,7 @@ try {
     const { loadPdf } = await import("/src/lib/pdf.ts");
     const { TextLayer } = await import("/node_modules/pdfjs-dist/legacy/build/pdf.mjs");
     const { mapText, findMatches } = await import("/src/lib/search.ts");
+    const { alignOcrTextLayer } = await import("/src/lib/ocrTextLayer.ts");
     const before = await loadPdf(new Uint8Array(original)).promise;
     const after = await loadPdf(new Uint8Array(saved)).promise;
     const evidence = [];
@@ -404,21 +413,22 @@ try {
       const loaded = new Set();
       const images = [];
       for (const item of cases) {
-        if (!loaded.has(item.font)) {
-          const font = new FontFace(item.font.replaceAll(".", "_"), `url(/vendor/ocr/fonts/${item.font})`);
-          document.fonts.add(await font.load()); loaded.add(item.font);
+        for (const filename of item.rowFonts??[item.font]) if (!loaded.has(filename)) {
+          const font = new FontFace(filename.replaceAll(".", "_"), `url(/vendor/ocr/fonts/${filename})`);
+          document.fonts.add(await font.load()); loaded.add(filename);
         }
-        const canvas = document.createElement("canvas"); canvas.width = 1500; canvas.height = 750;
+        const canvas = document.createElement("canvas"); canvas.width = 1500; canvas.height = item.language==="mixed"?950:750;
         const ctx = canvas.getContext("2d");
-        ctx.fillStyle = "white"; ctx.fillRect(0, 0, 1500, 750);
-        ctx.fillStyle = "black"; ctx.direction = item.direction;
-        ctx.textAlign = item.direction === "rtl" ? "right" : "left";
-        let size = 72;
-        ctx.font = `${size}px "${item.font.replaceAll(".", "_")}"`;
-        const widest = Math.max(...item.lines.map((line) => ctx.measureText(line).width));
-        size *= Math.min(1, 1350 / widest);
-        ctx.font = `${size}px "${item.font.replaceAll(".", "_")}"`;
-        for (const [index, line] of item.lines.entries()) ctx.fillText(line, item.direction === "rtl" ? 1425 : 75, 220 + index * 200);
+        ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width,canvas.height);
+        ctx.fillStyle = "black";
+        for (const [index, line] of item.lines.entries()) {
+          const filename=item.rowFonts?.[index]??item.font,direction=item.rowDirections?.[index]??item.direction;
+          ctx.direction=direction;ctx.textAlign=direction==="rtl"?"right":"left";
+          ctx.font=`72px "${filename.replaceAll(".","_")}"`;
+          const size=72*Math.min(1,1350/ctx.measureText(line).width);
+          ctx.font=`${size}px "${filename.replaceAll(".","_")}"`;
+          ctx.fillText(line,direction==="rtl"?1425:75,220+index*200);
+        }
         const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
         images.push(Array.from(new Uint8Array(await blob.arrayBuffer())));
         canvas.width = canvas.height = 0;
@@ -428,46 +438,103 @@ try {
     evidence.languages = [];
     for (const [index, item] of selectedLanguageCases.entries()) {
       const doc = await PDFDocument.create();
-      const target = doc.addPage([360, 180]), image = await doc.embedPng(new Uint8Array(fixtures[index]));
-      target.drawImage(image, { x: 0, y: 0, width: 360, height: 180 });
-      const original = process.env.FOLIO_OCR_CORPUS
+      const height=item.language==="mixed"?228:180;
+      const target = doc.addPage([360,height]), image = await doc.embedPng(new Uint8Array(fixtures[index]));
+      target.drawImage(image, { x: 0, y: 0, width: 360, height });
+      const password=process.env.FOLIO_OCR_PROTECTED_ENGINE && item.language==="ara"?"reader":null;
+      let original = process.env.FOLIO_OCR_QUAD_FIXTURE && item.language==="ara"
+        ? new Uint8Array(await readFile(process.env.FOLIO_OCR_QUAD_FIXTURE))
+        : process.env.FOLIO_OCR_CORPUS && item.language!=="mixed"
         ? new Uint8Array(await readFile(join(process.env.FOLIO_OCR_CORPUS, `${item.language}.pdf`)))
         : await doc.save({ useObjectStreams: false });
+      if(process.env.FOLIO_OCR_PROTECTED_ENGINE && item.language==="ara") {
+        const response=await fetch(`http://127.0.0.1:${backendPort}/open`,{method:"POST",
+          headers:{"X-Folio-Preview":"1","Content-Type":"application/pdf","X-File-Name":"public-protected-source-fixture.pdf"},body:original});
+        const outcome=await response.json();
+        if(outcome.status!=="opened")throw new Error("The original synthetic protection fixture could not open.");
+        const protectedCopy=await api("/protection/export",{documentId:outcome.document.id,revision:outcome.document.revision,authorizationPassword:null,
+          protection:{mode:"protect",openingPassword:"reader",ownerPassword:"owner",permissions:{print:"high",copy:true,edit:true,annotate:true,fillForms:true,assemble:true}}});
+        original=new Uint8Array(await protectedCopy.arrayBuffer());
+      }
+      const pageCount=password?1:(await PDFDocument.load(original)).getPageCount();
       const sourcePath = join(artifacts, `${item.language}-scan.pdf`);
       await writeFile(sourcePath, original);
-      await writeFile(join(artifacts, `${item.language}-scan.png`), process.env.FOLIO_OCR_CORPUS
+      await writeFile(join(artifacts, `${item.language}-scan.png`), process.env.FOLIO_OCR_CORPUS && item.language!=="mixed"
         ? await readFile(join(process.env.FOLIO_OCR_CORPUS, `${item.language}.png`)) : new Uint8Array(fixtures[index]));
+      offlineFixtures.push({language:item.language,languages:item.languages??[item.language],lines:item.lines,
+        png:Array.from(await readFile(join(artifacts,`${item.language}-scan.png`)))});
+      if(password) {
+        const checked=await fetch(`http://127.0.0.1:${backendPort}/open`,{method:"POST",
+          headers:{"X-Folio-Preview":"1","Content-Type":"application/pdf","X-File-Name":"protected-fixture-check.pdf"},body:original});
+        const outcome=await checked.json();
+        if(outcome.status!=="password_required")throw new Error(`Protected fixture did not produce a password challenge: ${JSON.stringify(outcome)}`);
+        await api("/open/cancel",{requestId:outcome.requestId});
+      }
       await fileInput.setInputFiles(sourcePath);
+      if(password) {
+        await page.getByLabel("PDF password",{exact:true}).fill(password);
+        await page.getByRole("button",{name:"Unlock PDF",exact:true}).click();
+      }
       await page.waitForFunction((name) => document.querySelector(".document-tab.selected")?.textContent.includes(name), `${item.language}-scan.pdf`);
       await page.getByRole("button", { name: "Recognize scanned text", exact: true }).click();
       const active = page.locator('.document-workspace:not([hidden])');
-      await active.getByLabel("Pages to recognize").fill("1");
+      await active.getByLabel("Pages to recognize").fill(pageCount===1?"1":`1-${pageCount}`);
       await active.getByLabel("Scan resolution").selectOption("300");
-      await active.getByLabel("OCR language", { exact: true }).selectOption(item.language);
+      await active.getByLabel("OCR language", { exact: true }).selectOption(item.languages?.[0]??item.language);
+      await active.getByLabel("Additional language 1", { exact: true }).selectOption(item.languages?.[1]??"");
+      await active.getByLabel("Additional language 2", { exact: true }).selectOption(item.languages?.[2]??"");
       await active.getByLabel("OCR text layout", { exact: true }).selectOption("single_column");
+      if(item.language==="mixed") {
+        await page.locator(".document-tab:not(.selected)").first().click();
+        await page.locator(".document-tab").filter({hasText:"mixed-scan.pdf"}).click();
+        assert.equal(await active.getByLabel("OCR language",{exact:true}).inputValue(),"eng");
+        assert.equal(await active.getByLabel("Additional language 1",{exact:true}).inputValue(),"ara");
+        assert.equal(await active.getByLabel("Additional language 2",{exact:true}).inputValue(),"hin");
+        assert.equal(await active.getByLabel("OCR text layout",{exact:true}).inputValue(),"single_column");
+      }
       const resultStart = staged.length;
       await page.getByRole("button", { name: "Recognize text", exact: true }).click();
       await page.waitForFunction(() => document.querySelector(".document-workspace:not([hidden]) .ocr-outcome h3")?.textContent === "Searchable text added"
         || Boolean(document.querySelector(".document-workspace:not([hidden]) .error-notification")), { timeout: 120_000 });
       const error = await active.locator(".error-notification").count();
       if (error) throw new Error(`${item.language}: ${await active.locator(".error-notification").innerText()}`);
-      assert.equal(staged.length, resultStart + 1, `${item.language}: exact staged page`);
-      const recognized = staged[resultStart].words.map((word) => word.text + word.separator).join("");
-      assert.ok(accuracy(item.lines.join("\n"), recognized) >= 0.9, `${item.language}: recognition below 90% ${JSON.stringify(recognized)}`);
+      assert.equal(staged.length, resultStart + pageCount, `${item.language}: exact staged pages`);
+      const recognizedPages=staged.slice(resultStart).map((result)=>result.words.map((word)=>word.text+word.separator).join(""));
+      for(const recognized of recognizedPages) assert.ok(accuracy(item.lines.join("\n"), recognized) >= 0.9, `${item.language}: recognition below 90% ${JSON.stringify(recognized)}`);
       const download = page.waitForEvent("download");
       await page.getByRole("button", { name: "Download PDF", exact: true }).click();
       const savedPath = join(artifacts, `${item.language}-recognized.pdf`);
       await (await download).saveAs(savedPath);
       const saved = new Uint8Array(await readFile(savedPath));
+      if(password) {
+        const current=await(await api("/bootstrap")).json(),info=current.documents.find((info)=>info.id===current.activeId);
+        assert.equal(info.passwordProtected,true);
+        assert.deepEqual(saved,await bytes(info),"Save must use protected Session bytes, not renderer bytes");
+        const render=await(await api("/render-bytes",null,{"X-Document-Id":String(info.id),"X-Revision":String(info.revision)})).arrayBuffer();
+        assert.notDeepEqual(saved,new Uint8Array(render),"Protected save cannot interchange renderer data");
+      }
       await fileInput.setInputFiles(savedPath);
+      if(password) {
+        await page.getByLabel("PDF password",{exact:true}).fill(password);
+        await page.getByRole("button",{name:"Unlock PDF",exact:true}).click();
+      }
       await page.waitForFunction((name) => document.querySelector(".document-tab.selected")?.textContent.includes(name), `${item.language}-recognized.pdf`);
-      const inspection = await page.evaluate(async ({ original, saved, words, plan }) => {
+      const inspections=[];
+      for(let sourcePage=0;sourcePage<pageCount;sourcePage++) {
+      const inspection = await page.evaluate(async ({ original, saved, words, plan,sourcePage,password }) => {
         const { loadPdf } = await import("/src/lib/pdf.ts");
         const { TextLayer } = await import("/node_modules/pdfjs-dist/legacy/build/pdf.mjs");
         const { mapText, findMatches } = await import("/src/lib/search.ts");
-        const before = await loadPdf(new Uint8Array(original)).promise, after = await loadPdf(new Uint8Array(saved)).promise;
+        const { alignOcrTextLayer } = await import("/src/lib/ocrTextLayer.ts");
+        const beforeTask=loadPdf(new Uint8Array(original)),afterTask=loadPdf(new Uint8Array(saved));
+        let originalPassword=false,savedPassword=false;
+        if(password) {
+          beforeTask.onPassword=(update)=>{originalPassword=true;update(password);};
+          afterTask.onPassword=(update)=>{savedPassword=true;update(password);};
+        }
+        const before=await beforeTask.promise,after=await afterTask.promise;
         try {
-          const originalPage = await before.getPage(1), outputPage = await after.getPage(1);
+          const originalPage = await before.getPage(sourcePage+1), outputPage = await after.getPage(sourcePage+1);
           const text = await outputPage.getTextContent();
           const items = text.items.filter((item) => "str" in item);
           const logical = mapText(items).text;
@@ -481,45 +548,147 @@ try {
           let changes = 0;
           for (let offset = 0; offset < pixels[0].length; offset++) if (pixels[0][offset] !== pixels[1][offset]) changes++;
           for (const canvas of canvases) canvas.width = canvas.height = 0;
+          const wrapper=document.createElement("div");
+          wrapper.style.cssText=`position:fixed;left:0;top:0;width:${viewport.width}px;height:${viewport.height}px;`;
           const container = document.createElement("div"); container.className = "textLayer";
-          container.style.cssText = `position:fixed;left:0;top:0;width:${viewport.width}px;height:${viewport.height}px;`;
-          container.style.setProperty("--total-scale-factor", String(outputPage.userUnit)); document.body.append(container);
+          container.style.setProperty("--total-scale-factor", String(outputPage.userUnit));wrapper.append(container); document.body.append(wrapper);
           const layer = new TextLayer({ textContentSource: text, container, viewport }); await layer.render();
+          container.style.width=`${viewport.rotation%180?viewport.height:viewport.width}px`;
+          container.style.height=`${viewport.rotation%180?viewport.width:viewport.height}px`;
+          alignOcrTextLayer(text,layer,viewport);
           const positions = [];
-          for (const word of words.filter((word) => word.text.length > 1).slice(0, 5)) {
-            const item = items.find((item) => item.str === word.text);
-            const span = layer.textDivs.find((div) => div.textContent === word.text);
+          const candidates=items.map((item,index)=>({item,span:layer.textDivs[index]})).filter(({item})=>/\S/u.test(item.str));
+          if(candidates.length!==words.length)throw new Error("OCR word count changed during saved extraction.");
+          for (const [index,word] of words.entries()) {
+            const {item,span}=candidates[index];
             if (!item || !span) throw new Error(`Logical word missing after saved reopen: ${word.text}`);
+            if(item.str!==word.text)throw new Error(`OCR word order changed after saved reopen: ${word.text}`);
             const range = document.createRange(); range.selectNodeContents(span);
             const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
-            const box = range.getBoundingClientRect(), origin = container.getBoundingClientRect();
+            const box = range.getBoundingClientRect(), origin = wrapper.getBoundingClientRect();
             const baseline = viewport.convertToViewportPoint(item.transform[4], item.transform[5]);
             const expected = word.bounds.map((value) => value * 72 / plan.dpi);
             positions.push({ text: word.text, direction: item.dir, selection: selection.toString(),
+              expectedDirection:word.direction,
               baselineError: Math.abs(baseline[1] - word.baseline[1] * 72 / plan.dpi),
               actual: [box.left - origin.left, box.top - origin.top, box.right - origin.left, box.bottom - origin.top], expected });
             selection.removeAllRanges();
           }
-          layer.cancel(); container.remove();
-          return { logical, changedChannels: changes, positions, queryMatches: findMatches(logical, words[0].text).length };
+          layer.cancel(); wrapper.remove();
+          return { page:sourcePage+1,rotation:outputPage.rotate,userUnit:outputPage.userUnit,pixelWidth:plan.pages[sourcePage].pixelWidth,
+            pixelHeight:plan.pages[sourcePage].pixelHeight,originalPassword,savedPassword,logical, changedChannels: changes, positions, queryMatches: findMatches(logical, words[0].text).length };
         } finally { await before.loadingTask.destroy(); await after.loadingTask.destroy(); }
-      }, { original: Array.from(original), saved: Array.from(saved), words: staged[resultStart].words, plan: capturedPlan });
-      assert.equal(inspection.logical, recognized, `${item.language}: exact recognized Unicode after saved reopen`);
+      }, { original: Array.from(original), saved: Array.from(saved), words: staged[resultStart+sourcePage].words, plan: capturedPlan,sourcePage,password });
+      assert.equal(inspection.logical, recognizedPages[sourcePage], `${item.language}: exact recognized Unicode after saved reopen`);
       assert.equal(inspection.changedChannels, 0, `${item.language}: source pixels`);
       assert.ok(inspection.queryMatches > 0, `${item.language}: logical search`);
+      if(password){assert.equal(inspection.originalPassword,true);assert.equal(inspection.savedPassword,true);}
       for (const position of inspection.positions) {
         assert.equal(position.selection, position.text, `${item.language}: exact Unicode selection`);
-        assert.equal(position.direction, item.direction, `${item.language}: actual direction`);
+        assert.equal(position.direction, item.direction==="mixed"?position.expectedDirection:item.direction, `${item.language}: actual direction`);
         assert.ok(position.baselineError < 0.05, `${item.language}: baseline`);
         assert.ok(Math.abs(position.actual[0] - position.expected[0]) < 2 && Math.abs(position.actual[2] - position.expected[2]) < 3,
           `${item.language}: actual word width ${JSON.stringify(position)}`);
       }
+      inspections.push(inspection);
+      }
       assert.equal(await page.evaluate(() => window.__ocrWorkers.active), 0);
-      evidence.languages.push({ ...item, recognized, accuracy: accuracy(item.lines.join("\n"), recognized), ...inspection,
+      evidence.languages.push({ ...item, recognized:recognizedPages.join("\f"), accuracy:Math.min(...recognizedPages.map((text)=>accuracy(item.lines.join("\n"),text))),
+        inspections,
         sourceSha256: createHash("sha256").update(original).digest("hex"), outputSha256: createHash("sha256").update(saved).digest("hex") });
       await writeFile(join(artifacts, "multilingual-evidence.json"), JSON.stringify(evidence.languages, null, 2) + "\n");
       console.log(`${item.language}: actual UI OCR/save/reopen, ${(evidence.languages.at(-1).accuracy * 100).toFixed(1)}% fixture character accuracy; exact Unicode/direction/search/selection; 0 changed RGBA`);
     }
+  }
+  if(process.env.FOLIO_OCR_VISUAL) {
+    await page.getByRole("button",{name:"Recognize scanned text",exact:true}).click();
+    const active=page.locator(".document-workspace:not([hidden])");
+    await active.getByLabel("OCR language",{exact:true}).selectOption("eng");
+    await active.getByLabel("Additional language 1",{exact:true}).selectOption("ara");
+    await active.getByLabel("Additional language 2",{exact:true}).selectOption("hin");
+    await active.getByLabel("OCR text layout",{exact:true}).selectOption("single_column");
+    evidence.visual=[];
+    for(const [theme,width,height] of [["light",1440,1000],["dark",950,800]]) {
+      await page.setViewportSize({width,height});
+      await page.evaluate(()=>new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+      await page.evaluate((theme)=>{document.documentElement.dataset.theme=theme;},theme);
+      if(!await page.getByRole("button",{name:"Recognize text",exact:true}).isVisible()) {
+        await page.getByRole("button",{name:"All tools",exact:true}).click();
+        await page.getByRole("button",{name:"Recognize scanned text",exact:true}).click();
+      }
+      await active.getByRole("button",{name:"Recognize text",exact:true}).focus();
+      await page.evaluate(()=>{document.querySelector(".document-workspace:not([hidden]) .ocr-panel-content").scrollTop=0;});
+      const metrics=await active.evaluate((workspace)=>{
+        const panel=workspace.querySelector(".ocr-panel").getBoundingClientRect(),button=workspace.querySelector(".ocr-start").getBoundingClientRect();
+        return {overflow:document.documentElement.scrollWidth>innerWidth,panel:[panel.left,panel.top,panel.right,panel.bottom],
+          action:[button.left,button.top,button.right,button.bottom],focus:document.activeElement===workspace.querySelector(".ocr-start")};
+      });
+      assert.equal(metrics.overflow,false);
+      assert.equal(metrics.focus,true);
+      assert.ok(metrics.action[1]>=metrics.panel[1] && metrics.action[3]<=metrics.panel[3],"OCR action must stay visible while settings scroll");
+      await page.screenshot({path:join(artifacts,`ocr-${theme}-${width>=1100?"desktop":"compact"}-final.png`)});
+      evidence.visual.push({theme,width,height,...metrics});
+    }
+    await page.setViewportSize({width:1440,height:1000});
+    await page.evaluate(()=>{document.documentElement.dataset.theme="light";});
+  }
+  if(process.env.FOLIO_OCR_GUARDS) {
+    await fileInput.setInputFiles(sourcePath);
+    await page.waitForFunction(()=>document.querySelector(".document-tab.selected")?.textContent.includes("synthetic-scan.pdf"));
+    const snapshot=await(await api("/bootstrap")).json();
+    const source=snapshot.documents.find((info)=>info.id===snapshot.activeId);
+    const before=await bytes(source);
+    evidence.guards=await page.evaluate(async ({info,png})=>{
+      const {bridge}=await import("/src/lib/bridge.ts");
+      const {imageEditingBridge}=await import("/src/features/imageEditing/bridge.ts");
+      const {createDraftSynchronizer,hasDocumentDrafts}=await import("/src/lib/draftProtection.ts");
+      const synchronize=createDraftSynchronizer(bridge.draft);
+      const clear={writing:false,formFilling:false,formDesign:false,pageAuthoring:false,imageEditing:false,paragraphEditing:false,accessibility:false,redaction:false};
+      const options={pages:[0],dpi:150,languages:["eng"],layout:"horizontal_print",segmentation:"auto",existingText:"skip"};
+      const observed=[];
+      const rejected=async(operation,label,expression)=>{
+        try {await operation;} catch(error) {
+          if(!(error instanceof Error)||!expression.test(error.message))throw error;
+          observed.push({label,error:error.message});return;
+        }
+        throw new Error(`${label}: an unsupported/stale OCR action was accepted`);
+      };
+      for(const [label,field] of [["writing","writing"],["metadata","writing"],["live gesture","writing"],["form filling","formFilling"],
+        ["form design","formDesign"],["page authoring","pageAuthoring"],["image editing","imageEditing"],["paragraph editing","paragraphEditing"],
+        ["accessibility","accessibility"],["redaction marks","redaction"]]) {
+        await synchronize(info.id,hasDocumentDrafts({...clear,[field]:true}));
+        await rejected(bridge.beginOcr(info,options),label,/pending|Apply or discard|draft|redaction/i);
+        await synchronize(info.id,hasDocumentDrafts(clear));
+      }
+      await synchronize(info.id,hasDocumentDrafts({...clear,paragraphEditing:true,accessibility:true}));
+      await synchronize(info.id,hasDocumentDrafts({...clear,paragraphEditing:true,accessibility:false}));
+      await rejected(bridge.beginOcr(info,options),"clearing accessibility retains paragraph draft",/pending|Apply or discard|draft/i);
+      await synchronize(info.id,hasDocumentDrafts(clear));
+      const stale=await bridge.beginOcr(info,options);
+      await synchronize(info.id,hasDocumentDrafts({...clear,paragraphEditing:true}));
+      await synchronize(info.id,hasDocumentDrafts(clear));
+      await rejected(bridge.stageOcrPage(stale.jobId,{page:0,words:[]}),"draft clearing cannot resurrect a job",/canceled|expired|invalidated|epoch/i);
+      const pngFile=new File([new Uint8Array(png)],"synthetic-draft.png",{type:"image/png"});
+      const imageStale=await bridge.beginOcr(info,options);
+      const asset=await bridge.stageImage(info,pngFile);
+      await rejected(bridge.beginOcr(info,options),"staged page image",/pending|Apply or discard/i);
+      await bridge.cancelImage(info.id,asset.assetId);
+      await rejected(bridge.stageOcrPage(imageStale.jobId,{page:0,words:[]}),"image cancellation cannot resurrect a job",/canceled|expired|invalidated|epoch/i);
+      const replacementStale=await bridge.beginOcr(info,options);
+      const replacement=await imageEditingBridge.stage(info,pngFile);
+      await rejected(bridge.beginOcr(info,options),"staged source replacement",/pending|Apply or discard/i);
+      await imageEditingBridge.cancel(info.id,replacement.assetId);
+      await rejected(bridge.stageOcrPage(replacementStale.jobId,{page:0,words:[]}),"replacement cancellation cannot resurrect a job",/canceled|expired|invalidated|epoch/i);
+      const running=await bridge.beginOcr(info,options);
+      await rejected(bridge.beginRedaction(info,150,[{page:0,rect:[20,50,80,90]}]),"OCR excludes concurrent redaction",/Cancel.*OCR/i);
+      await bridge.cancelOcr(running.jobId);
+      const redaction=await bridge.beginRedaction(info,150,[{page:0,rect:[20,50,80,90]}]);
+      await rejected(bridge.beginOcr(info,options),"prepared redaction excludes OCR",/pending|draft|redaction/i);
+      await bridge.cancelRedaction(redaction.jobId);
+      return observed;
+    },{info:source,png:scans[0]});
+    assert.deepEqual(await bytes(source),before,"Every draft/stage/cancel guard must preserve exact source bytes");
+    evidence.guardSourceUnchanged=true;
   }
   await context.close();
 
@@ -533,7 +702,7 @@ try {
   evidence.builtAssetsVerified = assetManifest.files.length;
   await build({ root, configFile: false, publicDir: false, logLevel: "error", build: {
     target: "safari16", outDir: join(temporary, "offline"), emptyOutDir: false,
-    lib: { entry: join(root, "src/lib/ocrWorker.ts"), formats: ["es"], fileName: () => "ocr-harness.js" },
+    lib: { entry: join(root, "src/lib/ocr.ts"), formats: ["es"], fileName: () => "ocr-harness.js" },
   } });
   for (const nonSimd of [false, true]) {
     const offline = await browser.newContext({ offline: true });
@@ -574,6 +743,40 @@ try {
     assert.equal(await tab.evaluate(() => window.__ocrWorkers.active), 0);
     assert.ok(requested.includes("/vendor/ocr/eng.traineddata"));
     assert.ok(requested.some((path) => path.includes(nonSimd ? "tesseract-core-lstm.wasm.js" : "tesseract-core-simd-lstm.wasm.js")));
+    if(!nonSimd && offlineFixtures.length) {
+      evidence.offlineLanguages=[];
+      for(const fixture of offlineFixtures) {
+        const actual=await tab.evaluate(async ({png,languages})=>{
+          const {LocalOcrWorker,horizontalOcrBands,recognitionWords}=await import("/ocr-harness.js");
+          const signal=new AbortController().signal;
+          const bitmap=await createImageBitmap(new Blob([new Uint8Array(png)],{type:"image/png"}));
+          const canvas=document.createElement("canvas");canvas.width=bitmap.width;canvas.height=bitmap.height;
+          const ctx=canvas.getContext("2d",{alpha:false});ctx.drawImage(bitmap,0,0);bitmap.close();
+          const worker=new LocalOcrWorker(signal,()=>{});
+          try {
+            await worker.initialize(300,languages,"single_column");
+            const bands=await horizontalOcrBands(ctx.getImageData(0,0,canvas.width,canvas.height).data,canvas.width,canvas.height,300,signal);
+            let text="";
+            for(const band of bands) {
+              const cropped=document.createElement("canvas");cropped.width=canvas.width;cropped.height=band.height;
+              try {
+                cropped.getContext("2d",{alpha:false}).drawImage(canvas,0,band.top,canvas.width,band.height,0,0,canvas.width,band.height);
+                const blob=await new Promise((resolve)=>cropped.toBlob(resolve,"image/png"));
+                const output=await worker.recognize(await blob.arrayBuffer());
+                const words=recognitionWords(output,{page:0,pixelWidth:canvas.width,pixelHeight:band.height});
+                text+=words.map((word)=>word.text+word.separator).join("");
+              } finally {cropped.width=cropped.height=0;}
+            }
+            return {text,online:navigator.onLine,bands:bands.length};
+          } finally {worker.close();canvas.width=canvas.height=0;}
+        },fixture);
+        assert.equal(actual.online,false);
+        assert.ok(accuracy(fixture.lines.join("\n"),actual.text)>=0.9,`${fixture.language}: real network-offline recognition`);
+        assert.equal(await tab.evaluate(()=>window.__ocrWorkers.active),0);
+        evidence.offlineLanguages.push({language:fixture.language,languages:fixture.languages,...actual,
+          accuracy:accuracy(fixture.lines.join("\n"),actual.text)});
+      }
+    }
     evidence.offline.push({ nonSimd, networkOffline: true, recognizedKnownPhrase: true, requested });
     await offline.close();
   }
@@ -582,7 +785,9 @@ try {
   evidence.sourceSha256 = createHash("sha256").update(source).digest("hex");
   evidence.outputSha256 = createHash("sha256").update(recognizedBytes).digest("hex");
   await writeFile(join(artifacts, "ocr-evidence.json"), JSON.stringify(evidence, null, 2) + "\n");
-  console.log("Offline OCR passed: real English recognition; unchanged pixels on 6 reopened pages; search/selection alignment at 0/90/180/270 with crop offsets and UserUnit; skip/no-text; cancel/cleanup; production worker with native CSP and networking disabled (SIMD and non-SIMD).");
+  const languages=evidence.languages?.filter((item)=>item.language!=="mixed").length??0;
+  const combination=evidence.languages?.some((item)=>item.language==="mixed")?" plus a real three-language scan":"";
+  console.log(`Offline OCR passed: real English regression${languages?` and ${languages} selected languages${combination}`:""}; actual saved Unicode/search/selection/direction; unchanged pixels and exact four-rotation CropBox/UserUnit geometry; skip/force/no-text/cancel/cleanup; bundled production worker with networking disabled (SIMD and non-SIMD).`);
   if (process.env.FOLIO_OCR_ARTIFACTS) console.log(`Synthetic fixtures and evidence: ${artifacts}`);
 } finally {
   await browser?.close();

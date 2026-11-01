@@ -7,6 +7,7 @@ import { findMatches, mapText } from "../lib/search";
 import { isRecord } from "../lib/navigation";
 import { validateRedactionRect } from "../lib/redaction";
 import { pageScale } from "../lib/continuous";
+import { alignOcrTextLayer } from "../lib/ocrTextLayer";
 import AuthoringOverlay from "./AuthoringOverlay";
 import FormDesignerOverlay from "../features/formsDesigner/FormDesignerOverlay";
 import type { FormDesignerOverlayInput } from "../features/formsDesigner/FormDesignerOverlay";
@@ -170,6 +171,7 @@ export default function PdfPage(props: Props) {
       textContainer.style.height = `${viewport.rotation % 180 ? viewport.width : viewport.height}px`;
       await layer.render();
       if (cancelled) return;
+      alignOcrTextLayer(content, layer, viewport);
       const items = content.items.filter((item) => "str" in item);
       const annotations: unknown[] = await page.getAnnotations({ intent: "display" });
       if (cancelled) return;
