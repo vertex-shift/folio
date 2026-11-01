@@ -54,6 +54,21 @@
 .signature-anchor { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px 0; border-top: 1px solid var(--line); }
 .signature-anchor strong, .signature-anchor code { overflow-wrap: anywhere; max-width: 100%; }
 .signature-anchor code { font-size: 10px; color: var(--secondary); user-select: text; }
+.signature-anchor > span { max-width: 100%; overflow-wrap: anywhere; }
+.signature-anchor > span code { display: block; }
+.signature-notice { padding: 12px 20px; color: var(--blue-ink); background: var(--blue-tint); font-size: 11px; line-height: 1.8; overflow-wrap: anywhere; }
+.signature-intro .signature-check-time, .signature-check-time { color: var(--muted); font-size: 10px; line-height: 1.8; font-variant-numeric: tabular-nums; }
+.signature-evidence-result { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.signature-evidence-result h4 { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; line-height: 1.7; }
+.signature-evidence-result h4 svg { margin-top: 3px; flex-shrink: 0; }
+.signature-evidence-result p, .signature-certificate p { margin-top: 9px; font-size: 11px; line-height: 1.8; color: var(--secondary); overflow-wrap: anywhere; }
+.signature-evidence-result > .button { margin-top: 14px; width: 100%; white-space: normal; text-align: left; line-height: 1.5; }
+.signature-evidence-checked { color: var(--blue-ink); }
+.signature-evidence-failed { color: var(--error-ink); }
+.signature-evidence-warning { color: var(--warning-ink); }
+.signature-coverage-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.signature-coverage-row h5, .signature-timestamp h5 { font-size: 11px; line-height: 1.8; margin-top: 12px; }
+.signature-coverage-row h5 { margin-top: 0; }
 @media (max-width: 899px) {
   .tools-panel.panel-signatures { width: min(320px, calc(100vw - 55px)); }
 }

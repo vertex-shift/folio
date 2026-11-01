@@ -856,14 +856,18 @@ fn handle(
             let input: EvidenceRequest = signature_body(request, folio_core::signatures::MAX_CRL_BYTES * 4 + 8192)?;
             let evidence = zeroize::Zeroizing::new(input.evidence);
             return json(workspace.add_signature_evidence(
-                input.document_id, input.revision, input.epoch, input.trust_revision,
+                folio_core::signatures::SignatureEvidenceContext {
+                    document_id: input.document_id, revision: input.revision, epoch: input.epoch, trust_revision: input.trust_revision,
+                },
                 input.kind, input.signature_id.as_deref(), &evidence,
             )?);
         }
         (&Method::Post, "/signatures/evidence/remove") => {
             let input: RemoveEvidenceRequest = signature_body(request, 8192)?;
             return json(workspace.remove_signature_evidence(
-                input.document_id, input.revision, input.epoch, input.trust_revision, &input.fingerprint,
+                folio_core::signatures::SignatureEvidenceContext {
+                    document_id: input.document_id, revision: input.revision, epoch: input.epoch, trust_revision: input.trust_revision,
+                }, &input.fingerprint,
             )?);
         }
         (&Method::Post, "/forms") => {

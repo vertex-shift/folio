@@ -240,6 +240,11 @@ fn public_anchor(bytes: &[u8]) -> CheckResult<X509> {
 }
 
 impl TrustStore {
+    pub(super) fn next_check_at(&self, now: std::time::Duration) -> CheckResult<std::time::Duration> {
+        let deadline = self.evidence.next_check_at(now, super::evidence::inspection_deadline(now)?)?;
+        super::evidence::certificate_deadline(self.anchors.values(), now, deadline)
+    }
+
     pub fn info(&self) -> Result<TrustStoreInfo> {
         Ok(TrustStoreInfo {
             revision: self.revision,

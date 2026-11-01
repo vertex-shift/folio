@@ -16,7 +16,7 @@ use x509_cert::{
         },
     },
     serial_number::SerialNumber,
-    spki::AlgorithmIdentifierOwned,
+    spki::{AlgorithmIdentifierOwned, AlgorithmIdentifierRef},
 };
 
 use super::{
@@ -81,15 +81,23 @@ struct IssuerSerial {
 }
 
 #[derive(Sequence)]
-struct EssCertIdV2 {
-    hash_algorithm: Option<AlgorithmIdentifierOwned>,
+struct EssCertIdV2<'a> {
+    #[asn1(default = "default_sha256_algorithm")]
+    hash_algorithm: AlgorithmIdentifierRef<'a>,
     cert_hash: OctetString,
     issuer_serial: Option<IssuerSerial>,
 }
 
+fn default_sha256_algorithm<'a>() -> AlgorithmIdentifierRef<'a> {
+    AlgorithmIdentifierRef {
+        oid: ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1"),
+        parameters: None,
+    }
+}
+
 #[derive(Sequence)]
-struct SigningCertificateV2 {
-    certs: Vec<EssCertIdV2>,
+struct SigningCertificateV2<'a> {
+    certs: Vec<EssCertIdV2<'a>>,
     policies: Option<Any>,
 }
 
@@ -127,6 +135,8 @@ pub struct TimestampEvaluation {
     pub tsa_current_chain: ChainEvaluation,
     pub tsa_chain_at_gen_time: ChainEvaluation,
     pub tsa_revocation: RevocationEvaluation,
+    #[serde(skip)]
+    recheck_at: Option<Duration>,
 }
 
 #[derive(Debug, Serialize)]
@@ -138,6 +148,13 @@ pub struct TrustedTimeEvaluation {
 }
 
 impl TrustedTimeEvaluation {
+    pub(super) fn recheck_at(&self) -> Option<Duration> {
+        self.timestamps
+            .iter()
+            .filter_map(|timestamp| timestamp.recheck_at)
+            .min()
+    }
+
     pub(super) fn not_checked() -> Self {
         Self {
             status: TrustedTimeStatus::NotChecked,
@@ -324,6 +341,11 @@ fn check_ess_binding(details: &crypto::CmsDetails) -> CheckResult<()> {
         CheckError::unsupported("The TSA signingCertificateV2 binding is missing.")
     })?;
     let binding = SigningCertificateV2::from_der(encoded).map_err(timestamp_error)?;
+    if binding.to_der().map_err(timestamp_error)? != encoded {
+        return Err(CheckError::invalid(
+            "The signed ESSCertIDv2 binding is not canonical DER.",
+        ));
+    }
     if binding.certs.is_empty() || binding.certs.len() > 16 || binding.policies.is_some() {
         return Err(CheckError::unsupported(
             "TSA signingCertificateV2 supports 1..16 exact certificate IDs without ESS policy extensions.",
@@ -331,20 +353,17 @@ fn check_ess_binding(details: &crypto::CmsDetails) -> CheckResult<()> {
     }
     let mut seen = HashSet::new();
     for (index, id) in binding.certs.iter().enumerate() {
-        let digest = if let Some(algorithm) = &id.hash_algorithm {
-            if algorithm
-                .parameters
-                .as_ref()
-                .is_some_and(|value| !value.is_null())
-            {
-                return Err(CheckError::unsupported(
-                    "ESS SHA-2 hash parameters must be absent or NULL.",
-                ));
-            }
-            crypto::digest_name(algorithm.oid)?
-        } else {
-            "SHA-256"
-        };
+        let algorithm = &id.hash_algorithm;
+        if algorithm
+            .parameters
+            .as_ref()
+            .is_some_and(|value| !value.is_null())
+        {
+            return Err(CheckError::unsupported(
+                "ESS SHA-2 hash parameters must be absent or NULL.",
+            ));
+        }
+        let digest = crypto::digest_name(algorithm.oid)?;
         let mut matches = Vec::new();
         for certificate in std::iter::once(&details.signer).chain(details.embedded.iter()) {
             let encoded = certificate.to_der().map_err(timestamp_error)?;
@@ -373,6 +392,24 @@ fn check_ess_binding(details: &crypto::CmsDetails) -> CheckResult<()> {
 }
 
 impl TimestampToken {
+    pub(super) fn next_check_at(&self, now: Duration, deadline: Duration) -> CheckResult<Duration> {
+        let mut deadline = super::evidence::certificate_deadline(
+            std::iter::once(&self.details.signer).chain(self.details.embedded.iter()),
+            now,
+            deadline,
+        )?;
+        let date = self
+            .gen_time
+            .checked_add(Duration::from_micros(self.accuracy_micros.unwrap_or(0)))
+            .ok_or_else(|| {
+                CheckError::invalid("The timestamp accuracy overflows its date range.")
+            })?;
+        if date > now {
+            deadline = deadline.min(date);
+        }
+        Ok(deadline)
+    }
+
     pub(super) fn parse(bytes: &[u8]) -> CheckResult<Self> {
         let der = token_der(bytes)?;
         let details = crypto::timestamp_details(&der)?;
@@ -501,7 +538,18 @@ impl TimestampToken {
             tsa_current_chain: current.evaluation,
             tsa_chain_at_gen_time: at_gen_time.evaluation,
             tsa_revocation,
+            recheck_at: None,
         };
+        match now()
+            .and_then(|now| self.next_check_at(now, super::evidence::inspection_deadline(now)?))
+        {
+            Ok(deadline) => result.recheck_at = Some(deadline),
+            Err(error) => {
+                result.status = TrustedTimeStatus::Invalid;
+                result.message = error.message;
+                return result;
+            }
+        }
         if let Err(error) = check {
             result.status = TrustedTimeStatus::Invalid;
             result.message = error.message;
@@ -604,6 +652,7 @@ pub(super) fn evaluate_embedded(
             tsa_revocation: RevocationEvaluation::not_checked(
                 "The token did not pass the supported RFC3161 structure/cryptographic checks.",
             ),
+            recheck_at: None,
         },
     }
 }

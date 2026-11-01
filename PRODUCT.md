@@ -274,7 +274,7 @@ The desktop app processes document contents locally.
 - Cryptographic signatures: inspect the supported detached CMS subset locally,
   with strict ByteRange/Contents/revision checks. Keep signed-byte integrity,
   later changes, current certificate dates, explicit custom-CA chain evaluation,
-  unchecked revocation, and unchecked trusted time distinct. Export separate
+  current imported revocation coverage, and signature-bound trusted time distinct. Export separate
   incremental signed/co-signed approval copies of supported unencrypted sources
   using local PKCS#12 identities and SHA-256/RSA or supported ECDSA. Select
   existing empty signature fields by canonical logical object ID or retain the
@@ -285,12 +285,22 @@ The desktop app processes document contents locally.
   paths, and block pending drafts. Ordinary signed-document editing stays read-only.
   Keep keys/passwords in memory only. Reject unsupported/ambiguous structures,
   encryption, certification/field policies, unsigned appended changes,
-  algorithms, and timestamp/countersignature formats.
+  algorithms, and unsupported timestamp/countersignature formats.
   Custom trust uses explicitly selected public root CA certificates only, in
   memory for this run; never embedded-signer auto-trust, OS/keychain roots,
-  AATL/EUTL, or external certificate/document requests. Anchor removal invalidates
-  all tabs' cached trust. Do not claim revocation, trusted timestamps, qualified
-  signatures, or PAdES-LTV.
+  AATL/EUTL, or external certificate/document requests. Explicitly imported public
+  full direct CRLs must verify issuer/signature/AKI/scope/current dates/exact serial
+  and complete non-anchor path coverage. Bound RFC3161 DER response/token imports
+  and one strict embedded signatureTimeStampToken form verify the actual CMS
+  signature value, ESSCertIDv2, critical timestamp-only TSA purpose, current/genTime
+  custom paths and complete current TSA CRLs. Missing, expired, future, wrong-imprint,
+  invalid, unsupported or untrusted evidence is not good. A valid timestamp never
+  clears signer revocation/untrusted dates or claims historical revocation.
+  Public evidence is ephemeral, bounded and removable; never change source bytes,
+  signatures, paths, history or any draft. One CA/evidence revision plus source/draft
+  epochs and clock deadlines invalidate active/inactive/late conclusions.
+  Do not claim qualified signatures, audited TSA clocks/policies, PAdES-LTV or
+  universal trust parity.
 - Certificate-based protection, unrestricted paragraph/DTP reflow, arbitrary font/encoding support, unrestricted existing-image editing,
   advanced form authoring, unsupported interactive forms, arbitrary-language/handwriting/vertical OCR, general Office conversion, advanced
   certification/qualified signing and authoritative trust, cloud

@@ -143,19 +143,21 @@ pub(super) struct CrlEvidence {
     number: Vec<u8>,
 }
 
+pub(super) struct ImportedTimestamp {
+    info: EvidenceInfo,
+    token: TimestampToken,
+}
+
 pub(super) enum EvidenceItem {
     Crl(Box<CrlEvidence>),
-    Timestamp {
-        info: EvidenceInfo,
-        token: Box<TimestampToken>,
-    },
+    Timestamp(Box<ImportedTimestamp>),
 }
 
 impl EvidenceItem {
     pub(super) fn info(&self) -> &EvidenceInfo {
         match self {
             Self::Crl(crl) => &crl.info,
-            Self::Timestamp { info, .. } => info,
+            Self::Timestamp(timestamp) => &timestamp.info,
         }
     }
 }
@@ -175,6 +177,35 @@ pub(super) fn time_label(time: Duration) -> CheckResult<String> {
     der::DateTime::from_unix_duration(time)
         .map(|value| value.to_string())
         .map_err(|_| CheckError::invalid("The evidence date is outside the supported time range."))
+}
+
+pub(super) fn inspection_deadline(now: Duration) -> CheckResult<Duration> {
+    now.checked_add(Duration::from_secs(60)).ok_or_else(|| {
+        CheckError::invalid("The signature inspection lifetime exceeds the supported clock range.")
+    })
+}
+
+pub(super) fn certificate_deadline<'a>(
+    certificates: impl IntoIterator<Item = &'a X509>,
+    now: Duration,
+    mut deadline: Duration,
+) -> CheckResult<Duration> {
+    for certificate in certificates {
+        let parsed = parse_certificate(certificate)?;
+        for date in [
+            parsed
+                .tbs_certificate
+                .validity
+                .not_before
+                .to_unix_duration(),
+            parsed.tbs_certificate.validity.not_after.to_unix_duration() + Duration::from_secs(1),
+        ] {
+            if date > now {
+                deadline = deadline.min(date);
+            }
+        }
+    }
+    Ok(deadline)
 }
 
 fn evidence_error(_: impl std::fmt::Debug) -> CheckError {
@@ -222,7 +253,7 @@ fn strong_crl_algorithm(parsed: &CertificateList) -> CheckResult<()> {
 
 impl CrlEvidence {
     fn parse(bytes: &[u8]) -> CheckResult<Self> {
-        let crl = if bytes.trim_ascii().starts_with(b"-----BEGIN") {
+        let der = if bytes.trim_ascii().starts_with(b"-----BEGIN") {
             let trimmed = bytes.trim_ascii();
             let body = trimmed.strip_prefix(b"-----BEGIN X509 CRL-----")
                 .and_then(|value| value.strip_suffix(b"-----END X509 CRL-----"))
@@ -234,18 +265,21 @@ impl CrlEvidence {
             if body.iter().all(u8::is_ascii_whitespace) {
                 return Err(CheckError::invalid("The X509 CRL PEM block is empty."));
             }
-            X509Crl::from_pem(trimmed).map_err(evidence_error)?
-        } else {
-            let parsed = CertificateList::from_der(bytes).map_err(evidence_error)?;
-            if parsed.to_der().map_err(evidence_error)? != bytes {
-                return Err(CheckError::invalid(
-                    "The CRL encoding is not canonical, exact DER.",
-                ));
+            let (label, decoded) = der::pem::decode_vec(trimmed).map_err(evidence_error)?;
+            if label != "X509 CRL" {
+                return Err(CheckError::invalid("Choose one public X509 CRL PEM block."));
             }
-            X509Crl::from_der(bytes).map_err(evidence_error)?
+            decoded
+        } else {
+            bytes.to_vec()
         };
-        let der = crl.to_der().map_err(evidence_error)?;
         let parsed = CertificateList::from_der(&der).map_err(evidence_error)?;
+        if parsed.to_der().map_err(evidence_error)? != der {
+            return Err(CheckError::invalid(
+                "The CRL encoding is not canonical, exact DER.",
+            ));
+        }
+        let crl = X509Crl::from_der(&der).map_err(evidence_error)?;
         strong_crl_algorithm(&parsed)?;
         let tbs = &parsed.tbs_cert_list;
         if tbs.version != Version::V2 {
@@ -395,6 +429,24 @@ impl CrlEvidence {
                 "The CRL issuer is not this chain certificate's issuer.",
             ));
         }
+        let issued = self.parsed.tbs_cert_list.this_update.to_unix_duration();
+        if issued
+            < certificate
+                .tbs_certificate
+                .validity
+                .not_before
+                .to_unix_duration()
+            || issued
+                > certificate
+                    .tbs_certificate
+                    .validity
+                    .not_after
+                    .to_unix_duration()
+        {
+            return Err(CheckError::invalid(
+                "CRL thisUpdate is outside the actual issuing CA certificate's validity dates.",
+            ));
+        }
         if !certificate
             .tbs_certificate
             .get::<KeyUsage>()
@@ -457,6 +509,37 @@ impl EvidenceStore {
         self.items.values().map(|item| item.info().bytes).sum()
     }
 
+    pub(super) fn next_check_at(
+        &self,
+        now: Duration,
+        mut deadline: Duration,
+    ) -> CheckResult<Duration> {
+        for item in self.items.values() {
+            match item {
+                EvidenceItem::Crl(crl) => {
+                    for date in [
+                        Some(crl.parsed.tbs_cert_list.this_update.to_unix_duration()),
+                        crl.parsed
+                            .tbs_cert_list
+                            .next_update
+                            .map(|date| date.to_unix_duration() + Duration::from_millis(1)),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        if date > now {
+                            deadline = deadline.min(date);
+                        }
+                    }
+                }
+                EvidenceItem::Timestamp(timestamp) => {
+                    deadline = timestamp.token.next_check_at(now, deadline)?;
+                }
+            }
+        }
+        Ok(deadline)
+    }
+
     pub(super) fn prepare(
         kind: EvidenceKind,
         bytes: &[u8],
@@ -493,10 +576,10 @@ impl EvidenceStore {
                     bound_certificate_fingerprint: Some(binding.certificate_fingerprint.clone()),
                     bound_signature_value_sha256: Some(binding.signature_value_sha256.clone()),
                 };
-                Ok(EvidenceItem::Timestamp {
+                Ok(EvidenceItem::Timestamp(Box::new(ImportedTimestamp {
                     info,
-                    token: Box::new(token),
-                })
+                    token,
+                })))
             }
         }
     }
@@ -709,10 +792,10 @@ impl EvidenceStore {
             results.push(super::timestamp::evaluate_embedded(bytes, binding, trust));
         }
         for item in self.items.values() {
-            if let EvidenceItem::Timestamp { info, token } = item
-                && binding.matches(info)
+            if let EvidenceItem::Timestamp(timestamp) = item
+                && binding.matches(&timestamp.info)
             {
-                results.push(token.evaluate(binding, trust, "imported"));
+                results.push(timestamp.token.evaluate(binding, trust, "imported"));
             }
         }
         TrustedTimeEvaluation::from_timestamps(results)
@@ -733,6 +816,12 @@ pub fn read_evidence_file(path: &Path, kind: EvidenceKind) -> Result<Zeroizing<V
             EvidenceKind::Crl => "Choose one public .crl, .pem or .der CRL.",
             EvidenceKind::Timestamp => "Choose one DER .tsr response or .tst/.der RFC3161 token.",
         }));
+    }
+    let metadata = std::fs::metadata(path)?;
+    if !metadata.is_file() || metadata.len() > kind.max_bytes() as u64 {
+        return Err(invalid(
+            "Choose a regular public evidence file within its size limit.",
+        ));
     }
     let file = std::fs::File::open(path)?;
     if !file.metadata()?.is_file() || file.metadata()?.len() > kind.max_bytes() as u64 {

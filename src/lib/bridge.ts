@@ -8,6 +8,7 @@ import { MAX_IMAGE_BYTES } from "./authoring";
 import type { ImageAsset, ImagePlacement } from "./authoring";
 import type { FormChange, FormInfo } from "./formsTypes";
 import type { OcrOptions, OcrOutcome, OcrPageResult, OcrPlan } from "./ocrTypes";
+import { signatureTrustState } from "../features/signatures/trustState";
 
 const runtime = await resolveRuntime({
   hasNativeBridge: isTauri(),
@@ -236,6 +237,7 @@ export const bridge = {
     opened.opener = null;
   },
   draft(documentId: number, pending: boolean): Promise<void> {
+    signatureTrustState.invalidateDocument(documentId);
     return native ? invoke("set_document_draft", { documentId, pending })
       : previewJson("/draft", post({ documentId, pending }));
   },

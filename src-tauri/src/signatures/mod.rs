@@ -86,6 +86,8 @@ pub struct SignatureInfo {
     pub signature_value_sha256: Option<String>,
     pub revocation: RevocationEvaluation,
     pub trusted_time: TrustedTimeEvaluation,
+    #[serde(skip)]
+    recheck_at: Option<std::time::Duration>,
 }
 
 #[derive(Debug, Serialize)]
@@ -94,11 +96,32 @@ pub struct SignatureReport {
     pub document_id: u64,
     pub revision: u64,
     pub epoch: u64,
+    pub checked_at_unix_ms: u64,
+    pub recheck_at_unix_ms: u64,
     pub signatures: Vec<SignatureInfo>,
     pub signing_blocked_reason: Option<String>,
     pub warnings: Vec<String>,
     pub empty_fields: Vec<SignatureFieldInfo>,
     pub trust_store: TrustStoreInfo,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SignatureEvidenceContext {
+    pub document_id: u64,
+    pub revision: u64,
+    pub epoch: u64,
+    pub trust_revision: u64,
+}
+
+impl SignatureReport {
+    pub fn evidence_context(&self) -> SignatureEvidenceContext {
+        SignatureEvidenceContext {
+            document_id: self.document_id,
+            revision: self.revision,
+            epoch: self.epoch,
+            trust_revision: self.trust_store.revision,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -396,7 +419,12 @@ fn inspect_loaded(
     revision: u64,
     trust: &TrustStore,
 ) -> Result<SignatureReport> {
+    let checked_at = evidence::now()?;
+    let mut recheck_at = trust.next_check_at(checked_at)?;
     let signatures = inspect_signatures(document, bytes, trust)?;
+    for signature in &signatures {
+        if let Some(deadline) = signature.recheck_at { recheck_at = recheck_at.min(deadline); }
+    }
     let warnings = if signatures.is_empty() && has_signatures(document) {
         vec!["Signature fields or certification markers are present, but no supported signature dictionary was found. This is not an unsigned-document assurance.".into()]
     } else {
@@ -407,6 +435,10 @@ fn inspect_loaded(
         document_id,
         revision,
         epoch: 0,
+        checked_at_unix_ms: u64::try_from(checked_at.as_millis())
+            .map_err(|_| invalid("The inspection clock exceeds its supported range."))?,
+        recheck_at_unix_ms: u64::try_from(recheck_at.as_millis())
+            .map_err(|_| invalid("The inspection lifetime exceeds its supported range."))?,
         signatures,
         signing_blocked_reason: checks.as_ref().err().map(ToString::to_string),
         warnings,
@@ -465,6 +497,7 @@ fn initial_info(candidate: &Candidate<'_>, index: usize, current_bytes: usize) -
                 "The PDF signature must pass its exact-byte cryptographic checks before evidence can be associated with it.",
             ),
             trusted_time: TrustedTimeEvaluation::not_checked(),
+            recheck_at: None,
     }
 }
 
@@ -579,6 +612,11 @@ fn inspect_one(
         info.signature_value_sha256 = Some(binding.signature_value_sha256.clone());
         info.revocation = trust.evidence.revocation(&chain);
         info.trusted_time = trust.evidence.timestamps(&binding, details.timestamp_token.as_deref(), trust);
+        let now = evidence::now()?;
+        let deadline = evidence::certificate_deadline(
+            std::iter::once(&details.signer).chain(details.embedded.iter()), now, evidence::inspection_deadline(now)?,
+        )?;
+        info.recheck_at = Some(info.trusted_time.recheck_at().map_or(deadline, |time| deadline.min(time)));
     }
     info.chain = chain.evaluation;
     details.certificate.identity_trust = info.chain.status;

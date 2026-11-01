@@ -96,7 +96,7 @@ the tag before rerunning the workflow.
 | Open PDFs | Multiple PDFs in independent tabs through the native picker, drag-and-drop, Finder association, or browser picker |
 | Protected PDFs | Password prompt for supported standard RC4/AES PDFs; preserve passwords and permissions on PDF copies and PDF exports |
 | Compare PDFs | Two open working snapshots; page-index embedded-text, rendered-pixel and geometry differences; before/after or overlay review and a separate JSON report |
-| Digital signatures | Detached-CMS integrity inspection, explicit custom-CA chain checks, and separate incremental signed/co-signed copies with local PKCS#12 identities, including selected empty signature fields |
+| Digital signatures | Detached-CMS integrity, explicit custom-CA paths, imported full-CRL and signature-bound RFC3161 evidence; separate incremental signed/co-signed copies with local PKCS#12 identities and selected empty signature fields |
 | Read | Continuous vertical scrolling, real PDF rendering, selectable/copyable text, lazy thumbnails, synchronized page navigation, zoom, fit page/width, hand panning |
 | Accessibility | Inspect supported actual tag/order/Alt/Lang bindings; explicit reviewed headings, paragraphs, figure alternatives/decorative Artifacts and separate protected-as-source tagged copies; semantic HTML reading without duplicate canvas text |
 | Navigate | Create, rename, nest, reorder, and delete real PDF bookmarks; internal links; confirmed external web/email links |
@@ -434,17 +434,18 @@ Choose **Digital signatures** in All tools or the right utility rail. Inspection
 checks supported detached CMS signatures against the PDF's original byte spans,
 without rewriting it. Each result separates **signed-byte integrity**,
 **whole-file versus earlier-revision coverage**, **current certificate dates**,
-and **custom certificate-chain evaluation**, **revocation not checked**, and
-**trusted time not checked**. Certificate subject, issuer, serial number,
+and **custom certificate-chain evaluation**, **current imported revocation
+coverage**, and **signature-bound timestamp evidence**. Certificate subject, issuer, serial number,
 SHA-256 fingerprint, date bounds, and signature/digest algorithms are available
 in the details disclosure.
 
 **Intact bytes do not mean a trusted signer.** Without explicitly added custom
 CA anchors, identity trust remains **not checked**, including for embedded
 roots and self-signed signers. Certificate dates use this computer's current time,
-not an authenticated historical signing time. Folio makes no revocation,
-trusted-timestamp, qualified-signature, certification-policy, or PAdES-LTV
-assurance and makes no TSA, OCSP, or other external certificate requests.
+not an authenticated historical signer-validation time. Only explicitly loaded,
+supported public evidence is checked. Folio makes no system/Adobe trust,
+qualified-signature, certification-policy, historical-revocation or PAdES-LTV
+assurance and makes no TSA, OCSP, CRL-download or other external certificate requests.
 Later appended bytes are explicitly **not covered**, even if the older signed
 revision's CMS signature is intact.
 
@@ -504,7 +505,8 @@ rejected. Intermediates must come from the CMS certificate set, not a download.
 
 Anchors are **public certificates in memory for this app run only**, shared
 across tabs. Nothing is persisted to preferences or disk. Add/remove actions
-use a separate store revision; removal immediately invalidates cached conclusions
+use one shared CA/evidence store revision, separate from the source revision;
+removal immediately invalidates cached conclusions
 in active and inactive panels, including late inspection responses. Removing
 all anchors returns reports to `not_checked` without changing any PDF revision.
 
@@ -522,9 +524,79 @@ cannot produce a valid current-date chain.
 
 Success is labeled **Chain anchored in your custom CA store**, **not Adobe
 AATL/EUTL or OS trust**. No system/keychain roots, embedded signer auto-trust,
-certificate discovery, AIA downloads, OCSP/CRL checks, TSA, qualified-signature,
-or LTV claims are made. A valid chain never overrides failed integrity,
+certificate discovery, AIA/OCSP/CRL downloads, TSA submissions, qualified-signature,
+or LTV claims are made. Offline imported evidence is evaluated separately below.
+A valid chain never overrides failed integrity,
 unsigned later bytes, current-date failure, or absent trusted time.
+
+### Explicit offline revocation and trusted-time evidence
+
+Expand **Offline public evidence** to import one public full CRL, and use
+**Import timestamp for signature N** on the actual signature to import its
+RFC3161 token/response. Importing, inspecting and removing evidence never changes
+PDF bytes, revisions, saved paths, history, signatures or pending drafts.
+Certificates in the evidence do not become trust anchors automatically.
+
+| Evidence | Supported verification |
+| --- | --- |
+| Full direct CRL | One exact DER or `X509 CRL` PEM block (`.crl`, `.pem`, `.der`), up to **1 MiB** and **32,768 revoked entries**. Verify the actual path issuer, CA CRL-signing usage, signature, AKI/SKI and optional authority issuer/serial; `thisUpdate` must fall within the actual CA's dates, and `nextUpdate` must be present and current. Compare the actual certificate serial. |
+| RFC3161 timestamp | One exact DER granted response (`.tsr`) or attached CMS TSTInfo token (`.tst`, `.der`), up to **256 KiB**. Verify SHA-2 CMS signatures, signed ESSCertIDv2 certificate hashes/optional issuer-serial, exclusive critical `timeStamping` TSA EKU, and the SHA-256/384/512 imprint of the **actual CMS signature-value octets**, not PDF `/M`, a subject string or a loosely associated document hash. |
+
+All evidence shares the custom store's **in-memory, this-run-only** lifetime:
+at most **32 public items / 8 MiB of canonical DER**, including at most **four
+imported tokens per signature**. PEM bundles, trailing DER, delta/indirect/
+distribution-point-scoped CRLs, unsupported CRL/entry extensions, ambiguous
+serials/CRL numbers and weak/unknown algorithms are refused. Newer authenticated
+CRL numbers must have nondecreasing update dates; a future, expired, conflicting
+or bad-signature newer list never falls back to an older-good conclusion.
+
+**Current CRL coverage is not historical revocation.** Every non-anchor
+certificate in the actual verified current path needs its issuer's current
+full CRL. Import the intermediate issuer's and root issuer's CRLs separately;
+the explicitly chosen root anchor itself is excluded. Results say
+`good_current_evidence`, `revoked`, `incomplete`, `expired`, `future`,
+`invalid`, `unsupported` or `untrusted`, never guess missing evidence good.
+An absent serial means only **not listed in these current imported CRLs**,
+not a universal OCSP/CA-status claim.
+
+Timestamp results separate **token cryptography**, **exact signature-value
+imprint**, **TSA certificate/current custom path**, **custom path at genTime**
+and **current TSA-chain CRL coverage**. A `verified_custom_store` token requires
+all those checks, complete current non-anchor TSA CRLs, and a genTime/accuracy
+interval that is not future-dated and falls within the TSA path's certificate
+dates. UTC fractional genTime is supported up to nine digits; signed accuracy
+is bounded to one day, with milliseconds/microseconds in 1..999.
+Policy OID, serial, nonce and accuracy are disclosed; no original-request nonce,
+TSA clock/policy audit or historical signer/TSA revocation check is claimed.
+Currently expired/future TSA chains are deliberately **not** accepted as a
+historical-trust substitute. SHA-1 SigningCertificate bindings, token extensions,
+nested timestamp/countersignature forms and document timestamps are unsupported.
+
+Supported embedded `signatureTimeStampToken` evidence is inspected without
+rewriting CMS. Only one such DER CMS/TSTInfo unsigned attribute with one value
+is accepted; unrelated/duplicate unsigned attributes remain refused.
+Imported tokens additionally bind the signer certificate fingerprint and
+actual signature-value SHA-256. Removing an imported token does **not** remove
+an embedded token from the unchanged PDF.
+
+**A valid timestamp never clears current signer revocation or untrusted dates,
+and cannot repair invalid PDF integrity or approve later changes.** These
+conclusions remain separate in the panel. Store changes, source/draft epochs,
+inactive tabs and late responses invalidate old conclusions. Reports disclose
+their clock snapshot and deadline, recheck at most every 60 seconds and sooner
+at relevant certificate/CRL/time transitions, and reject expired or
+backward-clock cache entries.
+
+The native commands `choose_signature_evidence` / `remove_signature_evidence`
+and loopback POST `/signatures/evidence/add` / `/signatures/evidence/remove`
+use the same engine. Changes require `{documentId, revision, epoch,
+trustRevision}` from the current inspection; add also takes `kind`
+(`crl` or `timestamp`), `signatureId` (null for CRLs, the actual object ID for
+timestamps), and loopback-only `evidence: [u8]`. Native bytes come only from the
+explicit file dialog. `trustStore` returns its shared revision, anchors,
+public `evidence[]`, `evidenceBytes` and `persistent: false`. Reports add
+`checkedAtUnixMs` / `recheckAtUnixMs`; revocation and trusted-time results are
+typed, structured, signature-specific facts, not a blanket identity badge.
 
 The explicit supported subset is:
 
@@ -545,8 +617,9 @@ The explicit supported subset is:
   or general mutation bypass for signed files.
 - Unsupported verification includes encryption, compressed/direct signature
   dictionaries, repaired cross-references, DocMDP/FieldMDP transforms,
-  multiple CMS signers, attached CMS content, unsigned CMS attributes
-  (including timestamps/countersignatures), embedded CMS revocation lists,
+  multiple CMS signers, attached ordinary CMS data signatures, unsigned CMS
+  attributes other than the single supported signature-time token above,
+  countersignatures, embedded CMS revocation lists,
   non-X.509 certificate choices, RSA-PSS, EdDSA, weak/unknown
   digests or keys, and missing external certificates. Malformed bounds,
   duplicate dictionary keys, mismatched Contents gaps, trailing nonzero CMS
@@ -1935,6 +2008,17 @@ cargo test --manifest-path src-tauri/Cargo.toml --no-default-features \
   -- --ignored --exact
 ```
 
+Offline evidence regressions additionally generate real signed CRLs and TSA
+tokens in memory, verify exact imprint/ESS/issuer/serial bindings, current
+coverage and revoked-signer/valid-time separation, reject future/expired/
+unsupported evidence, measure the inclusive 32,768-entry/32-item/8-MiB bounds
+with actual DER, and wait for real CRL expiry to invalidate time assurance:
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml --no-default-features \
+  --test signature_evidence
+```
+
 An explicit designer/signing contract check consumes original synthetic
 `unsigned-slots-created.pdf/.json` and `unsigned-slots-moved.pdf/.json` fixtures.
 It actually signs every slot successively across all four page rotations,
@@ -1964,6 +2048,26 @@ generation. `FOLIO_SIGNATURE_BROWSER` can select a compatible headless Chromium
 binary. Set `FOLIO_SIGNATURE_ARTIFACTS` to an output directory to retain synthetic
 PDFs, screenshots, and JSON evidence; test identities/private keys are always
 kept in a temporary directory and removed at completion, not copied there.
+
+The evidence-panel acceptance test consumes **public original synthetic**
+reference fixtures, including saved `actual-native-{good-signer,revoked-signer}`
+PDF/signature-value/TSR files, embedded/wrong-imprint/untrusted/future/unknown-
+attribute PDF controls, the root/issuer public certificates and fresh full-chain
+CRLs. It reads no fixture private keys/P12s. It independently checks CMS and
+timestamp imprints with OpenSSL, uses actual UI imports/removal/cancellation,
+tests inactive/late/draft lifetimes, saves exact bytes, waits for the real
+recheck clock deadline, and captures one bounded desktop/compact theme round:
+
+```sh
+FOLIO_TRUST_FIXTURES=/absolute/public-reference-fixture-directory \
+  FOLIO_TRUST_ARTIFACTS=/absolute/new-public-evidence-directory \
+  CARGO_TARGET_DIR=target/signature-evidence npm run test:signature-trust
+```
+
+The fixtures are deliberately date-bound; use fresh owned synthetic public
+evidence, not a user's documents, keychain or running app. Optional
+`FOLIO_TRUST_SKIP_BUILD=1` reuses an already built matching preview binary;
+`FOLIO_SIGNATURE_BROWSER` selects a compatible owned headless Chromium.
 
 Document-utility coverage checks Unicode metadata/XMP consistency, preserved
 unrelated RDF/Info/name-tree properties, real bookmark destinations and group

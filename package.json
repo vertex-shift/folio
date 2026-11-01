@@ -19,6 +19,7 @@
     "test:forms": "node tests/formsDesigner.e2e.mjs",
     "test:paragraph": "node tests/paragraphEditing.e2e.mjs",
     "test:signatures": "node tests/signatures.e2e.mjs",
+    "test:signature-trust": "node tests/signatureTrust.e2e.mjs",
     "tauri": "tauri",
     "desktop": "tauri dev",
     "bundle": "tauri build --bundles app",

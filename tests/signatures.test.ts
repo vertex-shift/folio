@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   certificateValidityLabel, chainLabel, evidenceTarget, revocationLabel, signatureSummary,
-  signedCopyName, signingField, trustedTimeLabel, validateAnchorFile, validateEvidenceFile, validateIdentityFile,
+  signedCopyName, signingField, signatureReportFresh, trustedTimeLabel, validateAnchorFile, validateEvidenceFile, validateIdentityFile,
 } from "../src/features/signatures/types.ts";
 import type { SignatureInfo, SignatureReport } from "../src/features/signatures/types.ts";
 import { createSignatureTrustState } from "../src/features/signatures/trustState.ts";
@@ -86,7 +86,8 @@ test("custom anchoring labels do not claim Adobe, OS, revocation, time, or mathe
 
 test("selection binds canonical logical field IDs, not names, widget IDs, or a stale slot", () => {
   const report: SignatureReport = {
-    documentId: 1, revision: 4, epoch: 0, signatures: [], warnings: [], signingBlockedReason: null,
+    documentId: 1, revision: 4, epoch: 0, checkedAtUnixMs: 0, recheckAtUnixMs: 60_000,
+    signatures: [], warnings: [], signingBlockedReason: null,
     trustStore: { revision: 0, anchors: [], evidence: [], evidenceBytes: 0, persistent: false },
     emptyFields: [{ id: "50:0", name: "Approval", blockedReason: null,
       widgets: [{ id: "51:0", page: 1, rect: [40, 130, 300, 200], visible: true }] }],
@@ -113,7 +114,8 @@ test("public evidence accepts only exact kind-specific filename and byte-count b
 
 test("timestamp targets bind actual cryptographically intact CMS signatures without signing-policy bypasses", () => {
   const report: SignatureReport = {
-    documentId: 1, revision: 1, epoch: 0, signatures: [signature()], emptyFields: [],
+    documentId: 1, revision: 1, epoch: 0, checkedAtUnixMs: 0, recheckAtUnixMs: 60_000,
+    signatures: [signature()], emptyFields: [],
     warnings: [], signingBlockedReason: "Signing is forbidden on this source",
     trustStore: { revision: 0, anchors: [], evidence: [], evidenceBytes: 0, persistent: false },
   };
@@ -126,6 +128,22 @@ test("timestamp targets bind actual cryptographically intact CMS signatures with
   for (const overrides of [{ integrity: "invalid" as const }, { integrity: "unsupported" as const },
     { signatureValueSha256: null }, { certificate: null }]) {
     assert.throws(() => evidenceTarget({ ...report, signatures: [signature(overrides)] }, "timestamp", "1:0"));
+  }
+});
+
+test("evidence conclusions expire at their exact backend deadline and on backward/invalid clocks", () => {
+  const report: SignatureReport = {
+    documentId: 1, revision: 0, epoch: 0, checkedAtUnixMs: 1000, recheckAtUnixMs: 1500,
+    signatures: [], emptyFields: [], warnings: [], signingBlockedReason: null,
+    trustStore: { revision: 0, anchors: [], evidence: [], evidenceBytes: 0, persistent: false },
+  };
+  assert.equal(signatureReportFresh(report, 1000), true);
+  assert.equal(signatureReportFresh(report, 1499), true);
+  assert.equal(signatureReportFresh(report, 1500), false);
+  assert.equal(signatureReportFresh(report, 999), false);
+  for (const overrides of [{ recheckAtUnixMs: 61_001 }, { checkedAtUnixMs: Number.NaN },
+    { recheckAtUnixMs: 1500.5 }, { checkedAtUnixMs: -1 }]) {
+    assert.equal(signatureReportFresh({ ...report, ...overrides }, 1100), false);
   }
 });
 

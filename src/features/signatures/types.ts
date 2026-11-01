@@ -128,6 +128,8 @@ export interface SignatureReport {
   documentId: number;
   revision: number;
   epoch: number;
+  checkedAtUnixMs: number;
+  recheckAtUnixMs: number;
   signatures: SignatureInfo[];
   signingBlockedReason: string | null;
   warnings: string[];
@@ -143,6 +145,12 @@ export function signatureSummary(signature: SignatureInfo): {
   if (signature.coverage === "later_changes") return { title: "Later bytes are not signed", tone: "warning" };
   if (signature.coverage === "unknown") return { title: "Signature coverage unknown", tone: "warning" };
   return { title: "Signed bytes intact", tone: "intact" };
+}
+
+export function signatureReportFresh(report: SignatureReport, now = Date.now()): boolean {
+  return Number.isSafeInteger(report.checkedAtUnixMs) && Number.isSafeInteger(report.recheckAtUnixMs)
+    && report.checkedAtUnixMs >= 0 && report.checkedAtUnixMs <= now
+    && report.recheckAtUnixMs > now && report.recheckAtUnixMs <= report.checkedAtUnixMs + 60_000;
 }
 
 export function certificateValidityLabel(validity: SignatureCertificate["validity"]): string {

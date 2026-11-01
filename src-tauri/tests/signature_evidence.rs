@@ -47,6 +47,7 @@ use x509_cert::{
         Extension,
         pkix::{AuthorityKeyIdentifier as DerAki, CrlReason, SubjectKeyIdentifier as DerSki},
     },
+    serial_number::SerialNumber,
     spki::AlgorithmIdentifierOwned,
     time::Time,
 };
@@ -488,15 +489,7 @@ fn add(workspace: &mut Workspace, id: u64, kind: EvidenceKind, bytes: &[u8]) {
         None
     };
     workspace
-        .add_signature_evidence(
-            id,
-            info.revision,
-            report.epoch,
-            report.trust_store.revision,
-            kind,
-            target,
-            bytes,
-        )
+        .add_signature_evidence(report.evidence_context(), kind, target, bytes)
         .unwrap();
 }
 
@@ -704,15 +697,7 @@ fn unsupported_delta_indirect_unknown_extensions_duplicate_serials_and_nonexact_
         let report = workspace.signature_report(id, 0).unwrap();
         assert!(
             workspace
-                .add_signature_evidence(
-                    id,
-                    0,
-                    report.epoch,
-                    report.trust_store.revision,
-                    EvidenceKind::Crl,
-                    None,
-                    &bytes
-                )
+                .add_signature_evidence(report.evidence_context(), EvidenceKind::Crl, None, &bytes)
                 .is_err()
         );
         assert_eq!(
@@ -900,10 +885,7 @@ fn wrong_detached_imprints_stale_epochs_revisions_and_removal_preserve_source_an
     assert!(
         workspace
             .add_signature_evidence(
-                id,
-                0,
-                before.epoch,
-                before.trust_store.revision,
+                before.evidence_context(),
                 EvidenceKind::Timestamp,
                 Some(&before.signatures[0].id),
                 &wrong
@@ -920,10 +902,7 @@ fn wrong_detached_imprints_stale_epochs_revisions_and_removal_preserve_source_an
     assert!(
         workspace
             .add_signature_evidence(
-                id,
-                0,
-                before.epoch,
-                before.trust_store.revision,
+                before.evidence_context(),
                 EvidenceKind::Timestamp,
                 Some(&before.signatures[0].id),
                 &timestamp
@@ -936,20 +915,17 @@ fn wrong_detached_imprints_stale_epochs_revisions_and_removal_preserve_source_an
     assert!(
         workspace
             .remove_signature_evidence(
-                id,
-                0,
-                report.epoch,
-                before.trust_store.revision,
+                folio_core::signatures::SignatureEvidenceContext {
+                    trust_revision: before.trust_store.revision,
+                    ..report.evidence_context()
+                },
                 &report.trust_store.evidence[0].fingerprint
             )
             .is_err()
     );
     workspace
         .remove_signature_evidence(
-            id,
-            0,
-            report.epoch,
-            report.trust_store.revision,
+            report.evidence_context(),
             &report.trust_store.evidence[0].fingerprint,
         )
         .unwrap();
@@ -969,4 +945,257 @@ fn wrong_detached_imprints_stale_epochs_revisions_and_removal_preserve_source_an
             .revision,
         0
     );
+}
+
+#[test]
+fn exact_pem_decoding_does_not_canonicalize_a_cryptographically_valid_ber_crl_into_der() {
+    let pki = pki();
+    let der = crl(
+        &pki.issuer,
+        &pki.issuer_key,
+        1,
+        &[],
+        now() - 60,
+        now() + 86400,
+    );
+    let header = if der[1] < 128 {
+        2
+    } else {
+        2 + (der[1] & 0x7f) as usize
+    };
+    let mut ber = vec![0x30, 0x80];
+    ber.extend_from_slice(&der[header..]);
+    ber.extend_from_slice(&[0, 0]);
+    assert!(
+        openssl::x509::X509Crl::from_der(&ber)
+            .unwrap()
+            .verify(&pki.issuer.public_key().unwrap())
+            .unwrap()
+    );
+    let pem = der::pem::encode_string("X509 CRL", der::pem::LineEnding::LF, &ber)
+        .unwrap()
+        .into_bytes();
+    let (mut workspace, id) = workspace(signed_pdf());
+    let before = workspace.signature_report(id, 0).unwrap();
+    for input in [ber.as_slice(), pem.as_slice()] {
+        assert!(
+            workspace
+                .add_signature_evidence(before.evidence_context(), EvidenceKind::Crl, None, input)
+                .is_err()
+        );
+        assert_eq!(workspace.signature_trust_store().unwrap().revision, 0);
+    }
+    let valid = openssl::x509::X509Crl::from_der(&der)
+        .unwrap()
+        .to_pem()
+        .unwrap();
+    add(&mut workspace, id, EvidenceKind::Crl, &valid);
+    assert_eq!(
+        workspace.signature_trust_store().unwrap().evidence[0].bytes,
+        der.len()
+    );
+}
+
+#[test]
+fn actual_crl_expiry_bounds_cached_reports_and_revokes_current_time_assurance_without_mutating_source()
+ {
+    let bytes = signed_pdf();
+    let timestamp = token(
+        &signature_value(&bytes),
+        now() - 10,
+        &pki().tsa,
+        &pki().tsa_key,
+        false,
+    );
+    let (mut workspace, id) = workspace(bytes.clone());
+    anchor(&mut workspace, id);
+    let expires = now() + 3;
+    add(
+        &mut workspace,
+        id,
+        EvidenceKind::Crl,
+        &crl(
+            &pki().issuer,
+            &pki().issuer_key,
+            1,
+            &[],
+            now() - 60,
+            expires,
+        ),
+    );
+    add(
+        &mut workspace,
+        id,
+        EvidenceKind::Crl,
+        &crl(
+            &pki().root,
+            &pki().root_key,
+            1,
+            &[],
+            now() - 60,
+            now() + 86400,
+        ),
+    );
+    add(&mut workspace, id, EvidenceKind::Timestamp, &timestamp);
+    let current = workspace.signature_report(id, 0).unwrap();
+    assert_eq!(
+        current.signatures[0].trusted_time.status,
+        TrustedTimeStatus::VerifiedCustomStore
+    );
+    assert!(current.recheck_at_unix_ms <= expires * 1000 + 1);
+    assert!(current.recheck_at_unix_ms > current.checked_at_unix_ms);
+    let milliseconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    std::thread::sleep(Duration::from_millis(
+        (expires * 1000 + 20).saturating_sub(milliseconds),
+    ));
+    let expired = workspace.signature_report(id, 0).unwrap();
+    assert_eq!(
+        expired.signatures[0].revocation.status,
+        RevocationStatus::Expired
+    );
+    assert_eq!(
+        expired.signatures[0].trusted_time.status,
+        TrustedTimeStatus::Incomplete
+    );
+    assert_eq!(
+        expired.signatures[0].trusted_time.timestamps[0].cryptographic_integrity,
+        Integrity::Intact
+    );
+    assert_eq!(expired.trust_store.revision, current.trust_store.revision);
+    assert_eq!(workspace.document(id).unwrap().bytes(), bytes);
+}
+
+fn numbered_entries(count: usize, wide: bool, issued: u64) -> Vec<RevokedCert> {
+    (0..count)
+        .map(|index| {
+            let mut serial = vec![0u8; if wide { 20 } else { 8 }];
+            if wide {
+                serial[0] = 1;
+            }
+            let end = serial.len();
+            serial[end - 8..].copy_from_slice(&(index as u64 + 1).to_be_bytes());
+            RevokedCert {
+                serial_number: SerialNumber::new(&serial).unwrap(),
+                revocation_date: time(issued - 1),
+                crl_entry_extensions: None,
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn actual_signed_der_enforces_inclusive_32768_entries_and_32_store_items() {
+    let pki = pki();
+    let issued = now() - 60;
+    let mut tbs = CertificateList::from_der(&crl(
+        &pki.issuer,
+        &pki.issuer_key,
+        1,
+        &[],
+        issued,
+        now() + 86400,
+    ))
+    .unwrap()
+    .tbs_cert_list;
+    tbs.revoked_certificates = Some(numbered_entries(32_768, false, issued));
+    let accepted = sign_crl(tbs.clone(), &pki.issuer_key);
+    assert!(accepted.len() < folio_core::signatures::MAX_CRL_BYTES);
+    let (mut workspace, id) = workspace(signed_pdf());
+    add(&mut workspace, id, EvidenceKind::Crl, &accepted);
+    tbs.revoked_certificates = Some(numbered_entries(32_769, false, issued));
+    let excessive = sign_crl(tbs, &pki.issuer_key);
+    assert!(excessive.len() < folio_core::signatures::MAX_CRL_BYTES);
+    let before = workspace.signature_report(id, 0).unwrap();
+    assert!(
+        workspace
+            .add_signature_evidence(
+                before.evidence_context(),
+                EvidenceKind::Crl,
+                None,
+                &excessive
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("32,768")
+    );
+    for number in 2..=32 {
+        add(
+            &mut workspace,
+            id,
+            EvidenceKind::Crl,
+            &crl(
+                &pki.issuer,
+                &pki.issuer_key,
+                number,
+                &[],
+                issued,
+                now() + 86400,
+            ),
+        );
+    }
+    let before = workspace.signature_report(id, 0).unwrap();
+    assert_eq!(before.trust_store.evidence.len(), 32);
+    let extra = crl(&pki.issuer, &pki.issuer_key, 33, &[], issued, now() + 86400);
+    assert!(
+        workspace
+            .add_signature_evidence(before.evidence_context(), EvidenceKind::Crl, None, &extra)
+            .is_err()
+    );
+    assert_eq!(
+        workspace.signature_trust_store().unwrap().revision,
+        before.trust_store.revision
+    );
+}
+
+#[test]
+fn eight_mib_store_bound_counts_real_verified_der_not_file_names_or_metadata_estimates() {
+    let pki = pki();
+    let issued = now() - 60;
+    let mut tbs = CertificateList::from_der(&crl(
+        &pki.issuer,
+        &pki.issuer_key,
+        1,
+        &[],
+        issued,
+        now() + 86400,
+    ))
+    .unwrap()
+    .tbs_cert_list;
+    tbs.revoked_certificates = Some(numbered_entries(24_000, true, issued));
+    let (mut workspace, id) = workspace(signed_pdf());
+    let mut exact_bytes = 0;
+    let mut hit_limit = false;
+    for number in 1..=10 {
+        tbs.crl_extensions.as_mut().unwrap()[1] =
+            extension("2.5.29.20", false, &Uint::new(&[number]).unwrap());
+        let der = sign_crl(tbs.clone(), &pki.issuer_key);
+        assert!(der.len() <= folio_core::signatures::MAX_CRL_BYTES);
+        assert!(
+            openssl::x509::X509Crl::from_der(&der)
+                .unwrap()
+                .verify(&pki.issuer.public_key().unwrap())
+                .unwrap()
+        );
+        let before = workspace.signature_report(id, 0).unwrap();
+        let result = workspace.add_signature_evidence(
+            before.evidence_context(),
+            EvidenceKind::Crl,
+            None,
+            &der,
+        );
+        if exact_bytes + der.len() > folio_core::signatures::MAX_EVIDENCE_STORE_BYTES {
+            assert!(result.unwrap_err().to_string().contains("8 MiB"));
+            let after = workspace.signature_trust_store().unwrap();
+            assert_eq!(after.evidence_bytes, exact_bytes);
+            assert_eq!(after.revision, before.trust_store.revision);
+            hit_limit = true;
+            break;
+        }
+        exact_bytes += der.len();
+        assert_eq!(result.unwrap().evidence_bytes, exact_bytes);
+    }
+    assert!(hit_limit);
 }

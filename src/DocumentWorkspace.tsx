@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { ClipboardEvent, Ref } from "react";
 import {
   ArrowLeft, ArrowRight, BookOpen, Check, ChevronLeft, ChevronRight,
@@ -23,7 +23,7 @@ import ContinuousPages from "./components/ContinuousPages";
 import BookmarksPanel from "./components/BookmarksPanel";
 import ExistingTextPanel from "./components/ExistingTextPanel";
 import RedactionPanel from "./components/RedactionPanel";
-import SignaturesPanel from "./features/signatures/SignaturesPanel";
+import "./features/signatures/signatures.css";
 import SigningDialog from "./features/signatures/SigningDialog";
 import { signatureBridge } from "./features/signatures/bridge";
 import type { SignatureReport, SigningIdentity } from "./features/signatures/types";
@@ -87,6 +87,8 @@ import "./document-utilities.css";
 import "./features/formsDesigner/styles.css";
 import type { OutputAction } from "./lib/output";
 import type { SourceState } from "./features/comparison/model";
+
+const SignaturesPanel = lazy(() => import("./features/signatures/SignaturesPanel"));
 
 type Action = { type: "open" | "example" | "close" }
   | { type: "create"; width: number; height: number };
@@ -1875,8 +1877,9 @@ export default function DocumentWorkspace(props: Props) {
           </div>
           <button className="shortcuts-link" onClick={() => setModal({ type: "shortcuts" })}><Keyboard size={16} />Keyboard shortcuts</button>
         </>}
-        {panel === "signatures" && info && <SignaturesPanel info={info} active={props.active}
-          disabled={disabled} pendingDraft={pendingDraft} onSign={reviewSigning} />}
+        {panel === "signatures" && info && <Suspense fallback={<p className="signature-progress" role="status"><LoaderCircle size={15} className="spin" />Opening signature checks...</p>}>
+          <SignaturesPanel info={info} active={props.active} disabled={disabled} pendingDraft={pendingDraft} onSign={reviewSigning} />
+        </Suspense>}
         {props.active && panel === "preflight" && info && <PreflightPanel info={info} disabled={disabled} pending={pendingDraft}
           current={() => infoRef.current} hasPending={draftProjection} prepare={prepareTechnical} run={run} onError={setError}
           onNotice={setToast} onArchive={requestArchive} />}

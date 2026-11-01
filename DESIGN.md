@@ -359,9 +359,22 @@ existing panel/dialog motion, and reduced-motion behavior.
 Custom CA management is a disclosure inside this panel, not a new workspace
 mode or global-trust setting. Explain explicit public-root selection, bounded
 input, memory-only lifetime, shared tabs, and removal beside the controls.
-Never imply AATL/EUTL, OS/keychain, revocation, or trusted timestamp assurance.
-Clear all panels' cached custom-chain conclusions on store changes, including
-inactive tabs and stale async responses.
+Never imply AATL/EUTL or OS/keychain trust. Offline public evidence is a second
+disclosure in the same panel, not a new trust mode. Name full CRL imports and
+signature-specific RFC3161 imports explicitly; disclose bounded public-only
+formats, memory-only lifetime and removal beside each item.
+Keep signed-byte integrity, custom anchoring, current issuer CRL coverage and
+timestamp cryptography/imprint/TSA/genTime results separate. A checked token uses
+document blue, never a blanket green identity badge; revoked/failed evidence
+uses explicit error text, and missing/expired/future/unsupported evidence stays
+warning-colored and named. Disclosures retain selectable fingerprints and
+actual certificate/issuer/serial/date bindings without overwhelming the default
+reading view. Imported removal cannot suggest removal of embedded PDF evidence.
+Clear all panels' cached conclusions on CA/evidence store or source/draft
+lifetime changes, including inactive tabs and stale async responses. Show the
+actual clock snapshot, recheck at the engine's expiry deadline and on resume,
+and never let valid time appear to clear current signer revocation or imply
+historical revocation, audited TSA policies, qualified signing or PAdES-LTV.
 
 PDF page typography is rendered from the file itself. The generated example
 PDF uses standard PDF fonts; it is not the interface's typography source.

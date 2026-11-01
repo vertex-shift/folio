@@ -17,7 +17,7 @@ export default defineConfig({
     host: "127.0.0.1",
     port: localPort("FOLIO_DEV_PORT", 1420),
     strictPort: true,
-    watch: { ignored: ["**/src-tauri/**", "**/dist/**"] },
+    watch: { ignored: ["**/src-tauri/**", "**/target/**", "**/dist/**"] },
     proxy: {
       "/__folio": {
         target: `http://127.0.0.1:${localPort("FOLIO_PREVIEW_PORT", 19148)}`,

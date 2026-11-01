@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { downloadPdf, native, post, previewJson, previewResponse, revision } from "../../lib/bridge";
 import type { DocumentInfo } from "../../lib/types";
-import { evidenceTarget, signedCopyName, validateAnchorFile, validateEvidenceFile, validateIdentityFile } from "./types";
+import { evidenceTarget, signatureReportFresh, signedCopyName, validateAnchorFile, validateEvidenceFile, validateIdentityFile } from "./types";
 import type { SignatureEvidenceKind, SignatureReport, SignatureTrustStore, SigningIdentity, SigningIdentityFile } from "./types";
 import { signatureTrustState } from "./trustState";
 
@@ -10,6 +10,7 @@ export const signatureBridge = {
     const lifetime = signatureTrustState.captureDocument(info.id);
     const report = await (native ? invoke<SignatureReport>("inspect_signatures", revision(info))
       : previewJson<SignatureReport>("/signatures/inspect", post(revision(info))));
+    if (!signatureReportFresh(report)) throw new Error("These checks expired or the system clock changed before they completed. Refresh signature checks.");
     if (report.documentId !== info.id || report.revision !== info.revision
         || !signatureTrustState.acceptDocumentEpoch(info.id, report.epoch, lifetime)) {
       throw new Error("The PDF source/draft lifetime changed during these checks. Refresh signatures.");

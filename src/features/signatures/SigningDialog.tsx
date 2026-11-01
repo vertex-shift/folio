@@ -104,7 +104,7 @@ export default function SigningDialog({ info, report, busy, error, onClose, onEx
     <label className="checkbox-setting signature-acknowledgment"><input type="checkbox" checked={reviewed} disabled={blocked}
       onChange={(event) => setReviewed(event.target.checked)} />I have reviewed the current PDF and want to sign a separate copy.</label>
     <p className="muted">Uses SHA-256 with a currently valid RSA or supported ECDSA certificate.
-      The source, its saved state, and history stay unchanged. Open the exported copy to check integrity and, optionally, its chain against your custom CAs. No revocation or trusted-time checks.</p>
+      The source, its saved state, and history stay unchanged. Open the exported copy to check its integrity, custom anchoring and your imported offline evidence. Signing does not request a timestamp or clear an earlier signer&apos;s revocation or untrusted status.</p>
     <p className="muted">Encrypted, repaired/hybrid, certified, XFA, field-locking/seed-value policies, ambiguous signatures, and unsigned changes after a signature are refused. Ordinary signed-file editing stays read-only. No TSA/OCSP requests or external uploads.</p>
     {!native && <p className="muted">Development preview sends the selected identity only to its loopback Rust engine and downloads a new PDF. It does not write to an existing document path.</p>}
   </Dialog>;

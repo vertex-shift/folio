@@ -1093,9 +1093,11 @@ fn explicit_custom_root_with_embedded_intermediate_is_never_system_or_embedded_s
             .map(String::as_str)
             .collect::<Vec<_>>(),
         [
+            "checkedAtUnixMs",
             "documentId",
             "emptyFields",
             "epoch",
+            "recheckAtUnixMs",
             "revision",
             "signatures",
             "signingBlockedReason",
