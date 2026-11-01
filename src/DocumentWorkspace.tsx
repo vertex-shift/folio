@@ -10,6 +10,7 @@ import {
   Bookmark, FilePlus2, FileInput, FileOutput, Pencil, Type, SquarePen, ExternalLink, Eraser, ImagePlus, Hash, Stamp, Crop,
   Info, Paperclip,
   Printer, FileDown, Minimize2, Files,
+  Accessibility,
 } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { version as appVersion } from "../package.json";
@@ -36,6 +37,12 @@ import OutputDialog from "./components/OutputDialog";
 import PreflightPanel from "./features/preflight/PreflightPanel";
 import ArchiveDialog from "./features/preflight/ArchiveDialog";
 import "./features/preflight/styles.css";
+import AccessibilityPanel from "./features/accessibility/AccessibilityPanel";
+import StructuredReader from "./features/accessibility/StructuredReader";
+import { useAccessibility } from "./features/accessibility/useAccessibility";
+import { semanticRequest } from "./features/accessibility/model";
+import type { SemanticDraft } from "./features/accessibility/types";
+import "./features/accessibility/styles.css";
 import { bridge, native, runtimeIssue } from "./lib/bridge";
 import { createDraftSynchronizer, hasDocumentDrafts } from "./lib/draftProtection";
 import { documentUtilities } from "./lib/documentUtilitiesBridge";
@@ -129,6 +136,7 @@ const panelLabels: Record<Panel, string> = {
   properties: "Document properties", attachments: "File attachments",
   ocr: "Recognize scanned text",
   preflight: "Technical preflight",
+  accessibility: "Accessibility",
 };
 
 function typingTarget(target: EventTarget | null): boolean {
@@ -252,11 +260,13 @@ export default function DocumentWorkspace(props: Props) {
   const designer = useFormDesigner(info, panel === "form-designer" || tool === "form-widget");
   const images = useImageEditing(info, page, props.active && (panelOpen && panel === "image-edit" || tool === "edit-image"));
   const paragraphs = useParagraphEditing(info, page, textEditScope === "paragraph" && (tool === "edit-text" || panelOpen && panel === "edit"), props.active);
+  const accessibility = useAccessibility(info, props.active, setError);
+  const semanticWork = accessibility.pending || Boolean(accessibility.plan);
   const pendingDesign = Boolean(designer.draft?.dirty);
   const readOnly = Boolean(info?.readOnlyReason);
   const disabled = Boolean(busy) || !info;
   const authoring = useAuthoring({ info, page, current: () => infoRef.current,
-    blocked: () => busyRef.current || redactionsRef.current.length > 0 || forms.pending() || designer.pending() || images.hasDraft() || paragraphs.hasDraft() || writingDraftRef.current,
+    blocked: () => busyRef.current || redactionsRef.current.length > 0 || forms.pending() || designer.pending() || images.hasDraft() || paragraphs.hasDraft() || accessibility.hasDraft() || accessibility.hasPlan() || writingDraftRef.current,
     run, adopt, onError: setError, onToast: setToast,
     onSelect: (kind) => {
       setMode("write"); setPanel("authoring"); setPanelOpen(true);
@@ -268,14 +278,14 @@ export default function DocumentWorkspace(props: Props) {
     },
   });
   const pendingDraft = hasDocumentDrafts({ writing: pendingWriting || pendingMetadata || gestureDraft,
-    formFilling: forms.count > 0, formDesign: pendingDesign, pageAuthoring: authoring.pending, imageEditing: images.pending, paragraphEditing: paragraphs.pending, redaction: redactions.length > 0 });
+    formFilling: forms.count > 0, formDesign: pendingDesign, pageAuthoring: authoring.pending, imageEditing: images.pending, paragraphEditing: paragraphs.pending, accessibility: accessibility.pending, redaction: redactions.length > 0 });
   const pendingDraftRef = useRef(pendingDraft);
   pendingDraftRef.current = pendingDraft;
-  const authoringDisabled = disabled || readOnly || redactions.length > 0 || forms.count > 0 || pendingMetadata || pendingDesign || images.pending || paragraphs.pending;
+  const authoringDisabled = disabled || readOnly || semanticWork || redactions.length > 0 || forms.count > 0 || pendingMetadata || pendingDesign || images.pending || paragraphs.pending;
   const editDisabled = authoringDisabled || authoring.pending;
-  const redactDisabled = disabled || readOnly || authoring.pending || forms.count > 0 || pendingMetadata || pendingDesign || images.pending || paragraphs.pending;
-  const imageEditingDisabled = disabled || authoring.pending || forms.count > 0 || pendingWriting || pendingMetadata || pendingDesign || redactions.length > 0 || paragraphs.pending;
-  const paragraphEditingDisabled = disabled || authoring.pending || forms.count > 0 || pendingWriting || pendingMetadata || pendingDesign || images.pending || redactions.length > 0;
+  const redactDisabled = disabled || readOnly || semanticWork || authoring.pending || forms.count > 0 || pendingMetadata || pendingDesign || images.pending || paragraphs.pending;
+  const imageEditingDisabled = disabled || semanticWork || authoring.pending || forms.count > 0 || pendingWriting || pendingMetadata || pendingDesign || redactions.length > 0 || paragraphs.pending;
+  const paragraphEditingDisabled = disabled || semanticWork || authoring.pending || forms.count > 0 || pendingWriting || pendingMetadata || pendingDesign || images.pending || redactions.length > 0;
   const managementTooLarge = Boolean(info && info.byteLength > MAX_MANAGEMENT_SOURCE_BYTES);
   const managementEditDisabled = editDisabled || managementTooLarge;
   const utilityPanel = panelOpen && ["properties", "attachments", "bookmarks"].includes(panel);
@@ -303,8 +313,12 @@ export default function DocumentWorkspace(props: Props) {
   }), []);
 
   useEffect(() => {
-    props.onActivity(documentId, { busy: Boolean(busy) || gestureDraft, pendingDraft, modal: Boolean(modal) || Boolean(outputMode) || archiveOpen, outputPending: Boolean(outputMode) || archiveOpen });
-  }, [documentId, busy, gestureDraft, pendingDraft, modal, outputMode, archiveOpen, props.onActivity]);
+    props.onActivity(documentId, { busy: Boolean(busy) || gestureDraft, pendingDraft, modal: Boolean(modal) || Boolean(outputMode) || archiveOpen, outputPending: Boolean(outputMode) || archiveOpen || Boolean(accessibility.plan) });
+  }, [documentId, busy, gestureDraft, pendingDraft, modal, outputMode, archiveOpen, accessibility.plan, props.onActivity]);
+
+  useEffect(() => {
+    if (pendingDraft) accessibility.setReaderOpen(false);
+  }, [pendingDraft, accessibility.setReaderOpen]);
 
   useEffect(() => () => props.onActivity(documentId, null), [documentId, props.onActivity]);
 
@@ -339,6 +353,9 @@ export default function DocumentWorkspace(props: Props) {
 
   async function adopt(next: DocumentInfo) {
     const previous = infoRef.current;
+    if (accessibility.hasDraft() && (previous?.id !== next.id || previous.revision !== next.revision)) {
+      throw new Error("Discard the semantic draft or prepare its separate tagged copy before changing this PDF. Your reviewed values are kept.");
+    }
     if (paragraphs.hasDraft() && (previous?.id !== next.id || previous.revision !== next.revision)) {
       throw new Error("Apply or explicitly discard the paragraph draft before changing this PDF.");
     }
@@ -463,6 +480,7 @@ export default function DocumentWorkspace(props: Props) {
       setError("Finish or discard the current document draft before leaving this tab.");
       return;
     }
+    if (action.type === "close" && blockSemanticWork("closing this PDF tab")) return;
     if (authoring.hasDraft() && action.type === "close") {
       setError("Apply or discard the Page authoring draft before closing this PDF tab.");
       setPanel("authoring"); setPanelOpen(true);
@@ -524,6 +542,7 @@ export default function DocumentWorkspace(props: Props) {
     if (mode === "organize") setMode("read");
     if (next === "comments") setMode("comment");
     if (next === "signatures") setTool("select");
+    if (next === "accessibility") { setTool("select"); setMode("read"); }
     if (next === "forms") { setTool("select"); if (mode === "write") setMode("read"); }
     if (next === "form-designer") { setTool("select"); setMode("write"); }
     else if (tool === "form-widget") setTool("select");
@@ -608,6 +627,7 @@ export default function DocumentWorkspace(props: Props) {
 
   function chooseTool(next: Tool) {
     if (busyRef.current) { setToast("Wait for the current document action to finish."); return; }
+    if (!["select", "hand"].includes(next) && blockSemanticWork("using another editing tool")) return;
     if (images.hasDraft() && !["select", "hand", "edit-image"].includes(next)) {
       showPanel("image-edit"); setError("Apply or discard the image draft before using another editing tool."); return;
     }
@@ -641,6 +661,7 @@ export default function DocumentWorkspace(props: Props) {
       return;
     }
     setTool(next);
+    accessibility.setReaderOpen(false);
     if (mode === "organize") setMode("read");
     if (next === "highlight" || next === "note") setMode("comment");
     if (next === "text" || next === "ink") { setMode("write"); setPanel("write"); setPanelOpen(true); }
@@ -651,6 +672,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function changeMode(next: Mode) {
+    if ((next === "write" || next === "organize") && blockSemanticWork("changing editing modes")) return;
     if (paragraphs.hasDraft() && (next === "write" || next === "organize")) {
       reviewParagraphDraft(); setError("Apply or discard the paragraph draft before changing editing modes."); return;
     }
@@ -674,12 +696,14 @@ export default function DocumentWorkspace(props: Props) {
       if (next === "write") { chooseTool("redact"); return; }
     }
     setMode(next);
+    accessibility.setReaderOpen(false);
     setTool("select");
     if (next === "comment") { setPanel("comments"); setPanelOpen(true); }
     if (next === "write") { setTool("edit-text"); setPanel("edit"); setPanelOpen(true); }
   }
 
   function edit(change: Edit, label: string, onSuccess?: () => void) {
+    if (blockSemanticWork("changing the source PDF")) return;
     if (paragraphs.hasDraft()) { reviewParagraphDraft(); setError("Apply or discard the paragraph draft before changing this PDF."); return; }
     if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before changing this PDF."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before changing this PDF."); return; }
@@ -708,6 +732,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function selectSourceText(run: ExistingTextRun, targetPage = pageRef.current) {
+    if (blockSemanticWork("editing source text")) return;
     if (paragraphs.hasDraft()) { reviewParagraphDraft(); setError("Apply or discard the paragraph draft before editing an exact source run."); return; }
     if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before editing source text."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before editing source text."); return; }
@@ -747,6 +772,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function importPages(file?: File) {
+    if (blockSemanticWork("inserting PDF pages")) return;
     if (paragraphs.hasDraft()) { reviewParagraphDraft(); setError("Apply or discard the paragraph draft before inserting pages."); return; }
     if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before inserting pages."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before inserting pages."); return; }
@@ -794,6 +820,7 @@ export default function DocumentWorkspace(props: Props) {
       document.execCommand(redo ? "redo" : "undo");
       return;
     }
+    if (blockSemanticWork("undoing or redoing PDF content")) return;
     if (paragraphs.hasDraft()) { reviewParagraphDraft(); setError("Apply or discard the paragraph draft before undoing or redoing PDF changes."); return; }
     if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before undoing or redoing PDF changes."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before undoing or redoing PDF changes."); return; }
@@ -809,6 +836,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function save(copy = true) {
+    if (blockSemanticWork("saving the original PDF")) return;
     if (paragraphs.hasDraft()) {
       reviewParagraphDraft(); setError("Apply or discard the paragraph draft before saving. Its text and layout are not yet in the PDF."); return;
     }
@@ -884,7 +912,7 @@ export default function DocumentWorkspace(props: Props) {
     const draft = metadataDraft;
     if (!draft || !metadataChanged(draft)) return;
     void run("Applying descriptive metadata...", async () => {
-      if (forms.pending() || designer.pending() || images.hasDraft() || paragraphs.hasDraft() || authoring.hasDraft() || pendingWriting) {
+      if (accessibility.hasDraft() || accessibility.hasPlan() || forms.pending() || designer.pending() || images.hasDraft() || paragraphs.hasDraft() || authoring.hasDraft() || pendingWriting) {
         throw new Error("Apply or discard the other pending document edits before applying metadata.");
       }
       const current = infoRef.current;
@@ -987,6 +1015,7 @@ export default function DocumentWorkspace(props: Props) {
   async function prepareTechnical(): Promise<DocumentInfo> {
     const current = infoRef.current;
     if (!current) throw new Error("Open a PDF before technical inspection or archival export.");
+    if (accessibility.hasPlan()) throw new Error("Save or cancel the prepared tagged copy before starting another source inspection or export.");
     await syncDraft(current.id, draftProjection());
     if (draftProjection()) throw new Error("Apply or discard every document draft and clear redaction marks before technical inspection or archival export.");
     if (infoRef.current?.id !== current.id || infoRef.current.revision !== current.revision) {
@@ -1004,6 +1033,125 @@ export default function DocumentWorkspace(props: Props) {
     });
   }
 
+  function reviewAccessibility() {
+    accessibility.setReaderOpen(false); showPanel("accessibility");
+  }
+
+  function blockSemanticWork(action: string) {
+    if (!accessibility.hasDraft() && !accessibility.hasPlan()) return false;
+    reviewAccessibility();
+    setError(`Prepare/save the separate tagged copy or explicitly discard its semantic recipe before ${action}. The original and your reviewed values are unchanged.`);
+    return true;
+  }
+
+  function accessibilityAvailable() {
+    if (busyRef.current) return false;
+    if (draftProjection("accessibility")) {
+      setError("Apply or discard other writing, paragraph, image, form, authoring, metadata and redaction drafts before reviewing semantic structure.");
+      return false;
+    }
+    return true;
+  }
+
+  function inspectAccessibility() {
+    if (!accessibilityAvailable()) return;
+    void run("Inspecting actual PDF logical structure...", async () => {
+      await accessibility.inspect(await prepareTechnical(), draftProjection);
+    });
+  }
+
+  function startAccessibility() {
+    if (!accessibilityAvailable()) return;
+    void run("Starting explicit semantic review...", async () => {
+      await accessibility.startDraft(draftProjection);
+      pendingDraftRef.current = draftProjection();
+      const current = infoRef.current;
+      if (!current) throw new Error("This PDF tab is no longer open.");
+      await syncDraft(current.id, draftProjection());
+    });
+  }
+
+  function changeAccessibility(draft: SemanticDraft) {
+    if (!accessibilityAvailable()) return;
+    accessibility.change(draft);
+    pendingDraftRef.current = draftProjection();
+    setError(null); setToast(null);
+  }
+
+  function prepareAccessibility() {
+    if (!accessibilityAvailable()) return;
+    void run("Preparing reviewed tagged PDF copy...", async () => {
+      const current = infoRef.current;
+      if (!current) throw new Error("This PDF tab is no longer open.");
+      const request = semanticRequest(current, accessibility.draft);
+      const checkSource = () => {
+        if (!activeRef.current || infoRef.current?.id !== current.id || infoRef.current.revision !== current.revision || draftProjection("accessibility")) {
+          throw new Error("The accessibility source or other pending drafts changed. No stale tagged copy was prepared.");
+        }
+      };
+      try {
+        await syncDraft(current.id, draftProjection("accessibility"));
+        checkSource();
+        await accessibility.begin(request, checkSource);
+        pendingDraftRef.current = draftProjection();
+        await syncDraft(current.id, draftProjection());
+        setToast("Reviewed copy prepared separately, with source protection retained. The original PDF is unchanged.");
+      } catch (error) {
+        await syncDraft(current.id, draftProjection());
+        throw error;
+      }
+    });
+  }
+
+  function saveAccessibility() {
+    if (!accessibilityAvailable()) return;
+    void run("Saving separate tagged PDF copy...", async () => {
+      const output = await accessibility.save(draftProjection);
+      setToast(output ? "Separate tagged copy saved. Open it to inspect and read its actual tags; this tab still shows the unchanged source. No PDF/UA or WCAG claim."
+        : "Save canceled. The reviewed copy is still prepared; your source and recipe are unchanged.");
+    });
+  }
+
+  function reviseAccessibility() {
+    if (!accessibilityAvailable()) return;
+    void run("Revising semantic recipe...", async () => {
+      await accessibility.cancelCopy();
+      const current = infoRef.current;
+      if (current) { pendingDraftRef.current = draftProjection(); await syncDraft(current.id, draftProjection()); }
+    });
+  }
+
+  function discardAccessibility() {
+    void run("Discarding semantic recipe...", async () => {
+      await accessibility.discard();
+      const current = infoRef.current;
+      if (current) { pendingDraftRef.current = draftProjection(); await syncDraft(current.id, draftProjection()); }
+      setToast("Semantic recipe discarded. The source PDF, history and other drafts are unchanged.");
+    });
+  }
+
+  function cancelAccessibility() {
+    void accessibility.cancelCopy().then(async () => {
+      const current = infoRef.current;
+      if (current) { pendingDraftRef.current = draftProjection(); await syncDraft(current.id, draftProjection()); }
+      setToast("Accessibility operation canceled. Your source and reviewed values are unchanged.");
+    }).catch((error: unknown) => setError(errorMessage(error)));
+  }
+
+  function readAccessibility() {
+    void run("Opening actual tagged reading order...", async () => {
+      await prepareTechnical();
+      await accessibility.read(draftProjection);
+      setMode("read"); setTool("select");
+      if (window.matchMedia("(max-width: 899px)").matches) setPanelOpen(false);
+    });
+  }
+
+  function locateAccessibility(targetPage: number) {
+    accessibility.setReaderOpen(false); setPage(targetPage); setMode("read"); setTool("select");
+    if (window.matchMedia("(max-width: 899px)").matches) setPanelOpen(false);
+  }
+
   function updateRedactions(next: RedactionMark[]) {
     redactionsRef.current = next;
     setRedactions(next);
@@ -1011,6 +1159,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function markRedaction(rect: PdfRect, targetPage = pageRef.current) {
+    if (blockSemanticWork("marking redactions")) return;
     if (paragraphs.hasDraft()) { reviewParagraphDraft(); setError("Apply or discard the paragraph draft before marking redactions."); return; }
     if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before marking redactions."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before marking redactions."); return; }
@@ -1031,6 +1180,7 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function applyForms() {
+    if (blockSemanticWork("applying form fields")) return;
     if (images.hasDraft()) { showPanel("image-edit"); setError("Apply or discard the image draft before filling fields."); return; }
     if (designer.pending()) { showPanel("form-designer"); setError("Apply or discard the form-design draft before filling fields."); return; }
     if (authoring.hasDraft() || writingDraftRef.current) {
@@ -1052,10 +1202,10 @@ export default function DocumentWorkspace(props: Props) {
   }
 
   function hasPendingContentEdits() {
-    return writingDraftRef.current || forms.pending() || designer.pending() || images.hasDraft() || paragraphs.hasDraft() || authoring.hasDraft() || gesturePages.current.size > 0;
+    return writingDraftRef.current || forms.pending() || designer.pending() || images.hasDraft() || paragraphs.hasDraft() || accessibility.hasDraft() || accessibility.hasPlan() || authoring.hasDraft() || gesturePages.current.size > 0;
   }
 
-  function draftProjection(exclude?: "formFilling" | "formDesign" | "imageEditing" | "paragraphEditing") {
+  function draftProjection(exclude?: "formFilling" | "formDesign" | "imageEditing" | "paragraphEditing" | "accessibility") {
     return hasDocumentDrafts({
       writing: writingDraftRef.current || gesturePages.current.size > 0,
       formFilling: exclude !== "formFilling" && forms.pending(),
@@ -1063,6 +1213,7 @@ export default function DocumentWorkspace(props: Props) {
       pageAuthoring: authoring.hasDraft(),
       imageEditing: exclude !== "imageEditing" && images.hasDraft(),
       paragraphEditing: exclude !== "paragraphEditing" && paragraphs.hasDraft(),
+      accessibility: exclude !== "accessibility" && accessibility.hasDraft(),
       redaction: redactionsRef.current.length > 0,
     });
   }
@@ -1073,6 +1224,7 @@ export default function DocumentWorkspace(props: Props) {
 
   function paragraphEditingAvailable() {
     if (busyRef.current) return false;
+    if (accessibility.hasPlan()) { blockSemanticWork("editing paragraphs"); return false; }
     if (draftProjection("paragraphEditing")) {
       setError("Apply or discard other writing, forms, metadata, authoring, image and redaction drafts before editing paragraphs.");
       return false;
@@ -1131,6 +1283,7 @@ export default function DocumentWorkspace(props: Props) {
 
   function imageEditingAvailable() {
     if (busyRef.current) return false;
+    if (accessibility.hasPlan()) { blockSemanticWork("editing source images"); return false; }
     if (draftProjection("imageEditing")) {
       setError("Apply or discard other writing, forms, metadata, authoring and redaction drafts before editing images.");
       return false;
@@ -1223,6 +1376,7 @@ export default function DocumentWorkspace(props: Props) {
 
   function designerAvailable() {
     if (busyRef.current) return false;
+    if (accessibility.hasPlan()) { blockSemanticWork("designing form fields"); return false; }
     if (draftProjection("formDesign")) {
       setError("Apply or discard other writing, filling, metadata, authoring and redaction drafts before designing fields.");
       return false;
@@ -1499,6 +1653,7 @@ export default function DocumentWorkspace(props: Props) {
         else if (key === "z" || key === "y") actions.history(event.shiftKey || key === "y");
         else actions.zoom(key === "-" ? 1 / 1.2 : 1.2);
       } else if (!mod && !typingTarget(event.target)) {
+        if (event.target instanceof Element && event.target.closest(".structured-reader")) return;
         if (["PageDown", "PageUp"].includes(event.key)) {
           event.preventDefault();
           const viewport = viewerRef.current;
@@ -1580,7 +1735,7 @@ export default function DocumentWorkspace(props: Props) {
           <button key={item.mode} className={mode === item.mode ? "selected" : ""}
             aria-label={item.label} title={item.label}
             aria-current={mode === item.mode ? "page" : undefined}
-            disabled={disabled || (item.mode === "organize" || item.mode === "write") && (forms.count > 0 || pendingDesign || images.pending || paragraphs.pending) || item.mode === "organize" && redactions.length > 0} onClick={() => changeMode(item.mode)}>
+            disabled={disabled || (item.mode === "organize" || item.mode === "write") && (semanticWork || forms.count > 0 || pendingDesign || images.pending || paragraphs.pending) || item.mode === "organize" && redactions.length > 0} onClick={() => changeMode(item.mode)}>
             <item.icon size={16} /><span>{item.label}</span>
           </button>)}
       </nav>
@@ -1588,8 +1743,8 @@ export default function DocumentWorkspace(props: Props) {
         <IconButton label="Find in document (Command+F)" disabled={disabled} onClick={() => showPanel("search")}><Search size={18} /></IconButton>
         <IconButton label="Print PDF (Command+P)" disabled={disabled} onClick={() => requestOutput("print")}><Printer size={18} /></IconButton>
         <span className="toolbar-divider" />
-        <IconButton label="Undo (Command+Z)" disabled={disabled || authoring.pending || pendingMetadata || pendingDesign || images.pending || paragraphs.pending || redactions.length > 0 || forms.count > 0 || !info?.canUndo} onClick={() => history(false)}><Undo2 size={18} /></IconButton>
-        <IconButton label="Redo (Command+Shift+Z)" disabled={disabled || authoring.pending || pendingMetadata || pendingDesign || images.pending || paragraphs.pending || redactions.length > 0 || forms.count > 0 || !info?.canRedo} onClick={() => history(true)}><Redo2 size={18} /></IconButton>
+        <IconButton label="Undo (Command+Z)" disabled={disabled || semanticWork || authoring.pending || pendingMetadata || pendingDesign || images.pending || paragraphs.pending || redactions.length > 0 || forms.count > 0 || !info?.canUndo} onClick={() => history(false)}><Undo2 size={18} /></IconButton>
+        <IconButton label="Redo (Command+Shift+Z)" disabled={disabled || semanticWork || authoring.pending || pendingMetadata || pendingDesign || images.pending || paragraphs.pending || redactions.length > 0 || forms.count > 0 || !info?.canRedo} onClick={() => history(true)}><Redo2 size={18} /></IconButton>
         <button className="button primary save-button" aria-label={saveLabel} title={saveLabel} disabled={disabled || redactionIntent && !redactions.length} onClick={() => save(true)}>
           {redactionIntent ? <FileOutput size={15} /> : <Copy size={15} />}<span>{saveLabel}</span>
         </button>
@@ -1612,6 +1767,9 @@ export default function DocumentWorkspace(props: Props) {
     {paragraphs.pending && <div className="protected-banner paragraph-draft-banner" role="status"><SquarePen size={15} />
       Unapplied paragraph text or layout. Apply or discard it before saving or exporting.
       <button className="text-button" onClick={reviewParagraphDraft}>Review paragraph</button></div>}
+    {semanticWork && <div className="protected-banner semantic-draft-banner" role="status"><Accessibility size={15} />
+      {accessibility.plan ? "Separate tagged copy prepared. Save or cancel it before changing the source." : "Uncommitted semantic recipe. Prepare its separate tagged copy or discard it before other source work."}
+      <button className="text-button" onClick={reviewAccessibility}>Review semantics</button></div>}
     {ocrProgress && <OcrJobProgress progress={ocrProgress} canceling={ocrCanceling} onCancel={cancelOcr} />}
 
     <div className="workspace">
@@ -1653,6 +1811,9 @@ export default function DocumentWorkspace(props: Props) {
             <button disabled={disabled} onClick={props.onCompare}>
               <span className="tool-icon blue"><Files size={19} /></span><span>Compare PDFs</span><ChevronRight size={14} className="list-arrow" />
             </button>
+            <button disabled={disabled} onClick={reviewAccessibility}>
+              <span className="tool-icon blue"><Accessibility size={19} /></span><span>Accessibility and reading order</span><ChevronRight size={14} className="list-arrow" />
+            </button>
             <button disabled={editDisabled || info?.copyAllowed === false} onClick={showOcr}>
               <span className="tool-icon blue"><ScanLine size={19} /></span><span>Recognize scanned text</span><ChevronRight size={14} className="list-arrow" />
             </button>
@@ -1667,7 +1828,7 @@ export default function DocumentWorkspace(props: Props) {
             <button disabled={authoringDisabled} onClick={() => authoring.choose(authoring.draft?.kind ?? "image")}>
               <span className="tool-icon blue"><ImagePlus size={19} /></span><span>Page authoring</span><ChevronRight size={14} className="list-arrow" />
             </button>
-            <button className={mode === "organize" ? "chosen" : ""} disabled={disabled || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign || images.pending || paragraphs.pending} onClick={() => changeMode("organize")}>
+            <button className={mode === "organize" ? "chosen" : ""} disabled={disabled || semanticWork || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign || images.pending || paragraphs.pending} onClick={() => changeMode("organize")}>
               <span className="tool-icon teal"><LayoutGrid size={19} /></span><span>Organize pages</span><ChevronRight size={14} className="list-arrow" />
             </button>
             <button disabled={disabled} onClick={() => showPanel("properties")}><span className="tool-icon neutral"><Info size={18} /></span><span>Document properties</span><ChevronRight size={14} className="list-arrow" /></button>
@@ -1713,6 +1874,13 @@ export default function DocumentWorkspace(props: Props) {
         {props.active && panel === "preflight" && info && <PreflightPanel info={info} disabled={disabled} pending={pendingDraft}
           current={() => infoRef.current} hasPending={draftProjection} prepare={prepareTechnical} run={run} onError={setError}
           onNotice={setToast} onArchive={requestArchive} />}
+        {panel === "accessibility" && info && <AccessibilityPanel inspection={accessibility.inspection} draft={accessibility.draft}
+          plan={accessibility.plan} disabled={disabled} otherPending={draftProjection("accessibility")} working={accessibility.working}
+          stale={accessibility.stale} readerOpen={accessibility.readerOpen} error={error} notice={toast}
+          onInspect={inspectAccessibility} onStart={startAccessibility} onChange={changeAccessibility}
+          onPrepare={prepareAccessibility} onSave={saveAccessibility} onCancel={cancelAccessibility}
+          onDiscard={discardAccessibility} onRevise={reviseAccessibility} onRead={readAccessibility}
+          onVisual={() => accessibility.setReaderOpen(false)} onLocate={locateAccessibility} />}
         {panel === "image-edit" && info && <ImageEditingPanel info={info} page={page} inspection={images.inspection(page)}
           draft={images.draft} disabled={imageEditingDisabled} stale={images.stale} error={error} notice={toast}
           onSelect={selectSourceImage} onChange={(draft) => { images.change(draft); setError(null); setToast(null); }} onReplacement={chooseImageReplacement}
@@ -1734,13 +1902,13 @@ export default function DocumentWorkspace(props: Props) {
           draft={forms.draft} count={forms.count} loading={forms.loading} error={forms.error}
           actionError={error} notice={toast}
           fieldErrors={forms.fieldErrors} stale={forms.stale} retry={forms.retry}
-          disabled={disabled || redactions.length > 0 || authoring.pending || pendingWriting || pendingMetadata || pendingDesign || images.pending || paragraphs.pending} onChange={forms.change} onApply={applyForms}
+          disabled={disabled || semanticWork || redactions.length > 0 || authoring.pending || pendingWriting || pendingMetadata || pendingDesign || images.pending || paragraphs.pending} onChange={forms.change} onApply={applyForms}
           onDiscard={() => { setError(null); setModal({ type: "form-discard" }); }} onLocate={locateFormWidget}
           onDesign={() => showPanel("form-designer")} onFlatten={reviewStaticFormCopy} />}
         {panel === "form-designer" && info && <FormDesignerPanel info={info} page={page} designer={designer.designer}
           draft={designer.draft} widgetIndex={designerWidget} loading={designer.loading} stale={designer.stale}
           error={error ?? designer.error} notice={toast}
-          disabled={disabled || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || images.pending || paragraphs.pending || redactions.length > 0}
+          disabled={disabled || semanticWork || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || images.pending || paragraphs.pending || redactions.length > 0}
           retry={designer.retry} onNew={createDesignerField} onSelect={selectDesignerField} onChange={designer.change}
           onWidget={setDesignerWidget} onTarget={() => {
             if (!designerAvailable()) return;
@@ -1758,7 +1926,7 @@ export default function DocumentWorkspace(props: Props) {
           onRemove={(entry) => { setError(null); setModal({ type: "bookmark-delete", entry }); }}
           onMove={(entry, parent, at) => edit({ type: "bookmark_move", id: entry.id, parent, at }, "Organizing bookmarks...", () => setToast("Bookmark moved. Its destination and children are unchanged."))} />}
         {panel === "properties" && <DocumentPropertiesPanel info={info} draft={metadataDraft}
-          disabled={disabled || readOnly || managementTooLarge || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign || images.pending || paragraphs.pending} onDraft={(draft) => setMetadataDraft(metadataChanged(draft) ? draft : null)}
+          disabled={disabled || semanticWork || readOnly || managementTooLarge || redactions.length > 0 || forms.count > 0 || authoring.pending || pendingDesign || images.pending || paragraphs.pending} onDraft={(draft) => setMetadataDraft(metadataChanged(draft) ? draft : null)}
           onApply={applyMetadata} onDiscard={() => setMetadataDraft(null)} />}
         {panel === "attachments" && <AttachmentsPanel info={info} editDisabled={managementEditDisabled} exportDisabled={disabled || pendingDraft}
           onAdd={() => addAttachment()}
@@ -1864,7 +2032,8 @@ export default function DocumentWorkspace(props: Props) {
       </aside>}
 
       <main className={`document-area ${mode === "organize" ? "organizing" : ""}`} aria-label="Document">
-        {mode === "organize" && info && pdf ? <>
+        {accessibility.readerOpen && accessibility.inspection?.status === "tagged" ? <StructuredReader inspection={accessibility.inspection}
+          onClose={() => accessibility.setReaderOpen(false)} onVisual={locateAccessibility} /> : mode === "organize" && info && pdf ? <>
           <div className="organize-heading"><div><h1>Every page in its place.</h1><p>Drag to reorder, or select a page and use the controls.</p></div>
             <button className="button secondary" onClick={() => changeMode("read")}><BookOpen size={15} />Back to document</button>
           </div>
@@ -1936,7 +2105,7 @@ export default function DocumentWorkspace(props: Props) {
                 formDesigner={panelOpen && panel === "form-designer" || tool === "form-widget" ? {
                   fields: designer.designer?.fields ?? [], draft: designer.draft, widgetIndex: designerWidget,
                   active: tool === "form-widget",
-                  disabled: disabled || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || images.pending || paragraphs.pending || redactions.length > 0,
+                  disabled: disabled || semanticWork || readOnly || forms.count > 0 || authoring.pending || pendingWriting || pendingMetadata || images.pending || paragraphs.pending || redactions.length > 0,
                   onSelect: selectDesignerField, onPlace: placeDesignerWidget,
                   onGesture: (pending) => onGestureDraft(index, pending, "form-design"),
                 } : undefined}
@@ -1979,6 +2148,7 @@ export default function DocumentWorkspace(props: Props) {
                 disabled={disabled || readOnly && !["select", "hand"].includes(item.tool)
                   || redactions.length > 0 && !["select", "hand", "redact"].includes(item.tool)
                   || (forms.count > 0 || pendingDesign || images.pending) && !["select", "hand"].includes(item.tool)
+                  || semanticWork && !["select", "hand"].includes(item.tool)
                   || paragraphs.pending && !["select", "hand", "edit-text"].includes(item.tool)}
                 onClick={() => chooseTool(item.tool)}><item.icon size={19} />
                 {item.tool === "highlight" && <span className="highlighter-swatch" />}
@@ -2022,7 +2192,7 @@ export default function DocumentWorkspace(props: Props) {
         {busy && info && <div className="document-busy" role="status"><LoaderCircle size={14} className="spin" />{busy}</div>}
       </main>
 
-      {props.active && railOpen && info && pdf && mode !== "organize" && <aside className="page-rail" aria-label="Page thumbnails">
+      {props.active && railOpen && info && pdf && mode !== "organize" && !accessibility.readerOpen && <aside className="page-rail" aria-label="Page thumbnails">
         <div className="page-rail-heading"><h2>Pages</h2><span>{info.pageCount}</span><IconButton label="Hide page thumbnails" onClick={() => setRailOpen(false)}><PanelRightClose size={15} /></IconButton></div>
         <div className="thumbnail-list">
           {info.pages.map((item, index) =>
@@ -2032,7 +2202,7 @@ export default function DocumentWorkspace(props: Props) {
               <Thumbnail pdf={pdf} page={index} /><span className="thumbnail-number">{index + 1}</span>
             </button>)}
         </div>
-        <button className="rail-organize" disabled={disabled || redactions.length > 0 || forms.count > 0 || pendingDesign || images.pending || paragraphs.pending} onClick={() => changeMode("organize")}><LayoutGrid size={14} />Organize pages</button>
+        <button className="rail-organize" disabled={disabled || semanticWork || redactions.length > 0 || forms.count > 0 || pendingDesign || images.pending || paragraphs.pending} onClick={() => changeMode("organize")}><LayoutGrid size={14} />Organize pages</button>
       </aside>}
       <nav className="utility-rail" aria-label="Document panels">
         <IconButton label="Toggle page thumbnails" active={railOpen && mode !== "organize"} disabled={disabled} onClick={() => { setRailOpen((open) => !open); if (mode === "organize") setMode("read"); }}><FileText size={18} /></IconButton>
@@ -2042,6 +2212,7 @@ export default function DocumentWorkspace(props: Props) {
         <IconButton label="Show form fields" active={panelOpen && panel === "forms"} disabled={disabled} onClick={() => showPanel("forms")}><ClipboardList size={18} /></IconButton>
         <IconButton label="Show file attachments" active={panelOpen && panel === "attachments"} disabled={disabled} onClick={() => showPanel("attachments")}><Paperclip size={18} /></IconButton>
         <IconButton label="Show document properties" active={panelOpen && panel === "properties"} disabled={disabled} onClick={() => showPanel("properties")}><Info size={18} /></IconButton>
+        <IconButton label="Show accessibility and reading order" active={panelOpen && panel === "accessibility"} disabled={disabled} onClick={reviewAccessibility}><Accessibility size={18} /></IconButton>
         <IconButton label="Search document" active={panelOpen && panel === "search"} disabled={disabled} onClick={() => showPanel("search")}><Search size={18} /></IconButton>
         <span className="utility-spacer" />
         <IconButton label="Rotate current page clockwise" disabled={editDisabled} onClick={() => edit({ type: "rotate", page, degrees: 90 }, "Rotating page...")}><RotateCw size={18} /></IconButton>
@@ -2049,13 +2220,13 @@ export default function DocumentWorkspace(props: Props) {
     </div>
 
     <footer className="statusbar">
-      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : paragraphs.pending ? <><span className="status-dot dirty" />Unapplied paragraph text or layout</> : images.pending ? <><span className="status-dot dirty" />Unapplied source image edit</> : redactions.length ? <><span className="status-dot dirty" />{redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}</> : forms.count ? <><span className="status-dot dirty" />{forms.count} unapplied form {forms.count === 1 ? "field" : "fields"}</> : authoring.pending ? <><span className="status-dot dirty" />Unapplied page authoring</> : pendingMetadata ? <><span className="status-dot dirty" />Unapplied metadata draft</> : pendingWriting || gestureDraft ? <><span className="status-dot dirty" />Uncommitted writing or area</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
+      <div>{busy ? <><LoaderCircle size={12} className="spin" />{busy}</> : semanticWork ? <><span className="status-dot dirty" />{accessibility.plan ? "Separate tagged copy prepared" : "Uncommitted semantic recipe"}</> : paragraphs.pending ? <><span className="status-dot dirty" />Unapplied paragraph text or layout</> : images.pending ? <><span className="status-dot dirty" />Unapplied source image edit</> : redactions.length ? <><span className="status-dot dirty" />{redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}</> : forms.count ? <><span className="status-dot dirty" />{forms.count} unapplied form {forms.count === 1 ? "field" : "fields"}</> : authoring.pending ? <><span className="status-dot dirty" />Unapplied page authoring</> : pendingMetadata ? <><span className="status-dot dirty" />Unapplied metadata draft</> : pendingWriting || gestureDraft ? <><span className="status-dot dirty" />Uncommitted writing or area</> : info?.dirty ? <><span className="status-dot dirty" />Unsaved changes</> : <><Check size={12} className="status-check" />No unsaved changes</>}</div>
       <div className="document-status">{info && <><span>{info.pageCount} {info.pageCount === 1 ? "page" : "pages"}</span><span className="status-separator" /><span>{formatBytes(info.byteLength)}</span></>}</div>
       <div className="privacy-status"><ShieldCheck size={12} /><span>{runtimeIssue ? "Desktop runtime unavailable" : native ? "Local files. No uploads." : "Preview uses the real Rust engine"}</span></div>
     </footer>
 
-    {error && !modal && !outputMode && !archiveOpen && !utilityPanel && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "image-edit" || panel === "edit" && textEditScope === "paragraph" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
-    {toast && !(panelOpen && (panel === "forms" || panel === "form-designer" || panel === "image-edit" || panel === "edit" && textEditScope === "paragraph" || panel === "authoring" && authoring.draft)) && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
+    {error && !modal && !outputMode && !archiveOpen && !utilityPanel && !(panelOpen && (panel === "accessibility" || panel === "forms" || panel === "form-designer" || panel === "image-edit" || panel === "edit" && textEditScope === "paragraph" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
+    {toast && !(panelOpen && (panel === "accessibility" || panel === "forms" || panel === "form-designer" || panel === "image-edit" || panel === "edit" && textEditScope === "paragraph" || panel === "authoring" && authoring.draft)) && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
 
     {modal?.type === "protection-copy" && info && <ProtectionCopyDialog info={info} busy={Boolean(busy)} error={error}
       onClose={() => setModal(null)} onSubmit={exportProtectionCopy} />}

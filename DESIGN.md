@@ -276,6 +276,33 @@ Opening PDFs is additive, not a destructive navigation requiring discard.
 Close decisions name the affected PDF; quitting reviews unsaved inactive tabs
 as well. An empty workspace still offers opening and document creation.
 
+## Semantic authoring and reading
+
+Accessibility extends All tools and the utility rail, not a new global mode.
+Use a 340px panel with a scrollable reviewed source list and fixed visible
+Prepare/Save/Cancel/Discard actions. Every candidate initially needs an explicit
+role; drawing order is never labeled reviewed reading order. Named Earlier/
+Later buttons preserve selection and keyboard access. Keep exact source text,
+source page/binding, role, per-element language and a human Figure alternative
+in the selected-item editor. Explicit Artifact copy warns that decorative
+content is not read. Missing semantics, unsupported trees, stale drafts,
+loading, cancellation and errors remain visible without losing values.
+Retain recipes above panels and page virtualization in the single document
+draft authority; a prepared copy is an output job, not an edited original.
+
+The structured reader replaces the visual PDF surface rather than adding a
+duplicate invisible-text reading path. Render actual bound tags as semantic
+HTML heading levels/paragraphs/figures with inherited language; provide a
+heading chooser and Previous/Next item focus controls. Its reading typography
+uses the existing system ramp (13px body, 23/20px top headings), generous line
+height and a bounded measure. Source page typography is not reinterpreted.
+Figure alternatives are visible and announced once, never automatically
+generated. Explain partial bindings and manual semantic responsibility;
+do not display compliance badges or PDF/UA/WCAG certification language.
+Inherit the five appearances, semantic focus/error/status tokens, reduced
+motion and compact panel behavior. No native screen-reader-testing claim is
+inferred from browser DOM verification.
+
 ## Local file conversion
 
 Keep conversion inside the established local document-first workspace. A

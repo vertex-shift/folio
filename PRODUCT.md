@@ -67,6 +67,24 @@ The desktop app processes document contents locally.
   page. Refuse ambiguous grouping, unsupported metrics/shaping, tags/ActualText,
   clips, transparency, optional content and unsafe streams explicitly. This is
   conservative paragraph-box editing, not full DTP or Acrobat reflow parity.
+- Accessibility: genuine bounded, human-reviewed semantic authoring in a
+  separate tagged PDF copy, not another observations-only language setting.
+  Explicit title/language, logical reading order, paragraphs/headings, human
+  Figure alternatives or deliberate decorative Artifacts; account for every
+  meaningful source candidate. Preserve visual drawings/searchable text,
+  canonical reflow paragraph text, original bytes/history/paths and existing
+  protection. Use general-edit authorization, never copy/fill-only rights.
+  Refuse signed/certified, archival, conformance-declared, already tagged or
+  ambiguous/unsupported sources rather than damaging claims or content.
+  Inspect supported existing tags against real page/Form MCIDs, /Pg and /Stm,
+  reverse ParentTree mappings, IDs, cycles/shared nodes and role maps. Semantic
+  HTML reading follows actual logical roles/order/Alt/Lang without duplicate
+  invisible canvas text. Persistent recipes and jobs participate in the one
+  draft/save/history/close/quit/sign/OCR/output/comparison authority. Outputs
+  are bound to ID/revision/epochs, cancellable, atomic separate/no-clobber,
+  and read-only to prevent stale content associations, including narrow
+  signing/protection/form-write bypasses. No automatic human semantics, cloud,
+  PDF/UA identification, WCAG/Acrobat certification or runtime validator.
 - Local conversion: ordered still PNG/JPEG and strict UTF-8 text files create
   complete, independent new PDFs, never replacing source tabs or clearing
   their drafts/history. Explicit Letter/A4, orientation, margin and text-size

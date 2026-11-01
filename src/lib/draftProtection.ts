@@ -7,6 +7,7 @@ export interface DocumentDraftProjection {
   pageAuthoring: boolean;
   imageEditing: boolean;
   paragraphEditing: boolean;
+  accessibility: boolean;
   redaction: boolean;
 }
 
