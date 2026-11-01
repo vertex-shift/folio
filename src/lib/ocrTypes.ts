@@ -1,9 +1,11 @@
 import type { DocumentInfo, PdfRect } from "./types.ts";
+import type { OcrLanguage } from "./ocrLanguages.ts";
 
 export interface OcrOptions {
   pages: number[];
   dpi: 150 | 300;
-  language: "eng";
+  languages: OcrLanguage[];
+  layout: "horizontal_print";
   existingText: "skip" | "force";
 }
 
@@ -22,7 +24,11 @@ export interface OcrPlan {
   jobId: number;
   documentId: number;
   revision: number;
+  sourceEpoch: number;
+  epoch: number;
   dpi: 150 | 300;
+  languages: OcrLanguage[];
+  layout: "horizontal_print";
   pages: OcrPagePlan[];
 }
 
@@ -31,6 +37,8 @@ export interface OcrWord {
   bounds: PdfRect;
   baseline: [number, number, number, number];
   line: number;
+  direction: "ltr" | "rtl";
+  separator: string;
 }
 
 export interface OcrPageResult {
@@ -44,6 +52,7 @@ export interface OcrOutcome {
   processedPages: number;
   skippedPages: number[];
   noTextPages: number[];
+  languages: OcrLanguage[];
 }
 
 export interface OcrProgress {

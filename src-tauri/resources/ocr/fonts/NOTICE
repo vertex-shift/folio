@@ -1,0 +1,29 @@
+Folio OCR-only static TrueType fonts
+
+The FolioOcrArabic, FolioOcrDevanagari, FolioOcrCjkSC, FolioOcrCjkJP and
+FolioOcrCjkKR families are derived static regular instances of the Noto Sans
+fonts from google/fonts revision 9862abc066c9b83bf84c3e8ed1fc2d8d48f9bbf0.
+They are licensed under SIL OFL 1.1, not Apache-2.0. The full original
+copyright notices and licenses are in ../NotoSans*.ttf.OFL.txt and are retained
+in the generated third-party notices. The CJK upstream license reserves the
+name "Source"; the derived fonts use new FolioOcr names instead.
+
+Source URLs, upstream Git blob identities, upstream SHA-256 checksums and
+derived file SHA-256 checksums are recorded in ../catalog.json. The existing
+NotoSans-Regular.ttf is reused unchanged for Latin, Greek and Cyrillic.
+
+Reproduction: scripts/instantiate-ocr-fonts.py --source <pinned-upstream-dir>
+using fonttools 4.62.1. Every source is SHA-256 checked before instancing.
+All weight axes are pinned at 400 and other axes at their defaults. Family,
+style, unique and PostScript names are renamed; upstream timestamps, glyphs,
+copyright and license tables are retained. No CFF program is declared as
+FontFile2 and no variable font is embedded.
+
+These fonts only supply real CID glyph references and metrics for invisible
+logical OCR text. A word-sized CID maps to its full, exact UTF-16 Unicode
+sequence, including combining marks and joiners. Exact recognized separators
+have separate zero-advance Unicode CIDs mapped to the real space glyph;
+they do not distort word selection boxes. Each span also carries the same
+logical ActualText. Tr=3 ensures none of
+these unshaped glyph references can replace or alter original scan pixels.
+This is not general visible Arabic/Indic shaping or paragraph editing.

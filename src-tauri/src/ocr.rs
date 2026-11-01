@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     time::{Duration, Instant},
 };
 
@@ -9,7 +9,8 @@ use lopdf::{
     dictionary,
 };
 use serde::{Deserialize, Serialize};
-use unicode_normalization::UnicodeNormalization;
+mod catalog;
+mod font;
 
 use crate::document::{DocumentInfo, Result, inherited, invalid};
 use crate::page_geometry::PageGeometry;
@@ -33,7 +34,8 @@ pub enum ExistingTextPolicy {
 pub struct Options {
     pub pages: Vec<usize>,
     pub dpi: u16,
-    pub language: String,
+    pub languages: Vec<String>,
+    pub layout: String,
     pub existing_text: ExistingTextPolicy,
 }
 
@@ -56,7 +58,11 @@ pub struct Plan {
     pub job_id: u64,
     pub document_id: u64,
     pub revision: u64,
+    pub source_epoch: u64,
+    pub epoch: u64,
     pub dpi: u16,
+    pub languages: Vec<String>,
+    pub layout: String,
     pub pages: Vec<Page>,
 }
 
@@ -67,6 +73,24 @@ pub struct Word {
     pub bounds: [f64; 4],
     pub baseline: [f64; 4],
     pub line: u32,
+    pub direction: Direction,
+    pub separator: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum Direction {
+    Ltr,
+    Rtl,
+}
+
+impl Direction {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Ltr => "ltr",
+            Self::Rtl => "rtl",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,17 +108,28 @@ pub struct Outcome {
     pub processed_pages: usize,
     pub skipped_pages: Vec<usize>,
     pub no_text_pages: Vec<usize>,
+    pub languages: Vec<String>,
 }
 
 pub(crate) fn plan(
     source: &Document,
     document_id: u64,
     revision: u64,
+    source_epoch: u64,
     job_id: u64,
     options: Options,
 ) -> Result<Plan> {
-    if options.language != "eng" {
-        return Err(invalid("Offline OCR currently supports English only."));
+    catalog::selection(&options.languages)?;
+    if options.layout != "horizontal_print" {
+        return Err(invalid(
+            "Offline OCR supports horizontal printed scans only, not vertical CJK or handwriting.",
+        ));
+    }
+    let root = source.catalog()?;
+    if root.has(b"StructTreeRoot") || root.has(b"MarkInfo") {
+        return Err(invalid(
+            "Existing tagged or ambiguously structured PDFs are not supported by OCR. Adding unassociated text could stale their logical structure. Recognize the untagged original before authoring a new tagged copy.",
+        ));
     }
     if ![150, 300].contains(&options.dpi) {
         return Err(invalid("Choose 150 or 300 DPI for offline OCR."));
@@ -162,7 +197,11 @@ pub(crate) fn plan(
         job_id,
         document_id,
         revision,
+        source_epoch,
+        epoch: 0,
         dpi: options.dpi,
+        languages: options.languages,
+        layout: options.layout,
         pages,
     })
 }
@@ -297,7 +336,7 @@ impl Job {
         self.started.elapsed() >= JOB_LIFETIME
     }
 
-    pub fn stage(&mut self, mut result: PageResult) -> Result<()> {
+    pub fn stage(&mut self, result: PageResult) -> Result<()> {
         let expected = self
             .plan
             .pages
@@ -317,19 +356,19 @@ impl Job {
                 "OCR is limited to 10,000 words per page and 100,000 words per job.",
             ));
         }
-        let face = font_face()?;
+        let languages = catalog::selection(&self.plan.languages)?;
         let mut bytes = 0;
         let mut previous_line = 0;
-        for word in &mut result.words {
-            word.text = word.text.nfc().collect();
-            validate_word(word, expected, &face)?;
+        for word in &result.words {
+            validate_word(word, expected)?;
+            font::word_font(word, &languages)?;
             if word.line < previous_line {
                 return Err(invalid(
                     "The OCR reading order is invalid. No text was added.",
                 ));
             }
             previous_line = word.line;
-            bytes += word.text.len();
+            bytes += word.text.len() + word.separator.len();
         }
         if self.text_bytes + bytes > MAX_TEXT_BYTES {
             return Err(invalid("The OCR result exceeds the 8 MiB text limit."));
@@ -348,12 +387,7 @@ impl Job {
     }
 }
 
-fn font_face() -> Result<ttf_parser::Face<'static>> {
-    ttf_parser::Face::parse(crate::writing::FONT, 0)
-        .map_err(|error| invalid(format!("The bundled OCR font is invalid: {error}")))
-}
-
-fn validate_word(word: &Word, page: &Page, face: &ttf_parser::Face<'_>) -> Result<()> {
+fn validate_word(word: &Word, page: &Page) -> Result<()> {
     let [left, top, right, bottom] = word.bounds;
     let [x0, y0, x1, y1] = word.baseline;
     let height = bottom - top;
@@ -380,30 +414,17 @@ fn validate_word(word: &Word, page: &Page, face: &ttf_parser::Face<'_>) -> Resul
             page.page + 1
         )));
     }
-    if word.text.is_empty() || word.text.chars().count() > 128 || word.line > 100_000 {
+    if word.text.is_empty()
+        || word.text.chars().count() > 256
+        || word.line > 100_000
+        || word.separator.len() > 256
+        || !word
+            .separator
+            .bytes()
+            .all(|value| matches!(value, b' ' | b'\n' | b'\r' | b'\t'))
+    {
         return Err(invalid(
             "The OCR engine returned an invalid word or reading order.",
-        ));
-    }
-    for character in word.text.chars() {
-        let code = character as u32;
-        if character.is_whitespace()
-            || character.is_control()
-            || !matches!(code, 0x21..=0x24f | 0x370..=0x52f | 0x2000..=0x206f | 0x20a0..=0x20cf)
-            || face.glyph_index(character).is_none()
-        {
-            return Err(invalid(format!(
-                "The OCR result contains unsupported font/language character U+{code:04X}. No text was added; English with precomposed Latin text is recommended."
-            )));
-        }
-    }
-    if !word.text.chars().any(|character| {
-        face.glyph_index(character)
-            .and_then(|glyph| face.glyph_hor_advance(glyph))
-            .is_some_and(|advance| advance > 0)
-    }) {
-        return Err(invalid(
-            "The OCR result contains a word without usable font metrics.",
         ));
     }
     Ok(())
@@ -429,16 +450,30 @@ fn pdf_vector(page: &Page, dpi: u16, x: f64, y: f64) -> [f64; 2] {
 }
 
 pub(crate) fn apply(source: &mut Document, plan: &Plan, results: &[PageResult]) -> Result<()> {
-    let text = results
-        .iter()
-        .flat_map(|page| &page.words)
-        .map(|word| word.text.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-    let (font, encoded) = crate::writing::embed_text_font(source, &text)?;
-    let face = font_face()?;
-    let units = f64::from(face.units_per_em());
-    let ascent = f64::from(face.ascender()) / units;
+    let languages = catalog::selection(&plan.languages)?;
+    let mut groups = BTreeMap::<_, Vec<&Word>>::new();
+    let mut selections = BTreeMap::new();
+    for result in results {
+        for (index, word) in result.words.iter().enumerate() {
+            let id = font::word_font(word, &languages)?;
+            groups.entry((id, word.direction)).or_default().push(word);
+            selections.insert((result.page, index), id);
+        }
+    }
+    let mut embedded = BTreeMap::new();
+    if groups.keys().map(|(id, _)| id.bytes().len()).sum::<usize>()
+        > catalog::catalog()?.max_font_bytes
+    {
+        return Err(invalid(
+            "The actual OCR font resources exceed the 32 MiB job limit. No text was added.",
+        ));
+    }
+    for ((id, direction), words) in &groups {
+        embedded.insert(
+            (*id, *direction),
+            font::embed(source, *id, *direction, words)?,
+        );
+    }
     let ids: Vec<_> = source.get_pages().into_values().collect();
     for result in results.iter().filter(|result| !result.words.is_empty()) {
         let page = plan
@@ -453,34 +488,40 @@ pub(crate) fn apply(source: &mut Document, plan: &Plan, results: &[PageResult]) 
             Err(lopdf::Error::DictKey(_)) => Dictionary::new(),
             Err(error) => return Err(error.into()),
         };
-        let mut name = format!("FolioOCR{}", plan.job_id);
-        while fonts.has(name.as_bytes()) {
-            name.push('_');
+        let mut names = BTreeMap::new();
+        for (key, font) in &embedded {
+            if !result
+                .words
+                .iter()
+                .enumerate()
+                .any(|(index, word)| (selections[&(result.page, index)], word.direction) == *key)
+            {
+                continue;
+            }
+            let mut name = format!("FolioOCR{}_{}_{}", plan.job_id, key.0.key(), key.1.key());
+            while fonts.has(name.as_bytes()) {
+                name.push('_');
+            }
+            fonts.set(name.clone(), font.object);
+            names.insert(*key, name);
         }
-        fonts.set(name.clone(), font);
         page_resources.set("Font", fonts);
-        let mut operations = vec![
-            Operation::new("q", vec![]),
-            Operation::new("BT", vec![]),
-            Operation::new("Tf", vec![Object::Name(name.into_bytes()), 1.into()]),
-            Operation::new("Tr", vec![3.into()]),
-            Operation::new("Tc", vec![0.into()]),
-            Operation::new("Tw", vec![0.into()]),
-            Operation::new("Tz", vec![100.into()]),
-            Operation::new("Ts", vec![0.into()]),
-        ];
+        let mut operations = vec![Operation::new("q", vec![]), Operation::new("BT", vec![])];
         for (index, word) in result.words.iter().enumerate() {
+            let id = selections[&(result.page, index)];
+            let key = (id, word.direction);
+            let face = ttf_parser::Face::parse(id.bytes(), 0)
+                .map_err(|error| invalid(format!("The OCR font is invalid: {error}")))?;
+            let ascent = f64::from(face.ascender()) / f64::from(face.units_per_em());
             let [x0, y0, x1, y1] = word.baseline;
             let slope = (y1 - y0) / (x1 - x0);
             let normalizer = (1.0 + slope * slope).sqrt();
-            let advance: f64 = word
-                .text
-                .chars()
-                .map(|character| {
-                    let glyph = face.glyph_index(character).expect("staged glyph validated");
-                    f64::from(face.glyph_hor_advance(glyph).unwrap_or(face.units_per_em())) / units
-                })
-                .sum();
+            let advance = font::advance(&face, &word.text);
+            if !advance.is_finite() || advance <= 0.0 || ascent <= 0.0 {
+                return Err(invalid(
+                    "OCR has unusable word font metrics. No text was added.",
+                ));
+            }
             let width = (x1 - x0) * normalizer;
             let height = ((y0 + y1) / 2.0 - word.bounds[1]) / normalizer / ascent;
             let horizontal = pdf_vector(
@@ -513,6 +554,21 @@ pub(crate) fn apply(source: &mut Document, plan: &Plan, results: &[PageResult]) 
                     page.page + 1
                 )));
             }
+            let text = word.text.clone();
+            let actual_text = std::iter::once(0xfeff_u16)
+                .chain(text.encode_utf16())
+                .flat_map(u16::to_be_bytes)
+                .collect::<Vec<_>>();
+            operations.extend([
+                Operation::new("BDC", vec![Object::Name(b"Span".to_vec()),
+                    Object::Dictionary(dictionary!{"ActualText"=>Object::String(actual_text,StringFormat::Hexadecimal)})]),
+                Operation::new("Tf",vec![Object::Name(names[&key].as_bytes().to_vec()),1.into()]),
+                Operation::new("Tr",vec![3.into()]),
+                Operation::new("Tc",vec![0.into()]),
+                Operation::new("Tw",vec![0.into()]),
+                Operation::new("Tz",vec![100.into()]),
+                Operation::new("Ts",vec![0.into()]),
+            ]);
             operations.push(Operation::new(
                 "Tm",
                 matrix
@@ -520,22 +576,24 @@ pub(crate) fn apply(source: &mut Document, plan: &Plan, results: &[PageResult]) 
                     .map(|value| Object::Real(*value as f32))
                     .collect(),
             ));
-            let mut value: Vec<u8> = word
-                .text
-                .chars()
-                .flat_map(|character| encoded[&character].to_be_bytes())
-                .collect();
-            if result
-                .words
-                .get(index + 1)
-                .is_some_and(|next| next.line == word.line)
-            {
-                value.extend(encoded[&' '].to_be_bytes());
-            }
+            let value = embedded[&key].encoded[&text].to_be_bytes().to_vec();
             operations.push(Operation::new(
                 "Tj",
                 vec![Object::String(value, StringFormat::Hexadecimal)],
             ));
+            operations.push(Operation::new("EMC", vec![]));
+            if !word.separator.is_empty() {
+                let unicode = std::iter::once(0xfeff_u16)
+                    .chain(word.separator.encode_utf16())
+                    .flat_map(u16::to_be_bytes)
+                    .collect::<Vec<_>>();
+                operations.extend([
+                    Operation::new("BDC",vec![Object::Name(b"Span".to_vec()),
+                        Object::Dictionary(dictionary!{"ActualText"=>Object::String(unicode,StringFormat::Hexadecimal)})]),
+                    Operation::new("Tj",vec![Object::String(embedded[&key].encoded[&word.separator].to_be_bytes().to_vec(),StringFormat::Hexadecimal)]),
+                    Operation::new("EMC",vec![]),
+                ]);
+            }
         }
         operations.extend([Operation::new("ET", vec![]), Operation::new("Q", vec![])]);
         let mut stream = Stream::new(

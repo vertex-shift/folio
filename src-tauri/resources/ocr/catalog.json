@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "engine": "6.0.1",
+  "core": "6.1.2",
+  "modelRevision": "87416418657359cb625c412a48b6e1d6d41c29bd",
+  "fontRevision": "9862abc066c9b83bf84c3e8ed1fc2d8d48f9bbf0",
+  "layout": "horizontal_print",
+  "maxLanguages": 3,
+  "maxModelBytes": 20971520,
+  "maxFontBytes": 33554432,
+  "languages": [
+    { "id": "eng", "name": "English", "scripts": ["Latin"], "direction": "ltr", "font": "latin", "bytes": 4113088, "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2", "blob": "bbef4675053b5b468cdb477053e28b1c698ba08e" },
+    { "id": "fra", "name": "French", "scripts": ["Latin"], "direction": "ltr", "font": "latin", "bytes": 1130365, "sha256": "ced037562e8c80c13122dece28dd477d399af80911a28791a66a63ac1e3445ca", "blob": "d9e2b2160be0d1ca3b8f1bf2730fae476ef3b4a6" },
+    { "id": "spa", "name": "Spanish", "scripts": ["Latin"], "direction": "ltr", "font": "latin", "bytes": 2294433, "sha256": "6f2e04d02774a18f01bed44b1111f2cd7f3ba7ac9dc4373cd3f898a40ea6b464", "blob": "72e901f13ca52cfe34cf239a368b9ed3c0ddaf26" },
+    { "id": "deu", "name": "German", "scripts": ["Latin"], "direction": "ltr", "font": "latin", "bytes": 1525436, "sha256": "19d219bbb6672c869d20a9636c6816a81eb9a71796cb93ebe0cb1530e2cdb22d", "blob": "97ed7b2b60f2771c07040660ef0f6daf596dc7bf" },
+    { "id": "ita", "name": "Italian", "scripts": ["Latin"], "direction": "ltr", "font": "latin", "bytes": 2701314, "sha256": "b8f89e1e785118dac4d51ae042c029a64edb5c3ee42ef73027a6d412748d8827", "blob": "edbffbe0e51892b240630b5eeabededa7e7c9c4f" },
+    { "id": "por", "name": "Portuguese", "scripts": ["Latin"], "direction": "ltr", "font": "latin", "bytes": 1982756, "sha256": "c4932b937207a9514b7514d518b931a99938c02a28a5a5a553f8599ed58b7deb", "blob": "e9f373e95c66b4bf557c263721ef31f78e5bc301" },
+    { "id": "nld", "name": "Dutch", "scripts": ["Latin"], "direction": "ltr", "font": "latin", "bytes": 6050296, "sha256": "ced0e5e046a84c908a6aa7accbef9a232c4a5d9a8276691b81c6ee64d02963f6", "blob": "53ce95a9c2488a9a0228939944a184157373d0ae" },
+    { "id": "ell", "name": "Greek", "scripts": ["Greek", "Latin"], "direction": "ltr", "font": "latin", "bytes": 1419514, "sha256": "4fba8a0b461038d51f1c20d043d4f2ac38c4e778f1b90830847f7bd8fa3ba726", "blob": "ed98ae1a88d84414da316e6eeab3232f2c68639b" },
+    { "id": "rus", "name": "Russian", "scripts": ["Cyrillic", "Latin"], "direction": "ltr", "font": "latin", "bytes": 3861738, "sha256": "e16e5e036cce1d9ec2b00063cf8b54472625b9e14d893a169e2b0dedeb4df225", "blob": "b146cb2263acbc6383f8e92ea0ce759537687bb8" },
+    { "id": "ara", "name": "Arabic", "scripts": ["Arabic", "Latin"], "direction": "rtl", "font": "arabic", "bytes": 1432056, "sha256": "e3206d3dc87fd50c24a0fb9f01838615911d25168f4e64415244b67d2bb3e729", "blob": "c8d129c67821c1592cac46836686b057ecc203dc" },
+    { "id": "hin", "name": "Hindi", "scripts": ["Devanagari", "Latin"], "direction": "ltr", "font": "devanagari", "bytes": 1122751, "sha256": "4c73ffc59d497c186b19d1e90f5d721d678ea6b2e277b719bee4e2af12271825", "blob": "a8f0aaec09378115b12a2c6287c57695d082aea2" },
+    { "id": "chi_sim", "name": "Chinese (Simplified)", "scripts": ["Han", "Latin"], "direction": "ltr", "font": "cjk_sc", "bytes": 2469156, "sha256": "a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730", "blob": "388bac276d033d06e5ed5ba7a7ad14ae58f97dab" },
+    { "id": "chi_tra", "name": "Chinese (Traditional)", "scripts": ["Han", "Latin"], "direction": "ltr", "font": "cjk_sc", "bytes": 2366642, "sha256": "529c5b5797d64b126065cd55f2bb4c7fd7b15790798091b1ff259941a829330b", "blob": "1955cd8b8d076b898616e9c2c1ace65b43105356" },
+    { "id": "jpn", "name": "Japanese", "scripts": ["Han", "Hiragana", "Katakana", "Latin"], "direction": "ltr", "font": "cjk_jp", "bytes": 2471260, "sha256": "1f5de9236d2e85f5fdf4b3c500f2d4926f8d9449f28f5394472d9e8d83b91b4d", "blob": "c4178f89991bde90b7fdc647e3e1901868423bd0" },
+    { "id": "kor", "name": "Korean", "scripts": ["Hangul", "Han", "Latin"], "direction": "ltr", "font": "cjk_kr", "bytes": 1677415, "sha256": "6b85e11d9bbf07863b97b3523b1b112844c43e713df8b66418a081fd1060b3b2", "blob": "60986d44497689f3abace0b148199476d93292e1" }
+  ],
+  "fonts": [
+    { "id": "latin", "file": "../fonts/NotoSans-Regular.ttf", "name": "NotoSans", "bytes": 569208, "sha256": "b85c38ecea8a7cfb39c24e395a4007474fa5a4fc864f6ee33309eb4948d232d5", "license": "../fonts/OFL.txt" },
+    { "id": "arabic", "file": "fonts/FolioOcrArabic-Regular.ttf", "name": "FolioOcrArabic-Regular", "bytes": 194308, "sha256": "8bc218352907912d0f37769f326f7c9a8546a13e61123d7ef6c18ab7d2f25d12", "license": "NotoSansArabic.ttf.OFL.txt", "source": "ofl/notosansarabic/NotoSansArabic%5Bwdth%2Cwght%5D.ttf", "sourceSha256": "63111b5b2e074dd48cc67692e0a2726d86ee94c1c37fe8598257b7b4e87e869e", "sourceBlob": "f1d01edce4ebaedcbe9a06fc75fec07b304ec3df" },
+    { "id": "devanagari", "file": "fonts/FolioOcrDevanagari-Regular.ttf", "name": "FolioOcrDevanagari-Regular", "bytes": 218212, "sha256": "8ef722079c8354fd16681381204089a2bdd30373ae0f6a25fbff3525fa447358", "license": "NotoSansDevanagari.ttf.OFL.txt", "source": "ofl/notosansdevanagari/NotoSansDevanagari%5Bwdth%2Cwght%5D.ttf", "sourceSha256": "14ec4af41f27482216d1c2229f417ff9b1425e1babb014e57d1d40d03229853e", "sourceBlob": "163f04bddc5a96fc523e4080466cac5c588f6594" },
+    { "id": "cjk_sc", "file": "fonts/FolioOcrCjkSC-Regular.ttf", "name": "FolioOcrCjkSC-Regular", "bytes": 10595944, "sha256": "773b9fe2c9a12d9228b41f4eb591f8c2088632a49ea822d9d136b6d16be07e43", "license": "NotoSansSC.ttf.OFL.txt", "source": "ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf", "sourceSha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da", "sourceBlob": "fb0637bafbcd804fe32152370a1225990745b4bc" },
+    { "id": "cjk_jp", "file": "fonts/FolioOcrCjkJP-Regular.ttf", "name": "FolioOcrCjkJP-Regular", "bytes": 5766896, "sha256": "6a988768b98cb76cee8eed258c7663afd4599aad476f9d5a8411c4250880564f", "license": "NotoSansJP.ttf.OFL.txt", "source": "ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf", "sourceSha256": "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f", "sourceBlob": "cdd8f083c1f5928ff3361f8cda4d3fc9462cbe89" },
+    { "id": "cjk_kr", "file": "fonts/FolioOcrCjkKR-Regular.ttf", "name": "FolioOcrCjkKR-Regular", "bytes": 6224880, "sha256": "6979f395a36fb7dde54c2543c0c9b3f26c49c46611b8192135297fcb0c15a9d6", "license": "NotoSansKR.ttf.OFL.txt", "source": "ofl/notosanskr/NotoSansKR%5Bwght%5D.ttf", "sourceSha256": "194018e6b2b293a7964f037b25c0249ce1418bc9ab3c971060a03aa57861e252", "sourceBlob": "b386890ba945e1f39448a6b59f20c5d194f58808" }
+  ],
+  "fontTransform": "fonttools 4.62.1, static wght=400 and other axes at defaults; renamed FolioOcr families; original timestamps and copyright/license tables retained",
+  "runtime": {
+    "worker.min.js": "38645599043239c0eb6db08a6504a92dcdc292200535f3e9339cd77c4443b842",
+    "tesseract-core.wasm": "740f7e466a2f026e1f1e54a2e0d9957e386d8166110d1290224abd3d08986106",
+    "tesseract-core.wasm.js": "e66872f6a76f5ad414d73d21512245df0de3060ad4871a97c47efceaab27b955",
+    "tesseract-core-lstm.wasm": "220e2e87551edccb85519796a170469f8ab2a8055216789e3b8b1ada18b7bc2b",
+    "tesseract-core-lstm.wasm.js": "775a35df6f2ae100e02609443e6bd5cafcd07983dd6175454ca4a432a7730687",
+    "tesseract-core-simd.wasm": "ca11ee92a02023e4f5083eefd0966fb83b297416da54e997b9f6ce445f719c9b",
+    "tesseract-core-simd.wasm.js": "3b0678c47a8dea6abb931b214171c08b742a5b9a9fcbbb1a028a08d5de6e9d4c",
+    "tesseract-core-simd-lstm.wasm": "187d76742dfc0d8929f0b49a619f145bb6370730776c7bd0d3e20c6b2098808d",
+    "tesseract-core-simd-lstm.wasm.js": "9d7c43fb206dc9f48475228b46bf35f888fa9e6259da2e67d5a75c77049f2dc7"
+  }
+}

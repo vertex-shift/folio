@@ -141,6 +141,7 @@ impl Workspace {
                 || self.drafts.contains(&id)
                 || self.authoring_images.contains(id)
                 || self.image_replacements.contains(id)
+                || self.ocrs.values().any(|job| job.plan.document_id == id && !job.expired())
                 || self.outputs.has_document(id)
                 || self.archives.has_document(id)
                 || self.accessibility.has_document(id))
@@ -191,6 +192,7 @@ impl Workspace {
             || !self.drafts.is_empty()
             || !self.authoring_images.is_empty()
             || !self.image_replacements.is_empty()
+            || self.ocrs.values().any(|job| !job.expired())
             || self.outputs.is_pending()
             || self.archives.is_pending()
             || self.accessibility.is_pending()
@@ -670,6 +672,7 @@ impl Workspace {
         self.archives.invalidate(id);
         self.inspections.invalidate(id);
         self.accessibility.invalidate(id);
+        self.ocrs.retain(|_, job| job.plan.document_id != id);
     }
 
     pub(crate) fn technical_epoch(&self, id: u64) -> u64 {
@@ -771,15 +774,16 @@ impl Workspace {
     ) -> Result<crate::ocr::Plan> {
         self.ocrs.retain(|_, job| !job.expired());
         self.ensure_ocr_ready(id, revision)?;
-        if self.ocrs.len() >= 4 || self.ocrs.values().any(|job| job.plan.document_id == id) {
-            return Err(Error::Invalid("An OCR job is already running for this PDF, or the four-job workspace limit was reached. Cancel it before starting another.".into()));
+        if !self.ocrs.is_empty() {
+            return Err(Error::Invalid("An OCR job is already running in this workspace. One sequential local recognizer is allowed; finish or cancel it before starting another.".into()));
         }
         let job_id = self.next_ocr_id.checked_add(1).ok_or_else(|| {
             Error::Invalid("OCR identifiers are exhausted. Restart Folio.".into())
         })?;
-        let plan = self
+        let mut plan = self
             .check_revision(id, revision)?
             .ocr_plan(job_id, options)?;
+        plan.epoch = self.technical_epoch(id);
         self.next_ocr_id = job_id;
         self.ocrs.insert(job_id, crate::ocr::Job::new(plan.clone()));
         Ok(plan)
@@ -787,6 +791,9 @@ impl Workspace {
 
     fn ensure_ocr_ready(&self, id: u64, revision: u64) -> Result<()> {
         self.ensure_export_ready(id, revision)?.ensure_writable()?;
+        if self.accessibility.has_document(id) {
+            return Err(Error::Invalid("Save or cancel the prepared tagged copy before using OCR on its source.".into()));
+        }
         if self
             .redactions
             .values()
@@ -802,6 +809,10 @@ impl Workspace {
         let job = self.ocrs.get(&job_id)
             .ok_or_else(|| Error::Invalid("This OCR job was canceled, expired, or invalidated by a document change. No text was added.".into()))?;
         self.ensure_ocr_ready(job.plan.document_id, job.plan.revision)?;
+        if job.plan.epoch != self.technical_epoch(job.plan.document_id)
+            || job.plan.source_epoch != self.document(job.plan.document_id)?.mutation_epoch() {
+            return Err(Error::Invalid("The OCR source epoch changed, including drafts, staging or undo/redo. No text was added.".into()));
+        }
         self.ocrs
             .get_mut(&job_id)
             .expect("OCR job checked above")
@@ -818,6 +829,10 @@ impl Workspace {
             ));
         }
         self.ensure_ocr_ready(job.plan.document_id, job.plan.revision)?;
+        if job.plan.epoch != self.technical_epoch(job.plan.document_id)
+            || job.plan.source_epoch != self.document(job.plan.document_id)?.mutation_epoch() {
+            return Err(Error::Invalid("The OCR source epoch changed. No text was added.".into()));
+        }
         self.current_mut(job.plan.document_id, job.plan.revision)?
             .commit_ocr(&job)
     }

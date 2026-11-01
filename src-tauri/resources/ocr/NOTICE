@@ -1,20 +1,26 @@
-Folio offline English OCR
+Folio offline multilingual OCR
 
 Recognition engine: Tesseract.js 6.0.1 (Apache-2.0)
 https://github.com/naptha/tesseract.js/tree/v6.0.1
 WASM engine: Tesseract.js-core 6.1.2 (Apache-2.0)
 https://github.com/naptha/tesseract.js-core/tree/3d12e9b2d4e0e9e64bd0793e2c55b2d8f6404884
 
-English model: unmodified tessdata_fast eng.traineddata (Apache-2.0)
+Models: unmodified tessdata_fast traineddata (Apache-2.0)
 Source revision: 87416418657359cb625c412a48b6e1d6d41c29bd
 https://github.com/tesseract-ocr/tessdata_fast/tree/87416418657359cb625c412a48b6e1d6d41c29bd
-Asset SHA-256:
-7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2
+English, French, Spanish, German, Italian, Portuguese, Dutch, Greek,
+Russian, Arabic, Hindi, Simplified Chinese, Traditional Chinese,
+Japanese and Korean. Exact files, byte sizes, Git blobs and SHA-256
+checksums are in catalog.json at this fixed source revision.
 The accompanying LICENSE is the original tessdata_fast Apache-2.0 license.
 
 The worker and all matching core variants are copied from integrity-pinned npm
-packages during preparation. The committed English model is checksum-verified
-before copying. No OCR asset is downloaded at application runtime.
+packages during preparation. All committed models and fonts are
+checksum-verified before copying. Selected models are verified again at
+initialization and passed as bytes to the single owned worker. No OCR asset
+is downloaded at application runtime. Cache/CDN fallback is disabled.
+Only horizontal printed layout is supported; vertical sublanguages, osd and
+arbitrary language filenames are not loaded.
 
 Core dependency license texts are in notices/ and are incorporated into
 Folio's generated THIRD_PARTY_NOTICES.txt. Their source revisions are the git
@@ -40,5 +46,8 @@ https://github.com/JuliaMath/openlibm/tree/ae2d91698508701c83cab83714d42a1146dcc
 zlib (zlib license; notice in the original README)
 https://github.com/madler/zlib/tree/21767c654d31d2dccdde4330529775c6c5fd5389
 
-PDF text uses the existing embedded Noto Sans font under SIL OFL 1.1; see
-../fonts/OFL.txt. OCR adds no accessibility tags or PDF/UA conformance.
+PDF text uses the existing Noto Sans and dedicated static OCR Noto-derived
+fonts under SIL OFL 1.1; see fonts/NOTICE and the full accompanying licenses.
+Exact source/derived SHA-256 pins and provenance are in catalog.json.
+OCR adds no accessibility tags or PDF/UA conformance. Existing tagged
+sources are refused rather than adding unassociated logical text.

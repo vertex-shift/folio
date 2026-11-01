@@ -1,6 +1,7 @@
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import type { OcrPagePlan, OcrPageResult, OcrPlan, OcrProgress, OcrWord } from "./ocrTypes.ts";
 import { LocalOcrWorker } from "./ocrWorker.ts";
+import { selectedOcrLanguages } from "./ocrLanguages.ts";
 
 export const MAX_OCR_PAGES = 50;
 
@@ -47,9 +48,13 @@ export function recognitionWords(output: unknown, page: OcrPagePlan): OcrWord[] 
   let lineIndex = 0;
   for (const block of array(data.blocks)) for (const paragraph of array(record(block).paragraphs)) {
     const paragraphData = record(paragraph);
-    if (paragraphData.is_ltr === false) throw new Error("Right-to-left OCR is not supported by the bundled English model. No text was added.");
+    if (![true, false, 0, 1].includes(paragraphData.is_ltr as boolean | number)) {
+      throw new Error("The OCR engine returned no supported horizontal reading direction. No text was added.");
+    }
+    const direction = paragraphData.is_ltr === false || paragraphData.is_ltr === 0 ? "rtl" : "ltr";
     for (const line of array(paragraphData.lines)) {
       const row = record(line);
+      if (typeof row.text !== "string") throw new Error("The OCR engine returned a line without its logical text. No text was added.");
       const baseline = record(row.baseline);
       const x0 = coordinate(baseline.x0), y0 = coordinate(baseline.y0);
       const x1 = coordinate(baseline.x1), y1 = coordinate(baseline.y1);
@@ -57,23 +62,42 @@ export function recognitionWords(output: unknown, page: OcrPagePlan): OcrWord[] 
         throw new Error(`Page ${page.page + 1} has unsupported OCR text orientation. Deskew or rotate the scan first; no text was added.`);
       }
       const y = (x: number) => y0 + (x - x0) * (y1 - y0) / (x1 - x0);
-      for (const item of array(row.words)) {
+      const lineWords = array(row.words);
+      let textOffset = 0;
+      for (const [index, item] of lineWords.entries()) {
         const word = record(item);
-        if (typeof word.text !== "string" || !word.text.trim()) throw new Error("The OCR engine returned an empty word. No text was added.");
+        if (typeof word.text !== "string" || !word.text || /\s/u.test(word.text)) throw new Error("The OCR engine returned an empty or unsupported word. No text was added.");
+        const start = row.text.indexOf(word.text, textOffset);
+        if (start < 0 || row.text.slice(textOffset, start).trim()) {
+          throw new Error("The OCR engine returned inconsistent logical line/word text. No characters were discarded and no text was added.");
+        }
+        const next = index + 1 < lineWords.length ? record(lineWords[index + 1]).text : undefined;
+        if (next !== undefined && typeof next !== "string") throw new Error("The OCR engine returned an incomplete line. No text was added.");
+        const end = start + word.text.length;
+        const nextStart = typeof next === "string" ? row.text.indexOf(next, end) : row.text.length;
+        if (nextStart < end || row.text.slice(end, nextStart).trim()) {
+          throw new Error("The OCR engine returned text outside its word geometry. No characters were discarded and no text was added.");
+        }
+        const separator = row.text.slice(end, nextStart);
+        if (!/^[ \t\r\n]{0,256}$/.test(separator)) throw new Error("The OCR engine returned unsupported line separators. No text was added.");
+        textOffset = nextStart;
         const box = record(word.bbox);
         const left = coordinate(box.x0), top = coordinate(box.y0);
         const right = coordinate(box.x1), bottom = coordinate(box.y1);
         if (left < 0 || top < 0 || right > page.pixelWidth || bottom > page.pixelHeight || right <= left || bottom <= top) {
           throw new Error(`Page ${page.page + 1} has OCR words outside its rendered bounds. No text was added.`);
         }
-        words.push({ text: word.text.normalize("NFC"), bounds: [left, top, right, bottom],
-          baseline: [left, y(left), right, y(right)], line: lineIndex });
+        words.push({ text: word.text, bounds: [left, top, right, bottom],
+          baseline: [left, y(left), right, y(right)], line: lineIndex, direction, separator });
         if (words.length > 10_000) throw new Error(`Page ${page.page + 1} exceeds the 10,000-word OCR limit. No text was added.`);
       }
       lineIndex++;
     }
   }
   if (!words.length && data.text.trim()) throw new Error("The OCR engine returned text without word geometry. No text was added.");
+  if (words.map((word) => word.text).join("") !== data.text.replace(/\s/gu, "")) {
+    throw new Error("The OCR engine returned page text that does not match its logical word geometry. No text was added.");
+  }
   return words;
 }
 
@@ -85,6 +109,8 @@ export async function recognizeOcrPages(
   signal: AbortSignal,
 ): Promise<void> {
   const pages = plan.pages.filter((page) => !page.skipped);
+  const languages = selectedOcrLanguages(plan.languages);
+  if (plan.layout !== "horizontal_print") throw new Error("Offline OCR supports horizontal printed text only.");
   if (plan.pages.length > MAX_OCR_PAGES || !plan.pages.length || plan.pages.some((page) => page.page >= pdf.numPages)) {
     throw new Error("The OCR plan does not match this PDF or exceeds the 50-page job limit.");
   }
@@ -102,7 +128,7 @@ export async function recognizeOcrPages(
       stage: "recognizing", page: currentPage, completed, total: pages.length, fraction,
     }));
     progress({ stage: "loading", page: currentPage, completed, total: pages.length, fraction: 0 });
-    await worker.initialize(plan.dpi);
+    await worker.initialize(plan.dpi, languages);
     for (const target of pages) {
       controller.signal.throwIfAborted();
       currentPage = target.page;

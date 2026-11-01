@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use folio_core::{
     document::{Edit, Session},
-    ocr::{ExistingTextPolicy, Options, PageResult, Word},
+    ocr::{Direction, ExistingTextPolicy, Options, PageResult, Word},
     workspace::{OpenOutcome, Workspace},
 };
 use lopdf::{
@@ -60,7 +60,8 @@ fn options(pages: Vec<usize>) -> Options {
     Options {
         pages,
         dpi: 150,
-        language: "eng".into(),
+        languages: vec!["eng".into()],
+        layout: "horizontal_print".into(),
         existing_text: ExistingTextPolicy::Skip,
     }
 }
@@ -74,14 +75,198 @@ fn words(page: usize) -> PageResult {
                 bounds: [50.0, 70.0, 150.0, 100.0],
                 baseline: [50.0, 101.0, 150.0, 101.0],
                 line: 0,
+                direction: Direction::Ltr,
+                separator: " ".into(),
             },
             Word {
                 text: "OFFLINE".into(),
                 bounds: [170.0, 70.0, 310.0, 100.0],
                 baseline: [170.0, 101.0, 310.0, 101.0],
                 line: 0,
+                direction: Direction::Ltr,
+                separator: "".into(),
             },
         ],
+    }
+}
+
+#[test]
+fn dedicated_ocr_fonts_preserve_logical_unicode_combining_joiners_and_cjk_after_saved_reopen() {
+    let cases = [
+        ("fra", "café été", Direction::Ltr),
+        ("spa", "niño corazón", Direction::Ltr),
+        ("deu", "größere Bücher", Direction::Ltr),
+        ("ita", "città perché", Direction::Ltr),
+        ("por", "coração ação", Direction::Ltr),
+        ("nld", "nieuwe boeken", Direction::Ltr),
+        ("ell", "Νέα βιβλία", Direction::Ltr),
+        ("rus", "Новая книга", Direction::Ltr),
+        ("ara", "هذا كِتاب", Direction::Rtl),
+        ("hin", "क्‍षि किताब", Direction::Ltr),
+        ("chi_sim", "新的图书故事", Direction::Ltr),
+        ("chi_tra", "新的圖書故事", Direction::Ltr),
+        ("jpn", "新しい本があります。", Direction::Ltr),
+        ("kor", "새로운 책 이야기", Direction::Ltr),
+        ("eng", "e\u{301} exact", Direction::Ltr),
+    ];
+    for (language, phrase, direction) in cases {
+        let mut workspace = Workspace::default();
+        let source = synthetic(1, false);
+        let info = workspace
+            .open_bytes(source.clone(), format!("{language}.pdf"))
+            .unwrap();
+        let mut selected = options(vec![0]);
+        selected.languages = vec![language.into()];
+        let plan = workspace.begin_ocr(info.id, 0, selected).unwrap();
+        assert_eq!(plan.languages, [language]);
+        let segments = phrase.split(' ').collect::<Vec<_>>();
+        let result = PageResult {
+            page: 0,
+            words: segments
+                .iter()
+                .enumerate()
+                .map(|(index, text)| {
+                    let left = if direction == Direction::Rtl {
+                        600.0 - index as f64 * 200.0
+                    } else {
+                        50.0 + index as f64 * 200.0
+                    };
+                    Word {
+                        text: (*text).into(),
+                        bounds: [left, 70.0, left + 160.0, 100.0],
+                        baseline: [left, 101.0, left + 160.0, 101.0],
+                        line: 0,
+                        direction,
+                        separator: if index + 1 < segments.len() {
+                            " ".into()
+                        } else {
+                            "".into()
+                        },
+                    }
+                })
+                .collect(),
+        };
+        workspace.stage_ocr_page(plan.job_id, result).unwrap();
+        let result = workspace.commit_ocr(plan.job_id).unwrap();
+        assert_eq!(result.languages, [language]);
+        let bytes = workspace.document(info.id).unwrap().bytes();
+        let document = Document::load_mem(bytes).unwrap();
+        assert_eq!(
+            document.extract_text(&[1]).unwrap().trim(),
+            phrase,
+            "{language}"
+        );
+        let page = document.get_pages()[&1];
+        let resources = document
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"Resources")
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        let fonts = resources.get(b"Font").unwrap().as_dict().unwrap();
+        let font = fonts
+            .iter()
+            .find(|(name, _)| name.starts_with(b"FolioOCR1_"))
+            .unwrap()
+            .1;
+        let font = document
+            .get_dictionary(font.as_reference().unwrap())
+            .unwrap();
+        assert!(
+            font.get(b"BaseFont")
+                .unwrap()
+                .as_name()
+                .unwrap()
+                .starts_with(b"FolioOCRLogicalV1_")
+        );
+        let raw = Content::decode(&document.get_page_content(page)).unwrap();
+        assert!(
+            raw.operations
+                .iter()
+                .any(|operation| operation.operator == "Tr" && operation.operands == [3.into()])
+        );
+        let actual = raw
+            .operations
+            .iter()
+            .filter(|operation| operation.operator == "BDC")
+            .map(|operation| {
+                let value = operation.operands[1]
+                    .as_dict()
+                    .unwrap()
+                    .get(b"ActualText")
+                    .unwrap()
+                    .as_str()
+                    .unwrap();
+                assert_eq!(&value[..2], &[0xfe, 0xff]);
+                String::from_utf16(
+                    &value[2..]
+                        .chunks_exact(2)
+                        .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap()
+            })
+            .collect::<String>();
+        assert_eq!(actual, phrase);
+        let reopened =
+            Session::from_bytes(bytes.to_vec(), format!("{language}-saved.pdf"), None, 99).unwrap();
+        assert_eq!(
+            Document::load_mem(reopened.bytes())
+                .unwrap()
+                .extract_text(&[1])
+                .unwrap()
+                .trim(),
+            phrase
+        );
+        workspace.current_mut(info.id, 1).unwrap().undo().unwrap();
+        assert_eq!(workspace.document(info.id).unwrap().bytes(), source);
+    }
+}
+
+#[test]
+fn catalog_layout_glyph_and_structure_failures_are_atomic_and_cannot_resurrect_ocr_jobs() {
+    let mut workspace = Workspace::default();
+    let source = synthetic(1, false);
+    let info = workspace
+        .open_bytes(source.clone(), "scan.pdf".into())
+        .unwrap();
+    for ids in [
+        vec![],
+        vec!["eng", "eng"],
+        vec!["eng", "fra", "deu", "spa"],
+        vec!["jpn_vert"],
+        vec!["osd"],
+        vec!["../../eng"],
+    ] {
+        let mut selected = options(vec![0]);
+        selected.languages = ids.iter().map(|id| (*id).into()).collect();
+        assert!(workspace.begin_ocr(info.id, 0, selected).is_err());
+    }
+    let mut selected = options(vec![0]);
+    selected.layout = "vertical".into();
+    assert!(workspace.begin_ocr(info.id, 0, selected).is_err());
+    for invalid_text in ["😀", "किताब", "هذا", "\u{200d}", "\u{202e}Folio"] {
+        let plan = workspace.begin_ocr(info.id, 0, options(vec![0])).unwrap();
+        let mut result = words(0);
+        result.words[0].text = invalid_text.into();
+        assert!(workspace.stage_ocr_page(plan.job_id, result).is_err());
+        assert_eq!(workspace.document(info.id).unwrap().bytes(), source);
+        workspace.cancel_ocr(plan.job_id);
+    }
+    for marker in ["StructTreeRoot", "MarkInfo", "FolioTaggedCopy"] {
+        let mut tagged = Document::load_mem(&source).unwrap();
+        tagged
+            .catalog_mut()
+            .unwrap()
+            .set(marker, dictionary! {"Marked"=>true});
+        let mut bytes = Vec::new();
+        tagged.save_to(&mut bytes).unwrap();
+        let info = workspace
+            .open_bytes(bytes.clone(), format!("{marker}.pdf"))
+            .unwrap();
+        assert!(workspace.begin_ocr(info.id, 0, options(vec![0])).is_err());
+        assert_eq!(workspace.document(info.id).unwrap().bytes(), bytes);
     }
 }
 
@@ -161,7 +346,7 @@ fn staged_ocr_is_atomic_persistent_undoable_and_preserves_original_streams_and_s
                 .operands[0]
                 .as_name()
                 .unwrap()
-                .ends_with(b"_")
+                .starts_with(b"FolioOCR")
         );
     }
     let undo = workspace.current_mut(info.id, 1).unwrap().undo().unwrap();
@@ -308,7 +493,7 @@ fn invalid_language_geometry_order_fonts_and_limits_fail_without_a_partial_mutat
         .open_bytes(synthetic(2, false), "Scan.pdf".into())
         .unwrap();
     let mut unsupported = options(vec![0]);
-    unsupported.language = "fra".into();
+    unsupported.languages = vec!["../../eng".into()];
     assert!(workspace.begin_ocr(info.id, 0, unsupported).is_err());
     assert!(
         workspace
@@ -547,22 +732,21 @@ fn signed_and_restricted_documents_cannot_be_ocrd_but_owner_access_can() {
 }
 
 #[test]
-fn staged_job_count_and_render_geometry_are_bounded_before_recognition() {
+fn sequential_job_ownership_and_render_geometry_are_bounded_before_recognition() {
     let mut workspace = Workspace::default();
     let mut jobs = Vec::new();
-    for _ in 0..4 {
-        let info = workspace.create_document(100.0, 100.0).unwrap();
-        jobs.push(
-            workspace
-                .begin_ocr(info.id, 0, options(vec![0]))
-                .unwrap()
-                .job_id,
-        );
-    }
+    let info = workspace.create_document(100.0, 100.0).unwrap();
+    jobs.push(
+        workspace
+            .begin_ocr(info.id, 0, options(vec![0]))
+            .unwrap()
+            .job_id,
+    );
     let next = workspace.create_document(100.0, 100.0).unwrap();
     assert!(workspace.begin_ocr(next.id, 0, options(vec![0])).is_err());
     workspace.cancel_ocr(jobs[0]);
-    assert!(workspace.begin_ocr(next.id, 0, options(vec![0])).is_ok());
+    let plan = workspace.begin_ocr(next.id, 0, options(vec![0])).unwrap();
+    workspace.cancel_ocr(plan.job_id);
 
     let mut source = Document::load_mem(&synthetic(1, false)).unwrap();
     let id = source.get_pages()[&1];

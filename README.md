@@ -114,7 +114,7 @@ the tag before rerunning the workflow.
 | Watermark | Configurable, embedded-font text watermark on current, all, or explicitly chosen pages |
 | Number pages | Persistent positioned numbers, with starting number, prefix/suffix, and explicit page-range order |
 | Search | Case-insensitive or case-sensitive text and phrases, including across line breaks; result snippets and on-page marks |
-| Offline OCR | Bundled English recognition on selected pages/ranges; add persistent invisible PDF text without replacing original images or page streams |
+| Offline OCR | Fifteen bundled languages, including Arabic, Hindi and CJK; add persistent invisible Unicode text without replacing original images or page streams |
 | Highlight | Select a passage and choose Highlight, or drag across text with the highlighter |
 | Notes | Place a note on the page, enter Unicode text, and revisit it in Comments |
 | Annotations | Portable PDF appearance streams; edit note/placed-text contents, remove marks, and undo changes |
@@ -1017,10 +1017,18 @@ not produce a success-shaped partial PDF.
 
 Choose **All tools > Recognize scanned text**, enter pages such as `1, 3-5`,
 choose **300 DPI** (or **150 DPI** for lower memory use), then **Recognize
-text**. The included language is **English**. Recognition uses a local
+text**. English remains the default; select the actual scan language and
+optionally up to two additional languages, with the first model taking priority.
+All fifteen models are included: **English, French, Spanish, German, Italian,
+Portuguese, Dutch, Greek, Russian, Arabic, Hindi, Simplified Chinese,
+Traditional Chinese, Japanese and Korean**. The UI identifies each model,
+script set and left-to-right/right-to-left direction. Recognition uses a local
 Tesseract WebAssembly worker, not a cloud service, system-installed executable,
 or a CDN. Annotations and form fields are excluded from recognition input;
-finish/cancel pending writing/form drafts and clear redaction marks first.
+finish/cancel every pending writing, metadata, form, paragraph, accessibility,
+image, page-authoring or live-gesture draft and clear redaction marks first.
+Prepared tagged-copy jobs also block OCR. Settings live with the document
+workspace, not a mounted page, so switching panels or inactive tabs keeps them.
 
 The default **Skip existing text** policy conservatively skips pages containing
 text-show operations, including hidden text and nested Form XObjects. **Force
@@ -1029,8 +1037,15 @@ does not remove any previous text layer. The summary distinguishes skipped
 pages, pages with no recognized text, and actual words added. Review recognition
 accuracy and reading order before relying on search or copying.
 
-OCR adds real invisible PDF content using embedded Noto Sans and Unicode
-mapping. Original content/image streams remain intact; pages are rendered only
+OCR adds real invisible PDF content using verified embedded static TrueType
+Noto/Noto-derived fonts and full UTF-16 Unicode mapping. Each word-sized CID
+maps to its complete logical word; zero-advance separator CIDs retain exact
+recognized whitespace without stretching selection boxes, with the same
+`ActualText` in its span. Combining marks, joiners, Arabic, Indic and CJK text
+are not dropped or normalized into different characters. These are invisible
+logical references to real non-empty glyphs, not visibly drawn unshaped text:
+visible complex-script writing/forms/paragraph editing remains restricted.
+Original content/image streams remain intact; pages are rendered only
 as recognition input, never raster-replaced. Word boxes and line baselines are
 mapped back into unrotated PDF coordinates, respecting the visible CropBox,
 nonzero box origins, right-angle rotation, and UserUnit. Private font resources
@@ -1040,7 +1055,7 @@ original visible content.
 Recognition is sequential and cancellable, including while loading the
 engine/model. **Cancel OCR** releases the worker/canvas and discards all staged
 results. Every page is validated before one all-or-nothing document mutation.
-Jobs are tied to document ID/revision and invalidated by edits, undo/redo,
+Jobs are tied to document ID/revision, mutation epoch and workspace epoch, and invalidated by edits, undo/redo,
 pending drafts, or tab closure; an undo back to an old revision cannot resurrect
 a stale job. Other tabs are not modified. The final atomic commit cannot be
 canceled once started. No-text/all-skipped jobs create no change or undo step.
@@ -1050,14 +1065,21 @@ removes the whole job within the normal history budget; Redo restores it. Saved/
 and searchable. Supported password protection, passwords, and permissions are
 retained. Signed PDFs are refused; restricted PDFs require editable owner
 access. OCR is **not redaction, accessibility tagging, or PDF/UA
-conformance**; handwriting, other recognition languages, vertical/right-to-left
-text, severely skewed baselines, and unsupported output glyphs are not supported.
+conformance**. **Only horizontal printed scans are supported**: handwriting,
+vertical Japanese/Chinese, unlisted languages, severely skewed baselines, and
+unsupported/unselected output glyphs are refused. Arabic's logical RTL order
+is retained; recognition accuracy, complex columns and word boxes still need
+review. Existing tagged/ambiguous logical structures are refused rather than
+silently adding unassociated OCR text. Recognize the untagged original, then
+author a separate reviewed tagged copy.
 
 Limits are **50 selected pages**, **10,000 words/page**, **100,000 words/job**,
 **8 MiB recognized UTF-8**, **24 megapixels / 16,384 pixels per page dimension**,
 **64 MiB per rendered PNG**, **two minutes per worker step**, and **15 minutes
-per recognition job**. The engine permits at most four staged jobs across a
-workspace and one per document; the current UI serializes document actions.
+per recognition job**, **one to three distinct models / 20 MiB model input**,
+**32 MiB actual embedded font input**, and **256 Unicode scalars per word**.
+The workspace permits one owned sequential OCR job/worker, not simultaneous
+language/page workers. Initialization itself has a two-minute hard deadline.
 Oversize/unsupported results fail explicitly rather than lowering resolution,
 dropping words, or committing partial text.
 
@@ -1067,16 +1089,20 @@ dropping words, or committing partial text.
 exact-pinned in `package.json` and integrity-pinned in `package-lock.json`.
 `npm ci` downloads those packages at **build time**. `scripts/prepare-ocr.mjs`
 checks installed versions, verifies committed SHA-256 pins for every worker/core
-variant and the model, and copies the worker,
-all matching SIMD/non-SIMD and LSTM/full WASM core variants, and the English
+variant, model and font, and copies the worker,
+all matching SIMD/non-SIMD and LSTM/full WASM core variants, and every delivered
 model to `public/vendor/ocr`. Vite includes these files in `dist`; Tauri embeds
 that frontend. Runtime worker, core, and model paths are all explicitly local,
-language caching is disabled, and missing assets fail without CDN fallback.
+language caching is disabled, and missing/corrupt assets fail without CDN or
+English fallback. Models come only from the fixed catalog; no filename/path
+input, vertical sublanguage or OSD model is loaded. Selected model bytes are
+size/SHA-256 verified before passing them directly to the raw owned worker.
 `public/vendor/ocr/manifest.json` records the copied assets' SHA-256 hashes.
 Preparing/building needs no model download.
 
-The original, unmodified `eng.traineddata` is committed at
-`src-tauri/resources/ocr/eng.traineddata`. It was obtained from:
+All original, unmodified language models are committed under
+`src-tauri/resources/ocr`. Exact byte sizes, upstream Git blobs and SHA-256
+checksums are in `catalog.json`. English's unchanged pin is:
 
 ```text
 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/eng.traineddata
@@ -1085,12 +1111,28 @@ SHA-256: 7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2
 
 To restore this source asset, fetch only that immutable URL and verify that
 exact checksum before building. Do not substitute a model from a moving branch.
-The engine, WASM wrapper, and English model use **Apache-2.0** licenses.
+The engine, WASM wrapper, and all fifteen models use **Apache-2.0** licenses.
 Bundled engine/model license texts are included in generated third-party
 notices and local OCR assets. Original notices for the WASM engine's Leptonica,
 codec, compression, and math dependencies are committed under
 `src-tauri/resources/ocr/notices`; provenance is recorded in `ocr/NOTICE`.
-The PDF text font remains **SIL OFL 1.1**.
+The PDF text fonts use **SIL OFL 1.1**, with full upstream copyright/license
+texts. The five dedicated script fonts are static regular `glyf` instances
+from fixed google/fonts commit `9862abc066c9b83bf84c3e8ed1fc2d8d48f9bbf0`,
+renamed to FolioOcr families; `scripts/instantiate-ocr-fonts.py` reproduces
+them with fonttools 4.62.1 from checksum-verified sources. Source/derived pins
+and the precise transform are in the catalog; normal preparation/build needs
+neither Python/fonttools nor font/model downloads.
+
+`scripts/prepare-pdf-worker.mjs` adapts the checksum-pinned PDF.js 6.4.299 worker
+only for the exact `FolioOCRLogicalV1_<font>_<direction>` font names. Those
+word-sized logical mappings bypass visual-order bidi/normalization and
+single-character mark classification and inferred whitespace, preserving combining/joiner sequences
+and declared direction during search/selection/text export. Every other PDF
+font keeps upstream behavior. The saved PDF still contains standard
+`ToUnicode`, `ActualText` and embedded fonts; it does not depend on private
+renderer bytes being saved. Other viewers may present extraction spacing or
+selection differently; Folio does not claim arbitrary-reader parity.
 
 Run `node --test tests/ocr.test.ts` and
 `npm run test:rust -- --test ocr` for focused checks. For real synthetic scan
@@ -1507,7 +1549,7 @@ package dependency.
 
 - **Not full Acrobat parity.** Run-level source-text replacement and conservative
   source paragraph-box reflow are supported, but not unrestricted DTP/page reflow,
-  unrestricted existing-image editing, non-English OCR,
+  unrestricted existing-image editing, arbitrary-language/handwriting/vertical OCR,
   general Office conversion or PDF creation beyond the explicit PNG/JPEG/UTF-8 subset,
   automatic AATL/EUTL/OS trust, cloud storage, collaboration, AI assistant,
   accessibility remediation, full conformance validation/preflight, or

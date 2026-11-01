@@ -26,6 +26,7 @@
     "test:conversion": "node tests/conversion.e2e.mjs"
   },
   "dependencies": {
+    "@noble/hashes": "2.0.1",
     "@tauri-apps/api": "^2.12.2",
     "@tauri-apps/plugin-opener": "^2.7.2",
     "diff": "^8.0.2",

@@ -1,3 +1,7 @@
+import { ocrLanguageResources, selectedOcrLanguages } from "./ocrLanguages.ts";
+import type { OcrLanguage } from "./ocrLanguages.ts";
+import { sha256 as digestSha256 } from "@noble/hashes/sha2.js";
+
 export type OcrWorkerProgress = (fraction: number) => void;
 
 interface Pending {
@@ -11,6 +15,35 @@ function localAsset(name: string): string {
   return new URL(`/vendor/ocr/${name}`, window.location.href).href;
 }
 
+export async function verifiedOcrAsset(name: string, size: number, sha256: string, signal: AbortSignal): Promise<ArrayBuffer> {
+  signal.throwIfAborted();
+  const response = await fetch(localAsset(name), { signal, cache: "no-store", credentials: "same-origin" });
+  if (!response.ok || !response.body) throw new Error(`The bundled OCR resource ${name} is missing. Restore the app assets; no text was added.`);
+  const reader = response.body.getReader();
+  const data = new Uint8Array(size);
+  let length = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      length += value.byteLength;
+      if (length > size) throw new Error(`The bundled OCR resource ${name} exceeds its verified size. No text was added.`);
+      data.set(value, length - value.byteLength);
+    }
+  } finally {
+    await reader.cancel();
+    reader.releaseLock();
+  }
+  if (length !== size) throw new Error(`The bundled OCR resource ${name} has the wrong size. Restore the app assets; no text was added.`);
+  const digest = digestSha256(data);
+  signal.throwIfAborted();
+  if (Array.from(digest, (value) => value.toString(16).padStart(2, "0")).join("") !== sha256) {
+    throw new Error(`The bundled OCR resource ${name} failed SHA-256 verification. Restore the app assets; no text was added.`);
+  }
+  return data.buffer;
+}
+
 // Use the pinned worker protocol directly so the raw worker is owned before
 // initialization begins. createWorker() exposes it only after loading completes.
 export class LocalOcrWorker {
@@ -20,11 +53,14 @@ export class LocalOcrWorker {
   private closed = false;
   private readonly abort: () => void;
   private readonly signal: AbortSignal;
+  private readonly sourceSignal: AbortSignal;
+  private readonly controller = new AbortController();
   private readonly progress: OcrWorkerProgress;
 
   constructor(signal: AbortSignal, progress: OcrWorkerProgress) {
     signal.throwIfAborted();
-    this.signal = signal;
+    this.sourceSignal = signal;
+    this.signal = this.controller.signal;
     this.progress = progress;
     this.worker = new Worker(localAsset("worker.min.js"));
     this.abort = () => this.close(signal.reason instanceof Error ? signal.reason : new Error("OCR canceled."));
@@ -66,15 +102,31 @@ export class LocalOcrWorker {
     });
   }
 
-  async initialize(dpi: number): Promise<void> {
-    await this.request("load", { options: { corePath: localAsset(""), lstmOnly: true, logging: false } });
-    await this.request("loadLanguage", { langs: "eng", options: {
-      langPath: localAsset(""), gzip: false, cacheMethod: "none", lstmOnly: true,
-    } });
-    await this.request("initialize", { langs: "eng", oem: 1, config: { debug_file: "/dev/null" } });
-    await this.request("setParameters", { params: {
-      tessedit_pageseg_mode: "3", preserve_interword_spaces: "1", user_defined_dpi: String(dpi),
-    } });
+  async initialize(dpi: number, languages: readonly OcrLanguage[] = ["eng"]): Promise<void> {
+    const timeout = setTimeout(() => this.close(new Error("OCR initialization exceeded its two-minute limit. No text was added.")), 120_000);
+    try {
+      const selected = selectedOcrLanguages(languages);
+      if (dpi !== 150 && dpi !== 300) throw new Error("Choose 150 or 300 DPI for OCR.");
+      const langs = [];
+      for (const model of ocrLanguageResources(selected)) {
+        const data = await verifiedOcrAsset(model.name, model.bytes, model.sha256, this.signal);
+        if (this.closed) throw new Error("OCR initialization was canceled or expired. No text was added.");
+        langs.push({ code: model.id, data: new Uint8Array(data) });
+      }
+      await this.request("load", { options: { corePath: localAsset(""), lstmOnly: true, logging: false } });
+      await this.request("loadLanguage", { langs, options: {
+        langPath: localAsset(""), gzip: false, cacheMethod: "none", lstmOnly: true,
+      } }, langs.map((language) => language.data.buffer));
+      await this.request("initialize", { langs: selected.join("+"), oem: 1,
+        config: "debug_file /dev/null\ntessedit_load_sublangs\ntextord_tabfind_vertical_text 0\ntextord_tabfind_force_vertical_text 0" });
+      await this.request("setParameters", { params: {
+        tessedit_pageseg_mode: "3", preserve_interword_spaces: "1", user_defined_dpi: String(dpi),
+        textord_tabfind_vertical_text: "0", textord_tabfind_force_vertical_text: "0",
+      } });
+    } catch (error) {
+      this.close(error instanceof Error ? error : new Error("The selected OCR models could not initialize. No text was added."));
+      throw error;
+    } finally { clearTimeout(timeout); }
   }
 
   recognize(png: ArrayBuffer): Promise<unknown> {
@@ -87,7 +139,8 @@ export class LocalOcrWorker {
   close(reason = new Error("The OCR worker was released.")): void {
     if (this.closed) return;
     this.closed = true;
-    this.signal.removeEventListener("abort", this.abort);
+    this.sourceSignal.removeEventListener("abort", this.abort);
+    this.controller.abort(reason);
     this.worker.terminate();
     const pending = this.pending;
     this.pending = null;

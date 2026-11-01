@@ -382,6 +382,11 @@ The tool panel is 226px wide; search/comments use 274px. The thumbnail
 rail is 157px, and the utility rail is 43px.
 
 The document scroll area owns page overflow, including at high zoom.
+The OCR panel retains the document-first Operate layout. Native selects choose
+one primary and up to two additional bundled models, with selected scripts and
+directions visible and the full catalog in a disclosure. Model checking,
+unsupported language/layout, force duplication and no-text outcomes stay
+explicit. Language settings belong to the document workspace, not page mounts.
 Pages form a continuous vertical stack with 24px gaps and their own dimensions.
 Only the viewport neighborhood mounts full renderers; off-screen page positions
 are reserved by geometry, not miniature document screenshots. Page navigation

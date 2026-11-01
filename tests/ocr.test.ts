@@ -2,6 +2,9 @@ import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { awaitOcrStep, recognitionWords } from "../src/lib/ocr.ts";
 import { LocalOcrWorker } from "../src/lib/ocrWorker.ts";
+import { verifiedOcrAsset } from "../src/lib/ocrWorker.ts";
+import { OCR_LANGUAGES, selectedOcrLanguages } from "../src/lib/ocrLanguages.ts";
+import { readFileSync } from "node:fs";
 import type { OcrPagePlan } from "../src/lib/ocrTypes.ts";
 import { parsePageRange } from "../src/lib/pages.ts";
 
@@ -18,7 +21,7 @@ test("OCR range limits are checked before expanding large source page ranges", (
 
 function output() {
   return { text: "FOLIO OFFLINE", blocks: [{ paragraphs: [{ is_ltr: true, lines: [{
-    baseline: { x0: 50, y0: 100, x1: 500, y1: 109, has_baseline: true },
+    text: "FOLIO OFFLINE", baseline: { x0: 50, y0: 100, x1: 500, y1: 109, has_baseline: true },
     words: [{ text: "FOLIO", bbox: { x0: 50, y0: 70, x1: 180, y1: 100 } },
       { text: "OFFLINE", bbox: { x0: 220, y0: 75, x1: 500, y1: 109 } }],
   }] }] }] };
@@ -28,7 +31,7 @@ test("OCR preserves actual word boxes and interpolates each word's line baseline
   const words = recognitionWords(output(), page);
   assert.equal(words.length, 2);
   assert.deepEqual(words[0], { text: "FOLIO", bounds: [50, 70, 180, 100],
-    baseline: [50, 100, 180, 102.6], line: 0 });
+    baseline: [50, 100, 180, 102.6], line: 0, direction: "ltr", separator: " " });
   assert.deepEqual(words[1].baseline, [220, 103.4, 500, 109]);
 });
 
@@ -52,11 +55,39 @@ test("invalid coordinates and unsupported direction fail the entire page", () =>
   const missing = output();
   missing.blocks[0].paragraphs[0].lines[0].baseline.has_baseline = false;
   assert.throws(() => recognitionWords(missing, page));
-  const rtl = output();
-  rtl.blocks[0].paragraphs[0].is_ltr = false;
-  assert.throws(() => recognitionWords(rtl, page));
+  const invalidDirection = output();
+  Reflect.deleteProperty(invalidDirection.blocks[0].paragraphs[0], "is_ltr");
+  assert.throws(() => recognitionWords(invalidDirection, page));
 });
 
+test("all fifteen fixed languages and one-to-three distinct combinations are validated without path injection or fallback", () => {
+  assert.equal(OCR_LANGUAGES.length, 15);
+  for (const language of OCR_LANGUAGES) assert.deepEqual(selectedOcrLanguages([language.id]), [language.id]);
+  assert.deepEqual(selectedOcrLanguages(["ara", "hin", "eng"]), ["ara", "hin", "eng"]);
+  for (const invalid of [[], ["eng", "eng"], ["eng", "fra", "deu", "spa"], ["../eng"], ["jpn_vert"], ["osd"]]) {
+    assert.throws(() => selectedOcrLanguages(invalid));
+  }
+});
+
+test("logical RTL/Indic text and separators preserve every combining mark and joiner without normalization", () => {
+  const result = { text: "هذا كِتاب\nक्‍षि e\u0301\n", blocks: [{ paragraphs: [{
+    is_ltr: 0, lines: [{ text: "هذا كِتاب\n",
+      baseline: { x0: 50, y0: 100, x1: 500, y1: 100 },
+      words: [{ text: "هذا", bbox: { x0: 300, y0: 70, x1: 500, y1: 100 } },
+        { text: "كِتاب", bbox: { x0: 50, y0: 70, x1: 200, y1: 100 } }] }],
+  }, { is_ltr: 1, lines: [{ text: "क्‍षि e\u0301\n",
+    baseline: { x0: 50, y0: 200, x1: 500, y1: 200 },
+    words: [{ text: "क्‍षि", bbox: { x0: 50, y0: 160, x1: 200, y1: 200 } },
+      { text: "e\u0301", bbox: { x0: 300, y0: 160, x1: 400, y1: 200 } }] }],
+  }] }] };
+  const words = recognitionWords(result, page);
+  assert.equal(words.map((word) => word.text + word.separator).join(""), result.text);
+  assert.equal(words[0].direction, "rtl");
+  assert.equal(words[0].bounds[0], 300, "logical RTL order must not be sorted geometrically");
+  assert.equal(words[2].text, "क्‍षि");
+  assert.equal(words[3].text, "e\u0301");
+  assert.throws(() => recognitionWords({ ...result, text: result.text + "lost" }, page));
+});
 test("cancel interrupts pending renderer/encoding/staging steps and handles their late result safely", async () => {
   const controller = new AbortController();
   let finish: (value: number) => void = () => {};
@@ -97,7 +128,12 @@ class FakeWorker {
 }
 
 function fakeBrowser(context: TestContext) {
-  for (const [key, value] of [["window", { location: { href: "http://127.0.0.1:54321/" } }], ["Worker", FakeWorker]] as const) {
+  const fetchAsset = async (url: string | URL | Request) => {
+    const name = new URL(String(url)).pathname.split("/").at(-1)!;
+    if (!/^[a-z_]+\.traineddata$/.test(name)) throw new Error(`Unexpected asset ${name}`);
+    return new Response(readFileSync(new URL(`../src-tauri/resources/ocr/${name}`, import.meta.url)));
+  };
+  for (const [key, value] of [["window", { location: { href: "http://127.0.0.1:54321/" } }], ["Worker", FakeWorker], ["fetch", fetchAsset]] as const) {
     const original = Object.getOwnPropertyDescriptor(globalThis, key);
     Object.defineProperty(globalThis, key, { value, configurable: true });
     context.after(() => original ? Object.defineProperty(globalThis, key, original) : Reflect.deleteProperty(globalThis, key));
@@ -114,7 +150,7 @@ test("cancel during engine initialization terminates the raw worker and rejects 
   controller.abort();
   await assert.rejects(loading);
   assert.equal(FakeWorker.instances[0].terminated, true);
-  assert.equal(FakeWorker.instances[0].packets.length, 1);
+  assert.equal(FakeWorker.instances[0].packets.length, 0);
 });
 
 test("every engine/model path is explicitly local and no language cache or autorotation is used", async (context) => {
@@ -126,9 +162,14 @@ test("every engine/model path is explicitly local and no language cache or autor
   assert.deepEqual(raw.packets[0].payload, {
     options: { corePath: "http://127.0.0.1:54321/vendor/ocr/", lstmOnly: true, logging: false },
   });
-  assert.deepEqual(raw.packets[1].payload, { langs: "eng", options: {
+  assert.deepEqual(raw.packets[1].payload.options, {
     langPath: "http://127.0.0.1:54321/vendor/ocr/", gzip: false, cacheMethod: "none", lstmOnly: true,
-  } });
+  });
+  const langs = raw.packets[1].payload.langs as { code: string; data: Uint8Array }[];
+  assert.equal(langs[0].code, "eng");
+  assert.equal(langs[0].data.byteLength, 4_113_088);
+  assert.equal(raw.packets[2].payload.langs, "eng");
+  assert.match(String(raw.packets[2].payload.config), /tessedit_load_sublangs\ntextord_tabfind_vertical_text 0/);
   const result = await worker.recognize(new ArrayBuffer(8));
   assert.equal(recognitionWords(result, page).length, 2);
   assert.deepEqual(raw.packets[4].payload.options, { rotateAuto: false, rotateRadians: 0 });
@@ -141,7 +182,19 @@ test("worker errors are visible, terminate resources and never include recognize
   const worker = new LocalOcrWorker(new AbortController().signal, () => {});
   const pending = worker.initialize(150);
   const raw = FakeWorker.instances[0];
+  while (!raw.packets.length) await new Promise((resolve) => setTimeout(resolve, 0));
   raw.onmessage?.({ data: { jobId: raw.packets[0].jobId, status: "reject", data: "private recognized content" } });
   await assert.rejects(pending, (error: Error) => !error.message.includes("private recognized content"));
   assert.equal(raw.terminated, true);
+});
+
+test("model hash, missing and unknown-size failures never reach engine initialization", async (context) => {
+  fakeBrowser(context);
+  context.mock.method(globalThis, "fetch", async () => new Response(new Uint8Array([1, 2, 3, 4])));
+  await assert.rejects(verifiedOcrAsset("eng.traineddata", 4, "0".repeat(64), new AbortController().signal), /SHA-256/);
+  await assert.rejects(verifiedOcrAsset("eng.traineddata", 3, "0".repeat(64), new AbortController().signal), /exceeds/);
+  const worker = new LocalOcrWorker(new AbortController().signal, () => {});
+  await assert.rejects(worker.initialize(150), /wrong size/);
+  assert.equal(FakeWorker.instances[0].packets.length, 0);
+  assert.equal(FakeWorker.instances[0].terminated, true);
 });

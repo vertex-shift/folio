@@ -154,13 +154,23 @@ The desktop app processes document contents locally.
   System, Light, Dark, Sepia, and High Contrast. Persist the preference locally;
   follow live device changes in System mode and match native light/dark chrome.
   Theme the workspace without changing PDF content or annotation colors.
-- Offline OCR: bundled, checksum-pinned English Tesseract/WASM recognition on
+- Offline OCR: bundled, checksum-pinned 15-language Tesseract/WASM recognition on
   selected page ranges, with explicit skip/force policy for existing text.
-  Stage sequential word boxes/baselines against a document ID/revision, then
+  English default; French, Spanish, German, Italian, Portuguese, Dutch, Greek,
+  Russian, Arabic, Hindi, Simplified/Traditional Chinese, Japanese and Korean.
+  One to three explicit models; horizontal printed scans only, not handwriting,
+  vertical CJK, unlisted languages or automatic language detection.
+  Stage sequential logical word boxes/baselines against ID/revision/source and
+  workspace epochs, then
   add real invisible, Unicode-mapped PDF text in one undoable mutation.
   Preserve original page streams/pixels, CropBox/rotation/UserUnit coordinates,
   encryption, unsaved work, and other tabs. Exclude annotation/form appearances
-  and refuse pending drafts/redactions. Cancel/release resources without partial
+  and refuse every aggregate draft, staged image, prepared tagged copy or
+  redaction. Existing tagged sources are refused rather than staling their tree.
+  Dedicated verified static OCR fonts, full-word ToUnicode/ActualText and an
+  OCR-only renderer adapter preserve logical RTL, combining/joiner and CJK
+  Unicode without enabling visibly unshaped Arabic/Indic writing or paragraph
+  editing. Cancel/release resources without partial
   commits; report skipped/no-text/error outcomes. No runtime downloads, cloud
   recognition, system Tesseract prerequisite, or accessibility-conformance claim.
 - Password-protected PDFs: prompt for supported standard PDF passwords in
@@ -272,7 +282,7 @@ The desktop app processes document contents locally.
   all tabs' cached trust. Do not claim revocation, trusted timestamps, qualified
   signatures, or PAdES-LTV.
 - Certificate-based protection, unrestricted paragraph/DTP reflow, arbitrary font/encoding support, unrestricted existing-image editing,
-  advanced form authoring, unsupported interactive forms, non-English OCR, general Office conversion, advanced
+  advanced form authoring, unsupported interactive forms, arbitrary-language/handwriting/vertical OCR, general Office conversion, advanced
   certification/qualified signing and authoritative trust, cloud
   collaboration, and full Acrobat parity remain incomplete capabilities.
 - New annotations, imported pages, and created/extracted documents must remain
@@ -280,7 +290,7 @@ The desktop app processes document contents locally.
   and incompatible page structures are rejected explicitly rather than damaged.
 - Unsupported source encodings, vertical/Type 3 fonts, invisible/clipping text,
   ActualText spans, and optional-content layer text must be reported rather
-  than guessed. Scans and outlined lettering can use the bundled English OCR.
+  than guessed. Horizontal printed scans can use the bundled 15-language OCR.
 - Do not copy Adobe code, fonts, icons, artwork, branding, or licensing logic.
 - A development-only browser bridge exercises the same Rust document engine.
   It must be clearly distinguished from the native desktop app.

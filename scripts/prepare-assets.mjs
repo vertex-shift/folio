@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { PDFDocument, PDFName, PDFString, StandardFonts, rgb } from "pdf-lib";
 import { collectNotices } from "./collect-notices.mjs";
 import { prepareOcr } from "./prepare-ocr.mjs";
+import { preparePdfWorker } from "./prepare-pdf-worker.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 prepareOcr(root);
@@ -12,6 +13,7 @@ function unchanged(source, destination) {
     && readFileSync(source).equals(readFileSync(destination));
 }
 mkdirSync(`${root}public/vendor/pdfjs`, { recursive: true });
+preparePdfWorker(root);
 for (const folder of ["cmaps", "standard_fonts", "wasm", "iccs"]) {
   cpSync(
     `${root}node_modules/pdfjs-dist/${folder}`,

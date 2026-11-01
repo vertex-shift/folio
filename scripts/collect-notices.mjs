@@ -10,9 +10,10 @@ export function collectNotices(root) {
   ];
   const append = (title, path) => {
     if (!existsSync(path)) throw new Error(`Required dependency notice is missing: ${path}`);
-    sections.push(`\n${"=".repeat(72)}\n${title}\n${"=".repeat(72)}\n${readFileSync(path, "utf8").replace(/\r\n/g, "\n")}`);
+    sections.push(`\n${"=".repeat(72)}\n${title}\n${"=".repeat(72)}\n${readFileSync(path, "utf8").replace(/\r\n/g, "\n").replace(/[ \t]+$/gm, "")}`);
   };
   for (const [name, license] of [
+    ["@noble/hashes", "LICENSE"],
     ["react", "LICENSE"], ["react-dom", "LICENSE"], ["scheduler", "LICENSE"],
     ["lucide-react", "LICENSE"], ["@tauri-apps/api", "LICENSE-MIT"],
     ["@tauri-apps/plugin-opener", "LICENSE.spdx"],
@@ -26,8 +27,16 @@ export function collectNotices(root) {
   }
   append("Noto Sans embedded PDF font", join(root, "src-tauri/resources/fonts/OFL.txt"));
   append("ICC sRGB2014 archival output profile / full license and provenance", join(root, "src-tauri/resources/color/NOTICE.txt"));
-  append("English OCR model / tessdata_fast 87416418657359cb625c412a48b6e1d6d41c29bd (Apache-2.0)", join(root, "src-tauri/resources/ocr/LICENSE"));
+  append("15 OCR models / tessdata_fast 87416418657359cb625c412a48b6e1d6d41c29bd (Apache-2.0)", join(root, "src-tauri/resources/ocr/LICENSE"));
   append("Offline OCR provenance", join(root, "src-tauri/resources/ocr/NOTICE"));
+  append("OCR-only static TrueType derivation and Unicode encoding", join(root, "src-tauri/resources/ocr/fonts/NOTICE"));
+  for (const font of ["Arabic", "Devanagari", "SC", "JP", "KR"]) {
+    append(`OCR font / Noto Sans ${font} / full upstream OFL 1.1 and copyright`, join(root, `src-tauri/resources/ocr/NotoSans${font}.ttf.OFL.txt`));
+  }
+  sections.push("Folio's pinned PDF.js 6.4.299 worker has a narrowly scoped logical OCR extraction adapter "
+    + "(scripts/prepare-pdf-worker.mjs): only FolioOCRLogicalV1 font names preserve exact logical Unicode "
+    + "and declared direction instead of visual-order normalization/bidi transforms. All other input "
+    + "fonts retain upstream extraction behavior. PDF.js remains Apache-2.0; the original worker's full license is above.");
   for (const name of ["tesseract", "leptonica", "giflib", "libjpeg", "libpng", "libtiff", "libwebp", "libwebp-patents", "openlibm", "zlib"]) {
     append(`Tesseract WASM component / ${name}`, join(root, "src-tauri/resources/ocr/notices", `${name}.txt`));
   }

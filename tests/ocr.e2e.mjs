@@ -10,6 +10,7 @@ import { chromium } from "playwright";
 import { degrees, PDFDocument, PDFName, PDFNumber, StandardFonts } from "pdf-lib";
 import { build } from "vite";
 import { englishModel, prepareOcr } from "../scripts/prepare-ocr.mjs";
+import { preparePdfWorker } from "../scripts/prepare-pdf-worker.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporary = await mkdtemp(join(tmpdir(), "folio-ocr-"));
@@ -86,9 +87,11 @@ const workerAccounting = () => {
 
 try {
   prepareOcr(root);
+  preparePdfWorker(root);
   const corruptRoot = join(temporary, "asset-corruption-check");
   await mkdir(join(corruptRoot, "src-tauri/resources"), { recursive: true });
   await cp(join(root, "src-tauri/resources/ocr"), join(corruptRoot, "src-tauri/resources/ocr"), { recursive: true });
+  await cp(join(root, "src-tauri/resources/fonts"), join(corruptRoot, "src-tauri/resources/fonts"), { recursive: true });
   for (const [name, files] of [["tesseract.js", ["package.json", "LICENSE.md", "dist/worker.min.js"]],
     ["tesseract.js-core", ["package.json", "LICENSE"]]]) {
     for (const file of files) {
@@ -100,7 +103,7 @@ try {
   await writeFile(join(corruptRoot, "node_modules/tesseract.js/dist/worker.min.js"), "altered worker");
   assert.throws(() => prepareOcr(corruptRoot), /worker\.min\.js failed SHA-256/);
   await writeFile(join(corruptRoot, "src-tauri/resources/ocr/eng.traineddata"), "altered model");
-  assert.throws(() => prepareOcr(corruptRoot), /English OCR model failed SHA-256/);
+  assert.throws(() => prepareOcr(corruptRoot), /eng\.traineddata failed SHA-256/);
   evidence.corruptedAssetsRejected = true;
   await command("cargo", ["build", "--manifest-path", "src-tauri/Cargo.toml", "--no-default-features", "--features", "preview", "--bin", "folio-preview", "--quiet"]);
   const backendPort = await freePort(), frontendPort = await freePort();
@@ -203,15 +206,17 @@ try {
   assert.ok(await page.evaluate(() => window.__ocrCanvases.length >= 5 && window.__ocrCanvases.every((canvas) => canvas.width === 0 && canvas.height === 0)));
   assert.equal(await page.getByRole("tab").count(), 2);
   await page.locator('.document-workspace:not([hidden]) .textLayer').filter({ hasText: "OFFLINE" }).first().waitFor({ timeout: 30_000 });
-  await page.screenshot({ path: join(artifacts, "ocr-light-desktop.png") });
-  await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
-  await page.setViewportSize({ width: 950, height: 800 });
-  await page.getByRole("button", { name: "All tools", exact: true }).click();
-  await page.getByRole("button", { name: "Recognize scanned text", exact: true }).click();
-  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  await page.screenshot({ path: join(artifacts, "ocr-dark-compact.png") });
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+  if (!process.env.FOLIO_OCR_SKIP_VISUAL) {
+    await page.screenshot({ path: join(artifacts, "ocr-light-desktop.png") });
+    await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+    await page.setViewportSize({ width: 950, height: 800 });
+    await page.getByRole("button", { name: "All tools", exact: true }).click();
+    await page.getByRole("button", { name: "Recognize scanned text", exact: true }).click();
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.screenshot({ path: join(artifacts, "ocr-dark-compact.png") });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+  }
 
   let snapshot = await (await api("/bootstrap")).json();
   const recognized = snapshot.documents.find((info) => info.name === "synthetic-scan.pdf");

@@ -79,6 +79,8 @@ import { destinationPage, safeExternalUrl } from "./lib/navigation";
 import { MAX_REDACTION_MARKS, renderRedactionPages } from "./lib/redaction";
 import { MAX_OCR_PAGES, recognizeOcrPages } from "./lib/ocr";
 import type { OcrOptions, OcrOutcome, OcrPlan, OcrProgress } from "./lib/ocrTypes";
+import { selectedOcrLanguages } from "./lib/ocrLanguages";
+import type { OcrLanguage } from "./lib/ocrLanguages";
 import type { DocumentInfo, Edit, ExistingTextRun, Mode, OpenOutcome, Panel, PasswordChallenge, PdfRect, Point, Quad, RedactionMark, RedactionPlan, ReplacementFont, Tool, Zoom } from "./lib/types";
 import "./authoring.css";
 import "./document-utilities.css";
@@ -200,6 +202,7 @@ export default function DocumentWorkspace(props: Props) {
   const [ocrRange, setOcrRange] = useState("");
   const [ocrDpi, setOcrDpi] = useState<OcrOptions["dpi"]>(300);
   const [ocrPolicy, setOcrPolicy] = useState<OcrOptions["existingText"]>("skip");
+  const [ocrLanguages, setOcrLanguages] = useState<OcrLanguage[]>(["eng"]);
   const [ocrOutcome, setOcrOutcome] = useState<OcrOutcome | null>(null);
   const [ocrProgress, setOcrProgress] = useState<OcrProgress | null>(null);
   const [ocrCanceling, setOcrCanceling] = useState(false);
@@ -578,7 +581,8 @@ export default function DocumentWorkspace(props: Props) {
       let failure: unknown;
       let cleanupFailure: unknown;
       try {
-        plan = await bridge.beginOcr(current, { pages, dpi: ocrDpi, language: "eng", existingText: ocrPolicy });
+        plan = await bridge.beginOcr(current, { pages, dpi: ocrDpi,
+          languages: selectedOcrLanguages(ocrLanguages), layout: "horizontal_print", existingText: ocrPolicy });
         controller.signal.throwIfAborted();
         await recognizeOcrPages(pdf, plan, bridge.stageOcrPage, (progress) => {
           setOcrProgress((previous) => previous?.stage === progress.stage && previous.page === progress.page
@@ -587,9 +591,10 @@ export default function DocumentWorkspace(props: Props) {
         }, controller.signal);
         controller.signal.throwIfAborted();
         if (!activeRef.current || infoRef.current?.id !== current.id || infoRef.current.revision !== current.revision
-          || writingDraftRef.current || redactionsRef.current.length) {
+          || hasPendingContentEdits() || draftProjection()) {
           throw new Error("The document or pending drafts changed during OCR. No text was added.");
         }
+        await syncDraft(current.id, draftProjection());
         ocrJob.current = null;
         const total = plan.pages.filter((page) => !page.skipped).length;
         setOcrProgress({ stage: "committing", page: pages[pages.length - 1], completed: total, total, fraction: 1 });
@@ -1953,11 +1958,12 @@ export default function DocumentWorkspace(props: Props) {
           onRemove={(id) => updateRedactions(redactionsRef.current.filter((mark) => mark.id !== id))}
           onClear={() => { setError(null); setModal({ type: "redaction-clear" }); }} onExport={reviewRedactions}
           onDraw={() => setPanelOpen(false)} />}
-        {panel === "ocr" && <OcrPanel range={ocrRange} dpi={ocrDpi} policy={ocrPolicy}
+        {panel === "ocr" && <OcrPanel range={ocrRange} dpi={ocrDpi} policy={ocrPolicy} languages={ocrLanguages}
           pageCount={info?.pageCount ?? 0} disabled={disabled || !pdf}
           blockedReason={info?.readOnlyReason ?? (info?.copyAllowed === false ? "This PDF does not allow copying. Reopen it with the owner password."
             : pendingDraft ? "Finish or cancel writing/form drafts and clear pending redaction marks before using OCR." : null)}
-          outcome={ocrOutcome} onRange={setOcrRange} onDpi={setOcrDpi} onPolicy={setOcrPolicy} onStart={startOcr} />}
+          outcome={ocrOutcome} onRange={setOcrRange} onDpi={setOcrDpi} onPolicy={setOcrPolicy}
+          onLanguages={setOcrLanguages} onStart={startOcr} />}
         {panel === "write" && <div className="panel-scroll writing-settings">
           <p>Add text annotations or freehand marks. To replace original page text, choose Edit existing text.</p>
           <button className="button secondary existing-text-launch" disabled={editDisabled} onClick={() => chooseTool("edit-text")}><SquarePen size={15} />Edit existing text</button>

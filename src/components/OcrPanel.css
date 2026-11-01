@@ -7,6 +7,11 @@
 .ocr-panel .setting-field input, .ocr-panel .setting-field select { width: 100%; min-width: 0; max-width: none; }
 .ocr-help, .ocr-limits { color: var(--muted); font-size: 11px; line-height: 1.8; }
 .ocr-help { margin-top: 8px; }
+.ocr-script-support, .ocr-catalog { font-size: 11px; color: var(--secondary); overflow-wrap: anywhere; }
+.ocr-script-support { margin-block: 12px; }
+.ocr-catalog summary { cursor: pointer; color: var(--info-ink); padding-block: 8px; }
+.ocr-catalog ul { padding-inline-start: 18px; line-height: 1.8; }
+.ocr-catalog li + li { margin-top: 8px; }
 .ocr-warning { color: var(--warning-ink); background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: var(--radius-control); padding: 10px; margin-top: 12px; }
 .ocr-start { width: 100%; margin-block: 20px 24px; }
 .ocr-outcome { padding-block: 16px; border-block: 1px solid var(--line); margin-bottom: 20px; overflow-wrap: anywhere; }
