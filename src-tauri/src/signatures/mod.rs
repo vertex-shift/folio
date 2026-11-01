@@ -1,7 +1,9 @@
 mod crypto;
+pub(crate) mod evidence;
 mod fields;
 mod incremental;
 mod pdf;
+mod timestamp;
 mod trust;
 
 use std::{io::Read, path::Path};
@@ -13,6 +15,12 @@ use zeroize::Zeroizing;
 use crate::document::{Result, invalid};
 
 pub use fields::{SignatureFieldInfo, SignatureWidgetInfo};
+pub use evidence::{
+    CertificateRevocation, EvidenceInfo, EvidenceKind, MAX_CRL_BYTES, MAX_EVIDENCE_ITEMS,
+    MAX_EVIDENCE_STORE_BYTES, MAX_TIMESTAMP_BYTES, RevocationEvaluation, RevocationStatus,
+    read_evidence_file,
+};
+pub use timestamp::{TimestampEvaluation, TrustedTimeEvaluation, TrustedTimeStatus};
 pub use trust::{
     ChainEvaluation, MAX_ANCHOR_BYTES, MAX_TRUST_ANCHORS, TrustStore, TrustStoreInfo,
     read_anchor_file,
@@ -47,7 +55,7 @@ pub enum CertificateValidity {
     NotYetValid,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CertificateInfo {
     pub subject: String,
@@ -75,8 +83,9 @@ pub struct SignatureInfo {
     pub certificate: Option<CertificateInfo>,
     pub chain: ChainEvaluation,
     pub claimed_signing_time: Option<String>,
-    pub revocation: &'static str,
-    pub trusted_time: &'static str,
+    pub signature_value_sha256: Option<String>,
+    pub revocation: RevocationEvaluation,
+    pub trusted_time: TrustedTimeEvaluation,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,6 +93,7 @@ pub struct SignatureInfo {
 pub struct SignatureReport {
     pub document_id: u64,
     pub revision: u64,
+    pub epoch: u64,
     pub signatures: Vec<SignatureInfo>,
     pub signing_blocked_reason: Option<String>,
     pub warnings: Vec<String>,
@@ -396,6 +406,7 @@ fn inspect_loaded(
     Ok(SignatureReport {
         document_id,
         revision,
+        epoch: 0,
         signatures,
         signing_blocked_reason: checks.as_ref().err().map(ToString::to_string),
         warnings,
@@ -412,28 +423,9 @@ fn inspect_signatures(
     trust: &TrustStore,
 ) -> Result<Vec<SignatureInfo>> {
     Ok(candidates(document)?.iter().enumerate().map(|(index, candidate)| {
-        let mut info = SignatureInfo {
-            id: candidate.id.map_or_else(
-                || format!("direct-{}", index + 1),
-                |id| format!("{}:{}", id.0, id.1),
-            ),
-            integrity: Integrity::Invalid,
-            coverage: Coverage::Unknown,
-            message: String::new(),
-            digest: None,
-            algorithm: None,
-            signed_bytes: None,
-            current_bytes: bytes.len(),
-            certificate: None,
-            chain: ChainEvaluation::not_checked(),
-            claimed_signing_time: candidate.dictionary.get(b"M").ok()
-                .filter(|value| value.as_str().is_ok_and(|value| value.len() <= 256))
-                .and_then(|value| lopdf::decode_text_string(value).ok()),
-            revocation: "not_checked",
-            trusted_time: "not_checked",
-        };
+        let mut info = initial_info(candidate, index, bytes.len());
         match inspect_one(document, bytes, candidate, &mut info, trust) {
-            Ok(()) => {
+            Ok(_) => {
                 info.integrity = Integrity::Intact;
                 info.message = if info.coverage == Coverage::WholeDocument {
                     "The CMS signature and signed bytes are cryptographically intact. Certificate-chain trust is a separate check."
@@ -450,13 +442,52 @@ fn inspect_signatures(
     }).collect())
 }
 
+fn initial_info(candidate: &Candidate<'_>, index: usize, current_bytes: usize) -> SignatureInfo {
+    SignatureInfo {
+            id: candidate.id.map_or_else(
+                || format!("direct-{}", index + 1),
+                |id| format!("{}:{}", id.0, id.1),
+            ),
+            integrity: Integrity::Invalid,
+            coverage: Coverage::Unknown,
+            message: String::new(),
+            digest: None,
+            algorithm: None,
+            signed_bytes: None,
+            current_bytes,
+            certificate: None,
+            chain: ChainEvaluation::not_checked(),
+            claimed_signing_time: candidate.dictionary.get(b"M").ok()
+                .filter(|value| value.as_str().is_ok_and(|value| value.len() <= 256))
+                .and_then(|value| lopdf::decode_text_string(value).ok()),
+            signature_value_sha256: None,
+            revocation: RevocationEvaluation::not_checked(
+                "The PDF signature must pass its exact-byte cryptographic checks before evidence can be associated with it.",
+            ),
+            trusted_time: TrustedTimeEvaluation::not_checked(),
+    }
+}
+
+pub(crate) fn signature_binding(
+    document: &Document, bytes: &[u8], signature_id: &str,
+) -> Result<evidence::SignatureBinding> {
+    let source = signing_source(document, bytes)?;
+    for (index, candidate) in candidates(&source)?.iter().enumerate() {
+        let mut info = initial_info(candidate, index, bytes.len());
+        if info.id == signature_id {
+            return Ok(inspect_one(&source, bytes, candidate, &mut info, &TrustStore::default())?);
+        }
+    }
+    Err(invalid("That actual PDF signature no longer exists. Refresh and select it again."))
+}
+
 fn inspect_one(
     document: &Document,
     bytes: &[u8],
     candidate: &Candidate<'_>,
     info: &mut SignatureInfo,
     trust: &TrustStore,
-) -> CheckResult<()> {
+) -> CheckResult<evidence::SignatureBinding> {
     if document.was_encrypted() || document.is_encrypted() || document.trailer.has(b"Encrypt") {
         return Err(CheckError::unsupported(
             "Signature verification on encrypted PDFs is not supported. Protection is left intact.",
@@ -542,10 +573,18 @@ fn inspect_one(
     data.extend_from_slice(&bytes[..first_length]);
     data.extend_from_slice(&bytes[second_start..signed_end]);
     let verified = crypto::verify(der, &data, &details);
-    info.chain = trust.evaluate(&details.signer, &details.embedded);
+    let binding = evidence::SignatureBinding::new(&details);
+    let chain = trust.document_chain(&details.signer, &details.embedded);
+    if verified.is_ok() {
+        info.signature_value_sha256 = Some(binding.signature_value_sha256.clone());
+        info.revocation = trust.evidence.revocation(&chain);
+        info.trusted_time = trust.evidence.timestamps(&binding, details.timestamp_token.as_deref(), trust);
+    }
+    info.chain = chain.evaluation;
     details.certificate.identity_trust = info.chain.status;
     info.certificate = Some(details.certificate);
-    verified
+    verified?;
+    Ok(binding)
 }
 
 fn signature_field(document: &Document, signature: ObjectId) -> CheckResult<Option<ObjectId>> {

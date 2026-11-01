@@ -16,7 +16,10 @@ use x509_cert::{
 };
 use zeroize::Zeroizing;
 
-use super::{CertificateInfo, CheckError, CheckResult, crypto};
+use super::{
+    CertificateInfo, CheckError, CheckResult, crypto,
+    evidence::{EvidenceInfo, EvidenceKind, EvidenceStore, SignatureBinding},
+};
 use crate::document::{Result, invalid};
 
 pub const MAX_ANCHOR_BYTES: usize = 64 * 1024;
@@ -28,6 +31,8 @@ pub struct TrustStoreInfo {
     pub revision: u64,
     pub anchors: Vec<CertificateInfo>,
     pub persistent: bool,
+    pub evidence: Vec<EvidenceInfo>,
+    pub evidence_bytes: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,7 +54,7 @@ impl ChainEvaluation {
         }
     }
 
-    fn failed(message: impl Into<String>) -> Self {
+    pub(super) fn failed(message: impl Into<String>) -> Self {
         Self {
             status: "untrusted",
             message: message.into(),
@@ -63,19 +68,25 @@ impl ChainEvaluation {
 pub struct TrustStore {
     revision: u64,
     anchors: BTreeMap<String, X509>,
+    pub(super) evidence: EvidenceStore,
+}
+
+pub(super) struct VerifiedChain {
+    pub evaluation: ChainEvaluation,
+    pub certificates: Vec<X509>,
 }
 
 fn trust_error(_: openssl::error::ErrorStack) -> CheckError {
     CheckError::invalid("The local custom certificate store could not evaluate this chain.")
 }
 
-fn parse_certificate(certificate: &X509) -> CheckResult<Certificate> {
+pub(super) fn parse_certificate(certificate: &X509) -> CheckResult<Certificate> {
     Certificate::from_der(&certificate.to_der().map_err(trust_error)?).map_err(|_| {
         CheckError::invalid("The public certificate is not a supported DER certificate.")
     })
 }
 
-fn strong_certificate(certificate: &X509) -> CheckResult<()> {
+pub(super) fn strong_certificate(certificate: &X509) -> CheckResult<()> {
     let key = certificate.public_key().map_err(trust_error)?;
     crypto::validate_key(&key)?;
     let parsed = parse_certificate(certificate)?;
@@ -95,6 +106,34 @@ fn strong_certificate(certificate: &X509) -> CheckResult<()> {
     if parsed.signature_algorithm != parsed.tbs_certificate.signature {
         return Err(CheckError::invalid(
             "The certificate's inner and outer signature algorithms disagree.",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn timestamp_purpose(certificate: &X509, leaf: bool) -> CheckResult<()> {
+    let parsed = parse_certificate(certificate)?;
+    let usage = parsed.tbs_certificate.get::<ExtendedKeyUsage>()
+        .map_err(|_| CheckError::invalid("A TSA chain certificate has malformed extended key usage."))?;
+    if leaf {
+        if parsed.tbs_certificate.get::<BasicConstraints>()
+            .map_err(|_| CheckError::invalid("The TSA basic constraints are malformed."))?
+            .is_some_and(|(_, constraints)| constraints.ca)
+            || !parsed.tbs_certificate.get::<KeyUsage>()
+                .map_err(|_| CheckError::invalid("The TSA key usage is malformed."))?
+                .is_some_and(|(_, usage)| usage.digital_signature())
+            || !usage.is_some_and(|(critical, usage)| critical && usage.0.len() == 1
+                && usage.0[0].to_string() == "1.3.6.1.5.5.7.3.8")
+        {
+            return Err(CheckError::unsupported(
+                "A TSA must be an end-entity digital-signature certificate with critical, exclusively timeStamping extended key usage.",
+            ));
+        }
+    } else if usage.is_some_and(|(_, usage)| !usage.0.iter().any(|oid| {
+        matches!(oid.to_string().as_str(), "1.3.6.1.5.5.7.3.8" | "2.5.29.37.0")
+    })) {
+        return Err(CheckError::unsupported(
+            "A CA in the TSA path does not permit timestamp signing.",
         ));
     }
     Ok(())
@@ -210,13 +249,15 @@ impl TrustStore {
                 .map(crypto::certificate_info)
                 .collect::<CheckResult<_>>()?,
             persistent: false,
+            evidence: self.evidence.info(),
+            evidence_bytes: self.evidence.bytes(),
         })
     }
 
-    fn check_revision(&self, revision: u64) -> Result<()> {
+    pub(crate) fn check_revision(&self, revision: u64) -> Result<()> {
         if revision != self.revision {
             return Err(invalid(
-                "The custom CA store changed. Refresh signature checks before changing its anchors.",
+                "The custom CA/evidence store changed. Refresh signature checks before changing it.",
             ));
         }
         Ok(())
@@ -269,17 +310,66 @@ impl TrustStore {
         Ok(store)
     }
 
-    pub(super) fn evaluate(&self, signer: &X509, embedded: &[X509]) -> ChainEvaluation {
+    pub(crate) fn add_evidence(
+        &mut self,
+        revision: u64,
+        kind: EvidenceKind,
+        bytes: &[u8],
+        binding: Option<&SignatureBinding>,
+    ) -> Result<TrustStoreInfo> {
+        self.check_revision(revision)?;
+        let item = EvidenceStore::prepare(kind, bytes, binding)?;
+        self.evidence.check_add(&item)?;
+        let next = self.revision.checked_add(1)
+            .ok_or_else(|| invalid("The custom CA/evidence store revision limit was reached."))?;
+        let mut info = self.info()?;
+        info.revision = next;
+        info.evidence_bytes += item.info().bytes;
+        info.evidence.push(item.info().clone());
+        info.evidence.sort_by(|a, b| a.fingerprint.cmp(&b.fingerprint));
+        self.evidence.insert(item);
+        self.revision = next;
+        Ok(info)
+    }
+
+    pub fn remove_evidence(&mut self, revision: u64, fingerprint: &str) -> Result<TrustStoreInfo> {
+        self.check_revision(revision)?;
+        let item = self.evidence.get(fingerprint)
+            .ok_or_else(|| invalid("That public evidence is no longer loaded."))?;
+        let next = self.revision.checked_add(1)
+            .ok_or_else(|| invalid("The custom CA/evidence store revision limit was reached."))?;
+        let mut info = self.info()?;
+        info.revision = next;
+        info.evidence_bytes -= item.info().bytes;
+        info.evidence.retain(|item| item.fingerprint != fingerprint);
+        self.evidence.remove(fingerprint);
+        self.revision = next;
+        Ok(info)
+    }
+
+    pub(super) fn document_chain(&self, signer: &X509, embedded: &[X509]) -> VerifiedChain {
+        self.chain(signer, embedded, false, None)
+    }
+
+    pub(super) fn timestamp_chain(
+        &self, signer: &X509, embedded: &[X509], at: Option<i64>,
+    ) -> VerifiedChain {
+        self.chain(signer, embedded, true, at)
+    }
+
+    fn chain(&self, signer: &X509, embedded: &[X509], timestamp: bool, at: Option<i64>) -> VerifiedChain {
         if self.anchors.is_empty() {
-            return ChainEvaluation::not_checked();
+            return VerifiedChain { evaluation: ChainEvaluation::not_checked(), certificates: vec![] };
         }
-        match self.evaluate_chain(signer, embedded) {
-            Ok(evaluation) => evaluation,
-            Err(error) => ChainEvaluation::failed(error.message),
+        match self.evaluate_chain(signer, embedded, timestamp, at) {
+            Ok(chain) => chain,
+            Err(error) => VerifiedChain { evaluation: ChainEvaluation::failed(error.message), certificates: vec![] },
         }
     }
 
-    fn evaluate_chain(&self, signer: &X509, embedded: &[X509]) -> CheckResult<ChainEvaluation> {
+    fn evaluate_chain(
+        &self, signer: &X509, embedded: &[X509], timestamp: bool, at: Option<i64>,
+    ) -> CheckResult<VerifiedChain> {
         let mut store = X509StoreBuilder::new().map_err(trust_error)?;
         for anchor in self.anchors.values() {
             store.add_cert(anchor.clone()).map_err(trust_error)?;
@@ -287,6 +377,7 @@ impl TrustStore {
         let mut parameters = X509VerifyParam::new().map_err(trust_error)?;
         parameters.set_depth(16);
         parameters.set_auth_level(2);
+        if let Some(time) = at { parameters.set_time(time); }
         parameters
             .set_flags(
                 X509VerifyFlags::X509_STRICT
@@ -297,7 +388,7 @@ impl TrustStore {
         // OpenSSL has no PDF purpose. ANY avoids imposing email/TLS semantics;
         // document EKU and leaf signing usage are checked explicitly below.
         parameters
-            .set_purpose(X509PurposeId::ANY)
+            .set_purpose(if timestamp { X509PurposeId::TIMESTAMP_SIGN } else { X509PurposeId::ANY })
             .map_err(trust_error)?;
         store.set_param(&parameters).map_err(trust_error)?;
         let store = store.build();
@@ -323,14 +414,16 @@ impl TrustStore {
             })
             .map_err(trust_error)?;
         if !valid {
-            return Ok(ChainEvaluation::failed(format!(
-                "No valid current-date path to a custom CA anchor: {error} (chain depth {depth}). Revocation and trusted time were not checked."
+            return Err(CheckError::invalid(format!(
+                "No valid {} path to a custom CA anchor: {error} (chain depth {depth}). Revocation and timestamp conclusions are separate.",
+                if at.is_some() { "TSA genTime" } else { "current-date" },
             )));
         }
         let mut fingerprints = Vec::new();
         for (index, certificate) in chain.iter().enumerate() {
             strong_certificate(certificate)?;
-            document_purpose(certificate, index == 0)?;
+            if timestamp { timestamp_purpose(certificate, index == 0)?; }
+            else { document_purpose(certificate, index == 0)?; }
             fingerprints.push(crypto::certificate_info(certificate)?.sha256_fingerprint);
         }
         let anchor = fingerprints
@@ -342,12 +435,14 @@ impl TrustStore {
                 )
             })?
             .clone();
-        Ok(ChainEvaluation {
+        Ok(VerifiedChain { evaluation: ChainEvaluation {
             status: "anchored_custom_store",
-            message: "The certificate chain is valid now and anchored in your custom CA store, not Adobe AATL/EUTL or OS trust. This does not establish revocation status, trusted signing time, or PDF content integrity.".into(),
+            message: format!("The {} certificate chain is valid {} and anchored in your custom CA store, not Adobe AATL/EUTL or OS trust. Revocation, timestamp authenticity and PDF integrity are separate checks.",
+                if timestamp { "TSA" } else { "document signer" },
+                if at.is_some() { "at token genTime" } else { "now" }),
             anchor_fingerprint: Some(anchor),
             chain_fingerprints: fingerprints,
-        })
+        }, certificates: chain })
     }
 }
 

@@ -5,7 +5,7 @@ use cms::{
     content_info::{CmsVersion, ContentInfo},
     signed_data::{SignedData, SignerIdentifier},
 };
-use der::{Decode, Encode, asn1::ObjectIdentifier};
+use der::{Decode, Encode, asn1::{ObjectIdentifier, OctetString}};
 use openssl::{
     asn1::Asn1Time,
     cms::{CMSOptions, CmsContentInfo},
@@ -27,6 +27,12 @@ const DATA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.
 const SIGNED_DATA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.2");
 const CONTENT_TYPE: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.3");
 const MESSAGE_DIGEST: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.4");
+pub(super) const TST_INFO: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.4");
+const SIGNATURE_TIMESTAMP: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.14");
+const SIGNING_CERTIFICATE_V2: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.2.47");
 
 pub(super) struct CmsDetails {
     pub digest: String,
@@ -34,6 +40,10 @@ pub(super) struct CmsDetails {
     pub certificate: CertificateInfo,
     pub signer: X509,
     pub embedded: Vec<X509>,
+    pub signature_value: Vec<u8>,
+    pub timestamp_token: Option<Vec<u8>>,
+    pub content: Option<Vec<u8>>,
+    pub signing_certificate_v2: Option<Vec<u8>>,
 }
 
 pub(super) struct Identity {
@@ -52,7 +62,7 @@ fn der_error(_: der::Error) -> CheckError {
     )
 }
 
-fn digest_name(oid: ObjectIdentifier) -> CheckResult<&'static str> {
+pub(super) fn digest_name(oid: ObjectIdentifier) -> CheckResult<&'static str> {
     match oid.to_string().as_str() {
         "2.16.840.1.101.3.4.2.1" => Ok("SHA-256"),
         "2.16.840.1.101.3.4.2.2" => Ok("SHA-384"),
@@ -61,6 +71,23 @@ fn digest_name(oid: ObjectIdentifier) -> CheckResult<&'static str> {
             "Only SHA-256, SHA-384, and SHA-512 CMS digests are supported. Weak and unknown algorithms are not accepted.",
         )),
     }
+}
+
+pub(super) fn message_digest(name: &str) -> CheckResult<MessageDigest> {
+    match name {
+        "SHA-256" => Ok(MessageDigest::sha256()),
+        "SHA-384" => Ok(MessageDigest::sha384()),
+        "SHA-512" => Ok(MessageDigest::sha512()),
+        _ => Err(CheckError::unsupported("Only SHA-256/384/512 digests are supported.")),
+    }
+}
+
+pub(super) fn fingerprint(bytes: &[u8]) -> String {
+    openssl::sha::sha256(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 pub(super) fn validate_key(
@@ -83,7 +110,7 @@ pub(super) fn validate_key(
     }
 }
 
-fn name(name: &X509NameRef) -> CheckResult<String> {
+pub(super) fn name(name: &X509NameRef) -> CheckResult<String> {
     name.entries()
         .map(|entry| {
             let label = entry.object().nid().short_name().unwrap_or("OID");
@@ -185,18 +212,34 @@ pub(super) fn cms_der(padded: &[u8]) -> CheckResult<&[u8]> {
 }
 
 pub(super) fn cms_details(der: &[u8]) -> CheckResult<CmsDetails> {
+    cms_details_for(der, false)
+}
+
+pub(super) fn timestamp_details(der: &[u8]) -> CheckResult<CmsDetails> {
+    cms_details_for(der, true)
+}
+
+fn cms_details_for(der: &[u8], timestamp: bool) -> CheckResult<CmsDetails> {
     let info = ContentInfo::from_der(der).map_err(der_error)?;
     if info.content_type != SIGNED_DATA {
         return Err(CheckError::unsupported("Contents is not CMS SignedData."));
     }
     let signed: SignedData = info.content.decode_as().map_err(der_error)?;
-    if signed.encap_content_info.econtent_type != DATA
-        || signed.encap_content_info.econtent.is_some()
+    let content_type = if timestamp { TST_INFO } else { DATA };
+    if signed.encap_content_info.econtent_type != content_type
+        || signed.encap_content_info.econtent.is_some() != timestamp
     {
         return Err(CheckError::unsupported(
-            "Only detached CMS data signatures are supported.",
+            if timestamp {
+                "An RFC3161 token must contain attached DER TSTInfo, not detached data."
+            } else {
+                "Only detached CMS data signatures are supported."
+            },
         ));
     }
+    let content = signed.encap_content_info.econtent.as_ref()
+        .map(|value| value.decode_as::<OctetString>().map(|value| value.as_bytes().to_vec()))
+        .transpose().map_err(der_error)?;
     if signed.signer_infos.0.len() != 1 || signed.digest_algorithms.len() != 1 {
         return Err(CheckError::unsupported(
             "Each PDF signature must contain exactly one CMS signer and digest algorithm.",
@@ -212,7 +255,9 @@ pub(super) fn cms_details(der: &[u8]) -> CheckResult<CmsDetails> {
         SignerIdentifier::IssuerAndSerialNumber(_) => CmsVersion::V1,
         SignerIdentifier::SubjectKeyIdentifier(_) => CmsVersion::V3,
     };
-    if signer.version != version || signed.version != version {
+    if signer.version != version
+        || signed.version != if timestamp { CmsVersion::V3 } else { version }
+    {
         return Err(CheckError::invalid(
             "CMS version declarations do not match the supported signer structure.",
         ));
@@ -252,15 +297,36 @@ pub(super) fn cms_details(der: &[u8]) -> CheckResult<CmsDetails> {
             "CMS SHA-2 digest parameters must be absent or NULL.",
         ));
     }
-    if signer
-        .unsigned_attrs
-        .as_ref()
-        .is_some_and(|attributes| !attributes.is_empty())
+    let mut timestamp_token = None;
+    if let Some(attributes) = &signer.unsigned_attrs
+        && !attributes.is_empty()
     {
-        return Err(CheckError::unsupported(
-            "CMS timestamps, countersignatures, and other unsigned attributes are not evaluated in this supported subset.",
-        ));
+        if timestamp || attributes.len() != 1 {
+            return Err(CheckError::unsupported(
+                "Only one signatureTimeStampToken unsigned attribute is supported on a PDF signer. Countersignatures, nested timestamps and other unsigned attributes are refused.",
+            ));
+        }
+        let attribute = attributes.iter().next().expect("one attribute checked");
+        if attribute.oid != SIGNATURE_TIMESTAMP || attribute.values.len() != 1 {
+            return Err(CheckError::unsupported(
+                "Only one unambiguous RFC3161 signatureTimeStampToken unsigned attribute is supported.",
+            ));
+        }
+        let token = attribute.values.iter().next().expect("one value checked");
+        let encoded = token.to_der().map_err(der_error)?;
+        let token_info = ContentInfo::from_der(&encoded).map_err(der_error)?;
+        let token_data: SignedData = token_info.content.decode_as().map_err(der_error)?;
+        if token_info.content_type != SIGNED_DATA
+            || token_data.encap_content_info.econtent_type != TST_INFO
+            || token_data.encap_content_info.econtent.is_none()
+        {
+            return Err(CheckError::unsupported(
+                "The signatureTimeStampToken attribute must be a DER CMS token containing TSTInfo.",
+            ));
+        }
+        timestamp_token = Some(encoded);
     }
+    let mut signing_certificate_v2 = None;
     if let Some(attributes) = &signer.signed_attrs {
         let mut seen = HashSet::new();
         for attribute in attributes.iter() {
@@ -276,7 +342,7 @@ pub(super) fn cms_details(der: &[u8]) -> CheckResult<CmsDetails> {
                         .expect("one value checked")
                         .decode_as::<ObjectIdentifier>()
                         .map_err(der_error)?
-                        != DATA)
+                        != content_type)
             {
                 return Err(CheckError::invalid(
                     "CMS content-type signed attribute is invalid.",
@@ -287,12 +353,33 @@ pub(super) fn cms_details(der: &[u8]) -> CheckResult<CmsDetails> {
                     "CMS message-digest signed attribute is ambiguous.",
                 ));
             }
+            if timestamp && attribute.oid == SIGNING_CERTIFICATE_V2 {
+                if attribute.values.len() != 1 {
+                    return Err(CheckError::invalid(
+                        "The TSA signingCertificateV2 attribute is ambiguous.",
+                    ));
+                }
+                signing_certificate_v2 = Some(
+                    attribute.values.iter().next().expect("one value checked")
+                        .to_der().map_err(der_error)?,
+                );
+            }
+            if timestamp && attribute.oid.to_string() == "1.2.840.113549.1.9.16.2.12" {
+                return Err(CheckError::unsupported(
+                    "SHA-1 signingCertificate timestamp bindings are unsupported; use SHA-2 signingCertificateV2.",
+                ));
+            }
         }
         if !seen.contains(&CONTENT_TYPE) || !seen.contains(&MESSAGE_DIGEST) {
             return Err(CheckError::invalid(
                 "CMS signed attributes omit content-type or message-digest.",
             ));
         }
+    }
+    if timestamp && (signer.signed_attrs.is_none() || signing_certificate_v2.is_none()) {
+        return Err(CheckError::unsupported(
+            "RFC3161 tokens require signed attributes and a SHA-2 signingCertificateV2 TSA certificate binding.",
+        ));
     }
     let certificates = signed
         .certificates
@@ -380,6 +467,10 @@ pub(super) fn cms_details(der: &[u8]) -> CheckResult<CmsDetails> {
         certificate: certificate_info(&cert)?,
         signer: cert,
         embedded,
+        signature_value: signer.signature.as_bytes().to_vec(),
+        timestamp_token,
+        content,
+        signing_certificate_v2,
     })
 }
 
@@ -403,6 +494,25 @@ pub(super) fn verify(der: &[u8], data: &[u8], details: &CmsDetails) -> CheckResu
             "The CMS digest or cryptographic signature does not match the signed PDF bytes.",
         )
     })
+}
+
+pub(super) fn verify_timestamp(der: &[u8], details: &CmsDetails) -> CheckResult<()> {
+    let mut cms = CmsContentInfo::from_der(der).map_err(crypto_error)?;
+    let mut certificates = Stack::new().map_err(crypto_error)?;
+    certificates.push(details.signer.clone()).map_err(crypto_error)?;
+    let mut output = Vec::new();
+    cms.verify(
+        Some(&certificates), None, None, Some(&mut output),
+        CMSOptions::BINARY | CMSOptions::NO_SIGNER_CERT_VERIFY | CMSOptions::NOINTERN,
+    ).map_err(|_| CheckError::invalid(
+        "The RFC3161 TSA CMS signature or signed TSTInfo digest does not verify.",
+    ))?;
+    if details.content.as_deref() != Some(output.as_slice()) {
+        return Err(CheckError::invalid(
+            "The verified timestamp content does not match its DER TSTInfo.",
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn identity(bytes: &[u8], password: &str) -> CheckResult<Identity> {

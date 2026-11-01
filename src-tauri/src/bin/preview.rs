@@ -207,6 +207,28 @@ struct RemoveAnchorRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EvidenceRequest {
+    document_id: u64,
+    revision: u64,
+    epoch: u64,
+    trust_revision: u64,
+    kind: folio_core::signatures::EvidenceKind,
+    signature_id: Option<String>,
+    evidence: Vec<u8>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RemoveEvidenceRequest {
+    document_id: u64,
+    revision: u64,
+    epoch: u64,
+    trust_revision: u64,
+    fingerprint: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AttachmentRequest {
     document_id: u64,
     revision: u64,
@@ -829,6 +851,20 @@ fn handle(
                 &password,
                 input.field_id.as_deref(),
             )?));
+        }
+        (&Method::Post, "/signatures/evidence/add") => {
+            let input: EvidenceRequest = signature_body(request, folio_core::signatures::MAX_CRL_BYTES * 4 + 8192)?;
+            let evidence = zeroize::Zeroizing::new(input.evidence);
+            return json(workspace.add_signature_evidence(
+                input.document_id, input.revision, input.epoch, input.trust_revision,
+                input.kind, input.signature_id.as_deref(), &evidence,
+            )?);
+        }
+        (&Method::Post, "/signatures/evidence/remove") => {
+            let input: RemoveEvidenceRequest = signature_body(request, 8192)?;
+            return json(workspace.remove_signature_evidence(
+                input.document_id, input.revision, input.epoch, input.trust_revision, &input.fingerprint,
+            )?);
         }
         (&Method::Post, "/forms") => {
             let input: Revision = json_body(request)?;

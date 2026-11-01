@@ -448,8 +448,10 @@ impl Workspace {
         id: u64,
         revision: u64,
     ) -> Result<crate::signatures::SignatureReport> {
-        self.check_revision(id, revision)?
-            .signature_report_with_trust(&self.signature_trust)
+        let mut report = self.check_revision(id, revision)?
+            .signature_report_with_trust(&self.signature_trust)?;
+        report.epoch = self.technical_epoch(id);
+        Ok(report)
     }
 
     pub fn signature_trust_store(&self) -> Result<crate::signatures::TrustStoreInfo> {
@@ -476,6 +478,43 @@ impl Workspace {
     ) -> Result<crate::signatures::TrustStoreInfo> {
         self.check_revision(id, revision)?;
         self.signature_trust.remove(trust_revision, fingerprint)
+    }
+
+    pub fn check_signature_evidence_context(
+        &self, id: u64, revision: u64, epoch: u64, trust_revision: u64,
+    ) -> Result<()> {
+        self.check_revision(id, revision)?;
+        self.signature_trust.check_revision(trust_revision)?;
+        if self.technical_epoch(id) != epoch {
+            return Err(crate::document::invalid(
+                "The PDF's source/draft lifetime changed. Refresh signature checks before changing public evidence.",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn add_signature_evidence(
+        &mut self, id: u64, revision: u64, epoch: u64, trust_revision: u64,
+        kind: crate::signatures::EvidenceKind, signature_id: Option<&str>, bytes: &[u8],
+    ) -> Result<crate::signatures::TrustStoreInfo> {
+        self.check_signature_evidence_context(id, revision, epoch, trust_revision)?;
+        let binding = match (kind, signature_id) {
+            (crate::signatures::EvidenceKind::Crl, None) => None,
+            (crate::signatures::EvidenceKind::Timestamp, Some(signature_id)) => {
+                Some(self.document(id)?.signature_binding(signature_id)?)
+            }
+            _ => return Err(crate::document::invalid(
+                "Select a PDF signature only for RFC3161 timestamp imports; full CRLs are issuer evidence.",
+            )),
+        };
+        self.signature_trust.add_evidence(trust_revision, kind, bytes, binding.as_ref())
+    }
+
+    pub fn remove_signature_evidence(
+        &mut self, id: u64, revision: u64, epoch: u64, trust_revision: u64, fingerprint: &str,
+    ) -> Result<crate::signatures::TrustStoreInfo> {
+        self.check_signature_evidence_context(id, revision, epoch, trust_revision)?;
+        self.signature_trust.remove_evidence(trust_revision, fingerprint)
     }
 
     pub fn request_open_paths(&mut self, paths: Vec<PathBuf>) -> Vec<OpenOutcome> {

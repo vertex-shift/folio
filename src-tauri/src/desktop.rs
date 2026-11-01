@@ -469,6 +469,61 @@ async fn remove_signature_anchor(
 }
 
 #[tauri::command]
+async fn choose_signature_evidence(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+    epoch: u64,
+    trust_revision: u64,
+    kind: crate::signatures::EvidenceKind,
+    signature_id: Option<String>,
+) -> std::result::Result<Option<crate::signatures::TrustStoreInfo>, String> {
+    let selected_id = signature_id.clone();
+    with_state(app.clone(), move |state| {
+        state.workspace.check_signature_evidence_context(document_id, revision, epoch, trust_revision)?;
+        match (kind, selected_id) {
+            (crate::signatures::EvidenceKind::Crl, None) => {}
+            (crate::signatures::EvidenceKind::Timestamp, Some(id)) => {
+                state.workspace.document(document_id)?.signature_binding(&id)?;
+            }
+            _ => return Err(crate::document::invalid("Select an actual PDF signature only for timestamp evidence.")),
+        }
+        Ok(())
+    }).await?;
+    let dialog = rfd::AsyncFileDialog::new();
+    let dialog = match kind {
+        crate::signatures::EvidenceKind::Crl => dialog
+            .set_title("Import one public full CRL (offline, this run only)")
+            .add_filter("Public certificate revocation list", &["crl", "pem", "der"]),
+        crate::signatures::EvidenceKind::Timestamp => dialog
+            .set_title("Import RFC3161 evidence for the selected PDF signature")
+            .add_filter("DER timestamp response/token", &["tsr", "tst", "der"]),
+    };
+    let Some(file) = dialog.pick_file().await else { return Ok(None); };
+    with_state(app, move |state| {
+        state.workspace.check_signature_evidence_context(document_id, revision, epoch, trust_revision)?;
+        let bytes = crate::signatures::read_evidence_file(file.path(), kind)?;
+        Ok(Some(state.workspace.add_signature_evidence(
+            document_id, revision, epoch, trust_revision, kind, signature_id.as_deref(), &bytes,
+        )?))
+    }).await
+}
+
+#[tauri::command]
+async fn remove_signature_evidence(
+    app: AppHandle,
+    document_id: u64,
+    revision: u64,
+    epoch: u64,
+    trust_revision: u64,
+    fingerprint: String,
+) -> std::result::Result<crate::signatures::TrustStoreInfo, String> {
+    with_state(app, move |state| {
+        state.workspace.remove_signature_evidence(document_id, revision, epoch, trust_revision, &fingerprint)
+    }).await
+}
+
+#[tauri::command]
 async fn form_fields(
     app: AppHandle,
     document_id: u64,
@@ -970,6 +1025,8 @@ pub fn run() {
             image_commands::edit_image_occurrence,
             image_commands::cancel_image_replacement,
             inspect_signatures,
+            choose_signature_evidence,
+            remove_signature_evidence,
             choose_signing_identity,
             export_signed_copy,
             choose_signature_anchor,

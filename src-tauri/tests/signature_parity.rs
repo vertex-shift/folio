@@ -3,7 +3,8 @@ use std::{path::Path, process::Command, sync::OnceLock};
 use folio_core::{
     document::{Edit, Session},
     signatures::{
-        CertificateValidity, Coverage, Integrity, MAX_ANCHOR_BYTES, TrustStore, read_anchor_file,
+        CertificateValidity, Coverage, Integrity, MAX_ANCHOR_BYTES, RevocationStatus, TrustStore,
+        TrustedTimeStatus, read_anchor_file,
     },
     workspace::{OpenOutcome, Workspace},
 };
@@ -435,8 +436,8 @@ fn selected_merged_and_separate_widgets_keep_identity_geometry_other_fields_and_
                 .unwrap()
                 .starts_with("D:")
         );
-        assert_eq!(report.signatures[0].revocation, "not_checked");
-        assert_eq!(report.signatures[0].trusted_time, "not_checked");
+        assert_eq!(report.signatures[0].revocation.status, RevocationStatus::NotChecked);
+        assert_eq!(report.signatures[0].trusted_time.status, TrustedTimeStatus::NotChecked);
         assert_eq!(report.empty_fields[0].id, id(fixture.fields[1]));
         source.undo().unwrap();
         assert!(source.info().unwrap().annotations.is_empty());
@@ -1051,8 +1052,8 @@ fn explicit_custom_root_with_embedded_intermediate_is_never_system_or_embedded_s
         signature.chain.anchor_fingerprint.as_ref().unwrap(),
         &report.trust_store.anchors[0].sha256_fingerprint
     );
-    assert_eq!(signature.revocation, "not_checked");
-    assert_eq!(signature.trusted_time, "not_checked");
+    assert_eq!(signature.revocation.status, RevocationStatus::Incomplete);
+    assert_eq!(signature.trusted_time.status, TrustedTimeStatus::NotChecked);
     assert!(
         signature
             .chain
@@ -1094,6 +1095,7 @@ fn explicit_custom_root_with_embedded_intermediate_is_never_system_or_embedded_s
         [
             "documentId",
             "emptyFields",
+            "epoch",
             "revision",
             "signatures",
             "signingBlockedReason",
@@ -1108,7 +1110,7 @@ fn explicit_custom_root_with_embedded_intermediate_is_never_system_or_embedded_s
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["anchors", "persistent", "revision"]
+        ["anchors", "evidence", "evidenceBytes", "persistent", "revision"]
     );
     assert_eq!(
         json["signatures"][0]
@@ -1129,6 +1131,7 @@ fn explicit_custom_root_with_embedded_intermediate_is_never_system_or_embedded_s
             "integrity",
             "message",
             "revocation",
+            "signatureValueSha256",
             "signedBytes",
             "trustedTime"
         ]
@@ -1137,8 +1140,8 @@ fn explicit_custom_root_with_embedded_intermediate_is_never_system_or_embedded_s
         json["signatures"][0]["certificate"]["identityTrust"],
         "anchored_custom_store"
     );
-    assert_eq!(json["signatures"][0]["revocation"], "not_checked");
-    assert_eq!(json["signatures"][0]["trustedTime"], "not_checked");
+    assert_eq!(json["signatures"][0]["revocation"]["status"], "incomplete");
+    assert_eq!(json["signatures"][0]["trustedTime"]["status"], "not_checked");
 }
 
 #[test]
@@ -1229,7 +1232,7 @@ fn leaf_current_validity_and_document_purpose_never_become_historical_or_timesta
             report.signatures[0].certificate.as_ref().unwrap().validity,
             validity
         );
-        assert_eq!(report.signatures[0].trusted_time, "not_checked");
+        assert_eq!(report.signatures[0].trusted_time.status, TrustedTimeStatus::NotChecked);
     }
 }
 

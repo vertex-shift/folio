@@ -1,14 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { downloadPdf, native, post, previewJson, previewResponse, revision } from "../../lib/bridge";
 import type { DocumentInfo } from "../../lib/types";
-import { signedCopyName, validateAnchorFile, validateIdentityFile } from "./types";
-import type { SignatureReport, SignatureTrustStore, SigningIdentity, SigningIdentityFile } from "./types";
+import { evidenceTarget, signedCopyName, validateAnchorFile, validateEvidenceFile, validateIdentityFile } from "./types";
+import type { SignatureEvidenceKind, SignatureReport, SignatureTrustStore, SigningIdentity, SigningIdentityFile } from "./types";
 import { signatureTrustState } from "./trustState";
 
 export const signatureBridge = {
   async inspect(info: DocumentInfo): Promise<SignatureReport> {
+    const lifetime = signatureTrustState.captureDocument(info.id);
     const report = await (native ? invoke<SignatureReport>("inspect_signatures", revision(info))
       : previewJson<SignatureReport>("/signatures/inspect", post(revision(info))));
+    if (report.documentId !== info.id || report.revision !== info.revision
+        || !signatureTrustState.acceptDocumentEpoch(info.id, report.epoch, lifetime)) {
+      throw new Error("The PDF source/draft lifetime changed during these checks. Refresh signatures.");
+    }
     if (!signatureTrustState.accept(report.trustStore.revision)) {
       throw new Error("The custom CA store changed during these checks. Refresh signature checks.");
     }
@@ -40,6 +45,38 @@ export const signatureBridge = {
     const store = await (native ? invoke<SignatureTrustStore>("remove_signature_anchor", request)
       : previewJson<SignatureTrustStore>("/signatures/anchors/remove", post(request)));
     if (!signatureTrustState.accept(store.revision)) throw new Error("The custom CA store changed. Refresh signature checks.");
+    return store;
+  },
+  async addEvidence(info: DocumentInfo, report: SignatureReport, kind: SignatureEvidenceKind,
+    signatureId: string | null, file?: File): Promise<SignatureTrustStore | null> {
+    evidenceTarget(report, kind, signatureId);
+    const lifetime = signatureTrustState.captureDocument(info.id);
+    const request = { ...revision(info), epoch: report.epoch, trustRevision: report.trustStore.revision, kind, signatureId };
+    let store: SignatureTrustStore | null;
+    if (native) {
+      store = await invoke("choose_signature_evidence", request);
+    } else {
+      if (!file) return null;
+      validateEvidenceFile(file, kind);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      try {
+        if (!signatureTrustState.documentCurrent(info.id, lifetime)
+            || signatureTrustState.currentRevision() !== report.trustStore.revision) {
+          throw new Error("The PDF lifetime or public evidence store changed while reading the file. Refresh and import it again.");
+        }
+        store = await previewJson("/signatures/evidence/add", post({ ...request, evidence: Array.from(bytes) }));
+      } finally { bytes.fill(0); }
+    }
+    if (store && !signatureTrustState.accept(store.revision)) {
+      throw new Error("The custom CA/evidence store changed. Refresh signature checks.");
+    }
+    return store;
+  },
+  async removeEvidence(info: DocumentInfo, report: SignatureReport, fingerprint: string): Promise<SignatureTrustStore> {
+    const request = { ...revision(info), epoch: report.epoch, trustRevision: report.trustStore.revision, fingerprint };
+    const store = await (native ? invoke<SignatureTrustStore>("remove_signature_evidence", request)
+      : previewJson<SignatureTrustStore>("/signatures/evidence/remove", post(request)));
+    if (!signatureTrustState.accept(store.revision)) throw new Error("The custom CA/evidence store changed. Refresh signature checks.");
     return store;
   },
   async export(info: DocumentInfo, identity: SigningIdentity, password: string, fieldId: string | null = null): Promise<string | null> {

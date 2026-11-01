@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  certificateValidityLabel, chainLabel, signatureSummary, signedCopyName, signingField, validateAnchorFile, validateIdentityFile,
+  certificateValidityLabel, chainLabel, evidenceTarget, revocationLabel, signatureSummary,
+  signedCopyName, signingField, trustedTimeLabel, validateAnchorFile, validateEvidenceFile, validateIdentityFile,
 } from "../src/features/signatures/types.ts";
 import type { SignatureInfo, SignatureReport } from "../src/features/signatures/types.ts";
 import { createSignatureTrustState } from "../src/features/signatures/trustState.ts";
@@ -15,7 +16,9 @@ function signature(overrides: Partial<SignatureInfo> = {}): SignatureInfo {
       notBefore: "", notAfter: "", validity: "valid_now", selfSigned: true, identityTrust: "not_checked",
     },
     chain: { status: "not_checked", message: "", anchorFingerprint: null, chainFingerprints: [] },
-    claimedSigningTime: null, revocation: "not_checked", trustedTime: "not_checked",
+    claimedSigningTime: null, signatureValueSha256: "AB:CD",
+    revocation: { status: "not_checked", message: "", checkedAt: null, certificates: [] },
+    trustedTime: { status: "not_checked", message: "", timestamps: [] },
     ...overrides,
   };
 }
@@ -83,8 +86,8 @@ test("custom anchoring labels do not claim Adobe, OS, revocation, time, or mathe
 
 test("selection binds canonical logical field IDs, not names, widget IDs, or a stale slot", () => {
   const report: SignatureReport = {
-    documentId: 1, revision: 4, signatures: [], warnings: [], signingBlockedReason: null,
-    trustStore: { revision: 0, anchors: [], persistent: false },
+    documentId: 1, revision: 4, epoch: 0, signatures: [], warnings: [], signingBlockedReason: null,
+    trustStore: { revision: 0, anchors: [], evidence: [], evidenceBytes: 0, persistent: false },
     emptyFields: [{ id: "50:0", name: "Approval", blockedReason: null,
       widgets: [{ id: "51:0", page: 1, rect: [40, 130, 300, 200], visible: true }] }],
   };
@@ -95,6 +98,68 @@ test("selection binds canonical logical field IDs, not names, widget IDs, or a s
   }
   assert.throws(() => signingField({ ...report, signingBlockedReason: "Unsigned changes" }, null), /Unsigned changes/);
   assert.throws(() => signingField({ ...report, emptyFields: [{ ...report.emptyFields[0]!, blockedReason: "Locked" }] }, "50:0"), /Locked/);
+});
+
+test("public evidence accepts only exact kind-specific filename and byte-count bounds", () => {
+  for (const kind of ["crl", "timestamp"] as const) {
+    const name = kind === "crl" ? "issuer.crl" : "time.tsr";
+    const max = kind === "crl" ? 1024 * 1024 : 256 * 1024;
+    validateEvidenceFile({ name, size: max }, kind);
+    for (const size of [0, max + 1, Number.NaN, 0.5]) assert.throws(() => validateEvidenceFile({ name, size }, kind));
+    for (const name of ["private.key", "identity.p12", "scan.pdf"]) assert.throws(() => validateEvidenceFile({ name, size: 1 }, kind));
+  }
+  assert.throws(() => validateEvidenceFile({ name: "cert.pem", size: 1 }, "timestamp"));
+});
+
+test("timestamp targets bind actual cryptographically intact CMS signatures without signing-policy bypasses", () => {
+  const report: SignatureReport = {
+    documentId: 1, revision: 1, epoch: 0, signatures: [signature()], emptyFields: [],
+    warnings: [], signingBlockedReason: "Signing is forbidden on this source",
+    trustStore: { revision: 0, anchors: [], evidence: [], evidenceBytes: 0, persistent: false },
+  };
+  assert.equal(evidenceTarget(report, "timestamp", "1:0"), report.signatures[0]);
+  assert.equal(evidenceTarget(report, "crl", null), null);
+  assert.throws(() => evidenceTarget(report, "crl", "1:0"));
+  for (const id of [null, "", "01:0", "1:1", "Signer", "1:0/../../key"]) {
+    assert.throws(() => evidenceTarget(report, "timestamp", id));
+  }
+  for (const overrides of [{ integrity: "invalid" as const }, { integrity: "unsupported" as const },
+    { signatureValueSha256: null }, { certificate: null }]) {
+    assert.throws(() => evidenceTarget({ ...report, signatures: [signature(overrides)] }, "timestamp", "1:0"));
+  }
+});
+
+test("valid timestamp labels never clear signer revocation or imply historical/qualified signature trust", () => {
+  assert.match(revocationLabel("revoked"), /revoked/);
+  assert.match(revocationLabel("good_current_evidence"), /current imported CRLs/);
+  assert.match(trustedTimeLabel("verified_custom_store"), /custom evidence/);
+  for (const status of ["not_checked", "incomplete", "revoked", "future", "untrusted", "invalid", "unsupported"] as const) {
+    assert.ok(!trustedTimeLabel(status).includes("verified with"));
+  }
+  const revoked = signature({
+    revocation: { status: "revoked", message: "", checkedAt: null, certificates: [] },
+    trustedTime: { status: "verified_custom_store", message: "", timestamps: [] },
+  });
+  assert.deepEqual(signatureSummary(revoked), { title: "Signed bytes intact", tone: "intact" });
+  assert.equal(revoked.certificate?.identityTrust, "not_checked");
+});
+
+test("draft/source lifetimes invalidate only the originating document and reject late same-revision epochs", () => {
+  const state = createSignatureTrustState();
+  const invalidated: (number | undefined)[] = [];
+  state.subscribe((id) => { invalidated.push(id); });
+  const first = state.captureDocument(1), other = state.captureDocument(2);
+  assert.equal(state.acceptDocumentEpoch(1, 3, first), true);
+  assert.equal(state.acceptDocumentEpoch(1, 2, first), false);
+  state.invalidateDocument(1);
+  assert.deepEqual(invalidated, [1]);
+  assert.equal(state.documentCurrent(1, first), false);
+  assert.equal(state.documentCurrent(2, other), true);
+  assert.equal(state.acceptDocumentEpoch(1, 100, first), false);
+  assert.equal(state.acceptDocumentEpoch(1, 4, state.captureDocument(1)), true);
+  for (const epoch of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(state.acceptDocumentEpoch(1, epoch, state.captureDocument(1)), false);
+  }
 });
 
 test("anchor changes invalidate all panels including inactive tabs and reject late stale reports", () => {

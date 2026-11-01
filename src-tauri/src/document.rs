@@ -367,6 +367,12 @@ impl Session {
         Ok(report)
     }
 
+    pub(crate) fn signature_binding(
+        &self, signature_id: &str,
+    ) -> Result<crate::signatures::evidence::SignatureBinding> {
+        crate::signatures::signature_binding(&self.document, &self.bytes, signature_id)
+    }
+
     pub fn ensure_signable(&self) -> Result<()> {
         self.ensure_signing_permissions()?;
         crate::signatures::ensure_signable(&self.document, &self.bytes)

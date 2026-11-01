@@ -29,6 +29,75 @@ export interface SignatureTrustStore {
   revision: number;
   anchors: SignatureCertificate[];
   persistent: false;
+  evidence: SignatureEvidence[];
+  evidenceBytes: number;
+}
+
+export type SignatureEvidenceKind = "crl" | "timestamp";
+
+export interface SignatureEvidence {
+  kind: SignatureEvidenceKind;
+  fingerprint: string;
+  bytes: number;
+  issuer: string;
+  thisUpdate: string | null;
+  nextUpdate: string | null;
+  crlNumber: string | null;
+  genTime: string | null;
+  boundCertificateFingerprint: string | null;
+  boundSignatureValueSha256: string | null;
+}
+
+export type RevocationStatus = "not_checked" | "good_current_evidence" | "revoked" | "incomplete"
+  | "missing" | "expired" | "future" | "invalid" | "unsupported" | "untrusted";
+
+export interface CertificateRevocation {
+  certificateFingerprint: string;
+  serial: string;
+  issuerFingerprint: string;
+  status: RevocationStatus;
+  message: string;
+  evidenceFingerprint: string | null;
+  thisUpdate: string | null;
+  nextUpdate: string | null;
+  revocationTime: string | null;
+}
+
+export interface SignatureRevocation {
+  status: RevocationStatus;
+  message: string;
+  checkedAt: string | null;
+  certificates: CertificateRevocation[];
+}
+
+export type TrustedTimeStatus = "not_checked" | "verified_custom_store" | "incomplete"
+  | "revoked" | "future" | "untrusted" | "invalid" | "unsupported";
+
+export interface SignatureTimestamp {
+  status: TrustedTimeStatus;
+  message: string;
+  source: "embedded" | "imported";
+  evidenceFingerprint: string;
+  cryptographicIntegrity: SignatureInfo["integrity"];
+  imprintMatches: boolean | null;
+  imprintDigest: string | null;
+  boundSignatureValueSha256: string;
+  genTime: string | null;
+  accuracyMicros: number | null;
+  policyOid: string | null;
+  serialNumber: string | null;
+  nonce: string | null;
+  ordering: boolean | null;
+  tsaCertificate: SignatureCertificate | null;
+  tsaCurrentChain: SignatureChain;
+  tsaChainAtGenTime: SignatureChain;
+  tsaRevocation: SignatureRevocation;
+}
+
+export interface SignatureTrustedTime {
+  status: TrustedTimeStatus;
+  message: string;
+  timestamps: SignatureTimestamp[];
 }
 
 export interface SignatureField {
@@ -50,13 +119,15 @@ export interface SignatureInfo {
   certificate: SignatureCertificate | null;
   chain: SignatureChain;
   claimedSigningTime: string | null;
-  revocation: "not_checked";
-  trustedTime: "not_checked";
+  signatureValueSha256: string | null;
+  revocation: SignatureRevocation;
+  trustedTime: SignatureTrustedTime;
 }
 
 export interface SignatureReport {
   documentId: number;
   revision: number;
+  epoch: number;
   signatures: SignatureInfo[];
   signingBlockedReason: string | null;
   warnings: string[];
@@ -92,6 +163,57 @@ export function validateAnchorFile(file: Pick<File, "name" | "size">): void {
   if (!Number.isSafeInteger(file.size) || file.size <= 0 || file.size > 64 * 1024) {
     throw new Error("Choose one nonempty public CA certificate of at most 64 KiB.");
   }
+}
+
+export function validateEvidenceFile(file: Pick<File, "name" | "size">, kind: SignatureEvidenceKind): void {
+  const validName = kind === "crl" ? /\.(crl|pem|der)$/i : /\.(tsr|tst|der)$/i;
+  if (!validName.test(file.name)) throw new Error(kind === "crl"
+    ? "Choose one public .crl, .pem or .der CRL, not a private key or certificate bundle."
+    : "Choose one DER .tsr response or .tst/.der RFC3161 timestamp token.");
+  const limit = kind === "crl" ? 1024 * 1024 : 256 * 1024;
+  if (!Number.isSafeInteger(file.size) || file.size <= 0 || file.size > limit) {
+    throw new Error(`Choose nonempty public ${kind === "crl" ? "CRL evidence up to 1 MiB" : "timestamp evidence up to 256 KiB"}.`);
+  }
+}
+
+export function evidenceTarget(report: SignatureReport, kind: SignatureEvidenceKind, signatureId: string | null): SignatureInfo | null {
+  if (kind === "crl") {
+    if (signatureId !== null) throw new Error("CRLs are issuer evidence, not signature-specific timestamps.");
+    return null;
+  }
+  const signature = report.signatures.find((signature) => signature.id === signatureId);
+  if (!signature || signature.integrity !== "intact" || !signature.signatureValueSha256 || !signature.certificate) {
+    throw new Error("Refresh and select an actual PDF signature whose exact-byte cryptographic checks pass.");
+  }
+  return signature;
+}
+
+export function revocationLabel(status: RevocationStatus): string {
+  return {
+    not_checked: "Revocation not checked",
+    good_current_evidence: "No revocation listed in current imported CRLs",
+    revoked: "Certificate revoked in current imported evidence",
+    incomplete: "Revocation evidence incomplete",
+    missing: "Issuer CRL missing",
+    expired: "Imported CRL expired",
+    future: "Imported CRL future-dated",
+    invalid: "Revocation evidence failed verification",
+    unsupported: "Revocation evidence unsupported",
+    untrusted: "Revocation path is not custom-anchored",
+  }[status];
+}
+
+export function trustedTimeLabel(status: TrustedTimeStatus): string {
+  return {
+    not_checked: "Trusted time not checked",
+    verified_custom_store: "Timestamp verified with custom evidence",
+    incomplete: "Timestamp TSA evidence incomplete",
+    revoked: "Timestamp TSA path revoked",
+    future: "Timestamp time is in the future",
+    untrusted: "Timestamp TSA path is not trusted",
+    invalid: "Timestamp verification failed",
+    unsupported: "Timestamp evidence unsupported",
+  }[status];
 }
 
 export function signingField(report: SignatureReport, fieldId: string | null): SignatureField | null {
