@@ -48,3 +48,13 @@ testimonials, signup urgency, analytics or document-upload service.
 
 FINISH: Batch desktop and mobile review, keyboard/link/download checks, an
 independent finish review, and asset provenance before publication through a PR.
+
+## Website appearance extension
+
+Default to System with live device following, plus persistent Light/Dark
+overrides in the isolated `folio.site.appearance` key. The header uses an
+accessible native selector, not a modal or decorative icon-only switch.
+Dark surfaces inherit the desktop's graphite/slate and pale blue semantics;
+the original blue source chapter and original PDF/screenshot pixels stay true.
+Palette changes are atomic to retain contrast, including controls, selection,
+focus, disclosure and sharing recovery. Storage failures remain explicit.

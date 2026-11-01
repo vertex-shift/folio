@@ -11,6 +11,19 @@ The self-hosted Commissioner font carries its SIL Open Font License in
 use the repository's Apache-2.0 license; `assets/provenance.json` records origins,
 crop geometry and hashes. Raster sidecars retain their provenance too.
 
+## Appearance
+
+The site defaults to **System**, following live `prefers-color-scheme` changes.
+The header offers explicit Light and Dark overrides. Only the
+`folio.site.appearance` browser preference is stored, separately from the desktop
+app's `folio.appearance`; it is never sent to a service. A small blocking
+bootstrap restores the choice before CSS loads, avoiding a wrong-theme flash.
+
+Without JavaScript, CSS still follows the system preference and the enhancement
+control stays hidden. Blocked or invalid browser storage produces a visible
+notice; choices still apply for the current visit. Theme colors change atomically,
+while original PDF/workspace imagery keeps its actual colors.
+
 ## Preview and check
 
 From the repository root:
