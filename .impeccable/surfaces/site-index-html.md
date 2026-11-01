@@ -40,9 +40,10 @@ SIGNATURE INTERACTION: Explore a real workspace, download its original sample
 PDF, and pass on the page through native sharing or an explicit copied link.
 All downloads and contribution links are real destinations.
 
-CONTENT TRUTH: Stable v0.1.1 installers exist for Apple Silicon macOS, Windows
-x64 and Linux x64. New paragraph, tagged-copy, multilingual OCR and offline
-trust work is on main, not in those installers. No full Acrobat replacement,
+CONTENT TRUTH: Published v0.1.2 installers exist for Apple Silicon macOS, Windows
+x64 and Linux x64, including the paragraph, tagged-copy, multilingual OCR and
+offline trust feature wave. Future work on main may be ahead of this release;
+label source-build screenshots accurately. No full Acrobat replacement,
 PDF/UA certification, qualified/LTV assurance, fabricated ratings, users,
 testimonials, signup urgency, analytics or document-upload service.
 

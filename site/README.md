@@ -48,11 +48,12 @@ go to the gitignored `.impeccable/review/site/` directory.
 
 ## Keep the release boundary honest
 
-The download links intentionally name **v0.1.1**. Those installers contain
-the earlier reader/editor, protected-file and multi-tab workflows. Newer
-paragraph reflow, accessibility, multilingual OCR and offline trust work is
-on `main`, not in those binaries. Source-build screenshots are explicitly
-labeled. Do not advertise a new feature as downloadable before releasing it.
+The download links intentionally name the published **v0.1.2** release. Its
+installers include the paragraph reflow, reviewed accessibility, multilingual
+OCR and offline signature-evidence feature wave, alongside the reader/editor
+and other supported workflows. Source-build screenshots are explicitly labeled.
+Future work on `main` may be ahead of this release; do not advertise a new
+feature as downloadable before releasing it.
 
 When a release is published, update the installer links, version descriptions
 and structured data in `index.html` and `app.mjs`, and the matching assertions
@@ -94,8 +95,8 @@ without changing the actual image or promising a particular result.
 JSON-LD connects the canonical `WebPage`, published `SoftwareApplication`,
 `SoftwareSourceCode` and original `ImageObject` with stable IDs. Keep the app
 version and download offer tied to the actual release. `codeRepository` belongs
-to the source entity; newer source-only features must not be attributed to
-the old installer. There are no invented ratings, reviews or endorsements.
+to the source entity; future source-only features must not be attributed to
+the published installer. There are no invented ratings, reviews or endorsements.
 Google's software-app rich results require a genuine rating or review, so this
 markup does not claim eligibility for a rich result.
 

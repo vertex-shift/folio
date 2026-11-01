@@ -7,8 +7,10 @@ Its familiar PDF-editor layout is independently implemented; no proprietary
 code, fonts, icons, artwork, or licensing logic was extracted from Acrobat.
 
 [Meet Folio](https://vertex-shift.github.io/folio/) for a product introduction,
-real workspace previews, platform downloads, and contribution links. The page
-distinguishes the released v0.1.1 installers from newer features on `main`.
+real workspace previews, platform downloads, and contribution links. The
+[v0.1.2 release](https://github.com/vertex-shift/folio/releases/tag/v0.1.2)
+includes the current feature wave; future work on `main` may be ahead of
+published installers.
 
 ## Start the desktop app
 

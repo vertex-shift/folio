@@ -1,19 +1,19 @@
 export const pageUrl = "https://vertex-shift.github.io/folio/";
 export const downloads = Object.freeze({
   macos: {
-    href: "https://github.com/vertex-shift/folio/releases/download/v0.1.1/Folio_0.1.1_macos_arm64.dmg",
+    href: "https://github.com/vertex-shift/folio/releases/download/v0.1.2/Folio_0.1.2_macos_arm64.dmg",
     label: "Download for macOS",
-    detail: "Apple Silicon · v0.1.1 · ad-hoc signed",
+    detail: "Apple Silicon · v0.1.2 · ad-hoc signed",
   },
   windows: {
-    href: "https://github.com/vertex-shift/folio/releases/download/v0.1.1/Folio_0.1.1_windows_x64_setup.exe",
+    href: "https://github.com/vertex-shift/folio/releases/download/v0.1.2/Folio_0.1.2_windows_x64_setup.exe",
     label: "Download for Windows",
-    detail: "x64 · v0.1.1 · unsigned installer",
+    detail: "x64 · v0.1.2 · unsigned installer",
   },
   linux: {
-    href: "https://github.com/vertex-shift/folio/releases/download/v0.1.1/Folio_0.1.1_linux_x64.deb",
+    href: "https://github.com/vertex-shift/folio/releases/download/v0.1.2/Folio_0.1.2_linux_x64.deb",
     label: "Download for Linux",
-    detail: "x64 · v0.1.1 · .deb package",
+    detail: "x64 · v0.1.2 · .deb package",
   },
 });
 
