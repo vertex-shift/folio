@@ -63,7 +63,7 @@
 .structured-reader-body { max-width: 78ch; padding: 24px 28px 64px; margin-inline: auto; }
 .semantic-document { font-size: 13px; line-height: 1.8; margin-top: 28px; overflow-wrap: anywhere; }
 .semantic-document p, .semantic-document blockquote, .semantic-document pre, .semantic-document figure { margin-block: 0 20px; white-space: pre-wrap; }
-.semantic-document h1, .semantic-document h2, .semantic-document h3, .semantic-document h4, .semantic-document h5, .semantic-document h6 { color: var(--strong); line-height: 1.4; margin-block: 28px 14px; }
+.semantic-document h1, .semantic-document h2, .semantic-document h3, .semantic-document h4, .semantic-document h5, .semantic-document h6 { color: var(--strong); line-height: 1.4; margin-block: 28px 14px; white-space: pre-wrap; }
 .semantic-document h1 { font-size: 23px; }
 .semantic-document h2 { font-size: 20px; }
 .semantic-document h3 { font-size: 13px; }

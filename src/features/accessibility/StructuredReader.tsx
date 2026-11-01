@@ -25,7 +25,7 @@ export default function StructuredReader({ inspection, onClose, onVisual }: Prop
     <nav className="semantic-reader-navigation" aria-label="Tagged content navigation">
       <button className="button secondary" disabled={index <= 0} onClick={() => focus(leaves[index - 1])}><ArrowUp size={14} />Previous item</button>
       <button className="button secondary" disabled={index >= leaves.length - 1} onClick={() => focus(leaves[index + 1])}><ArrowDown size={14} />{index < 0 ? "Start reading" : "Next item"}</button>
-      <label>Go to tagged heading<select value="" onChange={(event) => { const node = headings.find((node) => node.id === event.target.value); if (node) focus(node); }}>
+      <label>Go to tagged heading<select aria-label="Go to tagged heading" value="" onChange={(event) => { const node = headings.find((node) => node.id === event.target.value); if (node) focus(node); }}>
         <option value="">Choose a heading...</option>{headings.map((node) => <option key={node.id} value={node.id}>{node.role}: {node.text}</option>)}
       </select></label>
     </nav>

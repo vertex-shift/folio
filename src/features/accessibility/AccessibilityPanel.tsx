@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, BookOpen, FileDown, ListOrdered, LoaderCircle, LocateFixed } from "lucide-react";
 import { isSemanticRole, semanticProblems } from "./model";
 import type { SemanticCopyPlan, SemanticDraft, SemanticDraftEntry, SemanticInspection } from "./types";
@@ -29,11 +29,15 @@ interface Props {
 
 export default function AccessibilityPanel(props: Props) {
   const [selectedId, setSelectedId] = useState("");
+  const editor = useRef<HTMLElement>(null);
   const { inspection, draft, plan } = props;
   const selected = draft?.entries.find((entry) => entry.candidate.id === selectedId) ?? draft?.entries[0];
   const selectedIndex = selected && draft ? draft.entries.indexOf(selected) : -1;
   const problems = draft ? semanticProblems(draft) : [];
   const editable = !props.disabled && !props.otherPending && !props.stale && Boolean(draft && !draft.prepared);
+  useEffect(() => {
+    if (selectedId) editor.current?.scrollIntoView({ block: "nearest", behavior: "auto" });
+  }, [selectedId]);
   function changeEntry(changes: Partial<SemanticDraftEntry>) {
     if (!draft || !selected || !editable) return;
     props.onChange({ ...draft, reviewed: false, entries: draft.entries.map((entry) => entry === selected ? { ...entry, ...changes } : entry) });
@@ -94,7 +98,7 @@ export default function AccessibilityPanel(props: Props) {
             </button>
           </li>)}
         </ol>
-        {selected && <section className="semantic-item-editor" aria-label={`Source item ${selectedIndex + 1} settings`}>
+        {selected && <section ref={editor} className="semantic-item-editor" aria-label={`Source item ${selectedIndex + 1} settings`}>
           <div className="semantic-item-heading"><h3>Item {selectedIndex + 1}</h3>
             <button className="text-button" disabled={props.disabled} onClick={() => props.onLocate(selected.candidate.page)}><LocateFixed size={14} />Locate page {selected.candidate.page + 1}</button></div>
           <p>{selected.candidate.description}. Source binding: {selected.candidate.id}.</p>
@@ -103,7 +107,7 @@ export default function AccessibilityPanel(props: Props) {
             <button className="button secondary" aria-label={`Move item ${selectedIndex + 1} earlier`} disabled={!editable || selectedIndex === 0} onClick={() => move(-1)}><ArrowUp size={14} />Earlier</button>
             <button className="button secondary" aria-label={`Move item ${selectedIndex + 1} later`} disabled={!editable || selectedIndex === draft.entries.length - 1} onClick={() => move(1)}><ArrowDown size={14} />Later</button>
           </div>
-          <label className="form-control">Role for item {selectedIndex + 1}<select value={selected.role} disabled={!editable} onChange={(event) => {
+          <label className="form-control">Role for item {selectedIndex + 1}<select aria-label={`Role for item ${selectedIndex + 1}`} value={selected.role} disabled={!editable} onChange={(event) => {
             const role = event.target.value;
             if (isSemanticRole(role)) changeEntry({ role, alt: "" });
           }}>

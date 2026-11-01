@@ -40,7 +40,13 @@ export function useAccessibility(info: DocumentInfo | null, active: boolean, onE
     if (latest.current.draft?.prepared) updateDraft(null);
     return cancelWork;
   }, [info?.id, info?.revision]);
-  useEffect(() => { if (!active && controller.current) cancelWork(); }, [active]);
+  useEffect(() => {
+    if (!active) {
+      if (controller.current && latest.current.plan) void cancelCopy().catch(cleanupFailure);
+      else cancelWork();
+      setReaderOpen(false);
+    }
+  }, [active]);
   useEffect(() => () => {
     cancelWork();
     const { inspection, plan } = latest.current;
@@ -64,6 +70,8 @@ export function useAccessibility(info: DocumentInfo | null, active: boolean, onE
     let result: SemanticInspection | undefined;
     try {
       result = await accessibilityBridge.inspect({ documentId: source.id, revision: source.revision }, abort.signal);
+      check(); assertSemanticCurrent(result, latest.current.info, pending());
+      await accessibilityBridge.checkInspection(result.inspectionId);
       check(); assertSemanticCurrent(result, latest.current.info, pending());
       const old = latest.current.inspection;
       if (old) await accessibilityBridge.cancelInspection(old.inspectionId);
@@ -94,6 +102,8 @@ export function useAccessibility(info: DocumentInfo | null, active: boolean, onE
     try {
       checkSource();
       next = await accessibilityBridge.begin(request, abort.signal);
+      check(); checkSource();
+      await accessibilityBridge.check(next.jobId);
       check(); checkSource();
       if (latest.current.draft !== original || !original) throw new Error("The reviewed semantic recipe changed. Prepare it again.");
       updateDraft({ ...original, prepared: true });

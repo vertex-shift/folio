@@ -221,6 +221,20 @@ copies. Technical preflight's observations and the image-only PDF/A-2b archival
 workflow remain distinct. No validators run/download during normal app use,
 and inspection text is not offered as an unencrypted report/export.
 
+The implemented PDF mechanisms follow W3C's
+[PDF3 logical/tag reading-order technique](https://www.w3.org/WAI/WCAG22/Techniques/pdf/PDF3),
+[PDF1 human image alternatives](https://www.w3.org/WAI/WCAG22/Techniques/pdf/PDF1),
+and [PDF16 catalog language](https://www.w3.org/WAI/WCAG22/Techniques/pdf/PDF16).
+Using these mechanisms is not a claim that a document meets all WCAG criteria.
+For an original local acceptance fixture, `npm run test:accessibility` drives
+the actual Rust-engine UI output, independently reads PDF.js structure/text,
+compares every rendered pixel, checks semantic DOM/focus and cancellation,
+and stops only its own helpers. Set `FOLIO_ACCESSIBILITY_ARTIFACTS` to retain
+synthetic evidence, `FOLIO_ACCESSIBILITY_BROWSER` to a compatible Chromium,
+and `CARGO_TARGET_DIR` to an isolated build directory. Use
+`FOLIO_ACCESSIBILITY_SKIP_VISUAL=1` for functional reruns without another
+visual capture round. No documents are uploaded and no validator is downloaded.
+
 Ordinary saves, PDF downloads, and page extraction also check pending edits in
 the document engine, not only in the interface. Apply or discard those drafts
 first. Pending redactions require the dedicated **Export redacted copy**
