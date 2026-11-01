@@ -176,7 +176,7 @@ try {
   assert.equal(await page.getByRole("button", { name: "Prepare reviewed tagged copy", exact: true }).isEnabled(), false);
   const setRole = async (index, role) => {
     await workspace.locator(".semantic-order > li").nth(index).getByRole("button").click();
-    await page.getByLabel(`Role for item ${index + 1}`, { exact: true }).selectOption(role);
+    await workspace.getByLabel(`Role for item ${index + 1}`, { exact: true }).selectOption(role);
   };
   await setRole(0, "H1"); await setRole(1, "P"); await setRole(2, "P");
   await page.getByRole("button", { name: "Move item 3 earlier", exact: true }).click();
@@ -203,7 +203,7 @@ try {
   for (const [route, request] of [
     ["/accessibility/inspect", { documentId: info.id, revision: 0 }],
     ["/preflight/inspect", { documentId: info.id, revision: 0 }],
-    ["/ocr/begin", { documentId: info.id, revision: 0, options: { pages: [0], dpi: 300, language: "eng", existingText: "skip" } }],
+    ["/ocr/begin", { documentId: info.id, revision: 0, options: { pages: [0], dpi: 300, languages: ["eng"], layout: "horizontal_print", existingText: "skip" } }],
   ]) {
     const response = await api(route, request); assert.equal(response.ok, false, `${route} must reject semantic draft`);
   }
@@ -320,6 +320,81 @@ try {
   }
   evidence.malformed = malformedCases;
 
+  const ocrFixtures = process.env.FOLIO_OCR_SEMANTIC_FIXTURES;
+  if (ocrFixtures) {
+    evidence.ocrComposition = [];
+    for (const [filename, language, alt] of [
+      ["Actual-eng-OCR.pdf", "en-US", "Original English printed page; its separate OCR paragraph must be reviewed by a person."],
+      ["Actual-fra-OCR.pdf", "fr-FR", "Page originale imprimée en français ; le paragraphe OCR séparé doit être relu."],
+    ]) {
+      const input = join(resolve(ocrFixtures), filename), original = await readFile(input);
+      await page.getByLabel("Choose PDF files").setInputFiles(input);
+      await page.getByRole("tab", { name: new RegExp(filename.replaceAll(".", "\\.")), selected: true }).waitFor();
+      await panel();
+      const inspectionResponse = page.waitForResponse((response) => response.url().endsWith("/__folio/accessibility/inspect") && response.request().method() === "POST");
+      await page.getByRole("button", { name: "Inspect structure and source", exact: true }).click();
+      const report = await (await inspectionResponse).json();
+      assert.ok(report.authoringAllowed, `${filename}: ${JSON.stringify(report.issues)}`);
+      const canonical = report.candidates.filter((candidate) => candidate.description.includes("canonical invisible OCR"));
+      assert.ok(canonical.length > 0 && canonical.every((candidate) => candidate.text?.length > 0));
+      let snapshot = await json("/bootstrap");
+      const source = snapshot.documents.find((document) => document.id === report.documentId);
+      assert.ok(source); const state = JSON.stringify(source);
+      await page.getByRole("button", { name: "Review source semantics", exact: true }).click();
+      await workspace.getByLabel("Tagged copy title", { exact: true }).fill(`Reviewed ${filename} semantic composition`);
+      await workspace.getByLabel("Document language tag", { exact: true }).fill(language);
+      for (const [index, candidate] of report.candidates.entries()) {
+        await setRole(index, candidate.kind === "text" ? "P" : candidate.kind === "figure" ? "Figure" : "Artifact");
+        if (candidate.kind === "figure") await workspace.getByLabel(`Human alternative for item ${index + 1}`, { exact: true }).fill(alt);
+      }
+      await workspace.getByLabel(/I reviewed every role/).check();
+      await page.getByRole("button", { name: "Prepare reviewed tagged copy", exact: true }).click();
+      await page.getByRole("button", { name: "Save separate tagged copy", exact: true }).waitFor();
+      const downloaded = page.waitForEvent("download");
+      await page.getByRole("button", { name: "Save separate tagged copy", exact: true }).click();
+      const taggedPath = join(artifacts, filename.replace(/\.pdf$/i, "-tagged-composition.pdf"));
+      await (await downloaded).saveAs(taggedPath);
+      await page.getByRole("button", { name: "Revise retained recipe", exact: true }).waitFor();
+      const output = await readFile(taggedPath);
+      assert.equal(sha(await sourceBytes(source)), sha(original), `${filename} source bytes changed`);
+      snapshot = await json("/bootstrap");
+      assert.equal(JSON.stringify(snapshot.documents.find((document) => document.id === source.id)), state);
+      const checked = await page.evaluate(async (bytes) => (await import("/tests/accessibility.browser.ts")).semanticEvidence(bytes), Array.from(output));
+      assert.equal(checked.pdfUaClaim, null);
+      for (const [index, actual] of checked.pages.entries()) {
+        const expected = report.candidates.filter((candidate) => candidate.page === index && candidate.kind !== "graphic");
+        assert.deepEqual(actual.nodes.map((node) => node.role), expected.map((candidate) => candidate.kind === "text" ? "P" : "Figure"));
+        assert.equal(actual.language, language);
+        for (const [at, node] of actual.nodes.entries()) {
+          assert.ok(node.contentIds.length > 0, "an actual PDF.js semantic node has no real content association");
+          if (expected[at].kind === "text") assert.equal(node.text, expected[at].text.replace(/\s+/gu, " ").trim());
+          else assert.equal(node.alt, alt);
+        }
+        const ids = actual.nodes.flatMap((node) => node.contentIds);
+        assert.equal(ids.length, new Set(ids).size, "OCR semantic bindings are duplicated");
+      }
+      const pixels = await page.evaluate(async ({ source, output }) => (await import("/tests/accessibility.browser.ts")).compareSemanticPixels(source, output),
+        { source: Array.from(original), output: Array.from(output) });
+      assert.ok(pixels.every((page) => page.changedPixels === 0), `${filename}: ${JSON.stringify(pixels)}`);
+      await page.getByLabel("Choose PDF files").setInputFiles(taggedPath);
+      await page.getByRole("tab", { name: new RegExp(filename.replace(/\.pdf$/i, "-tagged-composition\\.pdf")), selected: true }).waitFor();
+      await panel();
+      await page.getByRole("button", { name: "Inspect structure and source", exact: true }).click();
+      await page.getByRole("button", { name: "Read tagged content", exact: true }).click();
+      await workspace.locator(".semantic-document").waitFor();
+      assert.equal(await workspace.locator(".document-area canvas, .document-area .textLayer").count(), 0);
+      const text = await workspace.locator(".semantic-document p").allTextContents();
+      assert.deepEqual(text, report.candidates.filter((candidate) => candidate.kind === "text").map((candidate) => candidate.text));
+      assert.equal(await workspace.locator(".semantic-document").getAttribute("lang"), language);
+      assert.deepEqual(await workspace.locator(".semantic-document [role=img]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label"))),
+        report.candidates.filter((candidate) => candidate.kind === "figure").map(() => alt));
+      await writeFile(join(artifacts, filename.replace(/\.pdf$/i, "-reader-aria.txt")), await workspace.locator(".structured-reader").ariaSnapshot());
+      evidence.ocrComposition.push({ filename, inputSha256: sha(original), taggedPath, outputSha256: sha(output), sourceStateUnchanged: true,
+        canonicalText: canonical.map((candidate) => candidate.text), actualPdfjs: checked, pixels, exactOcrTextInDom: true, noDuplicateCanvasText: true,
+        recognitionAccuracyClaimed: false, humanSemanticCertificationClaimed: false });
+    }
+  }
+
   const cancelFile = join(artifacts, "Cancel-semantic-source.pdf");
   await writeFile(cancelFile, original); await page.getByLabel("Choose PDF files").setInputFiles(cancelFile);
   await page.getByRole("tab", { name: /Cancel-semantic-source\.pdf/, selected: true }).waitFor();
@@ -350,7 +425,8 @@ try {
   await writeFile(join(artifacts, "accessibility-evidence.json"), JSON.stringify(evidence, null, 2) + "\n");
   console.log(JSON.stringify({ success: true, artifacts, pages: actual.pages.length,
     changedPixels: pixels.map((page) => page.changedPixels), managedChangedPixels: managedPixels.map((page) => page.changedPixels),
-    domReading: true, malformedControls: malformedCases.length, externalRequests: 0, manualSemanticsAreNotCertified: true }, null, 2));
+    domReading: true, malformedControls: malformedCases.length, ocrCompositionInputs: evidence.ocrComposition?.length ?? 0,
+    externalRequests: 0, manualSemanticsAreNotCertified: true }, null, 2));
 } catch (error) {
   if (page) await page.screenshot({ path: join(artifacts, "failure.png") }).catch(() => {});
   if (page) await writeFile(join(artifacts, "failure-aria.txt"), await page.locator("body").ariaSnapshot()).catch(() => {});

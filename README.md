@@ -245,6 +245,11 @@ synthetic evidence, `FOLIO_ACCESSIBILITY_BROWSER` to a compatible Chromium,
 and `CARGO_TARGET_DIR` to an isolated build directory. Use
 `FOLIO_ACCESSIBILITY_SKIP_VISUAL=1` for functional reruns without another
 visual capture round. No documents are uploaded and no validator is downloaded.
+When an explicitly supplied `FOLIO_OCR_SEMANTIC_FIXTURES` directory contains
+`Actual-eng-OCR.pdf` and `Actual-fra-OCR.pdf`, the same acceptance check also
+drives those real saved OCR files through human-role/Alt/language review,
+actual tagged-copy controls, independent PDF.js associations/pixel comparison
+and exact semantic DOM reading. The original files are read-only inputs.
 
 Ordinary saves, PDF downloads, and page extraction also check pending edits in
 the document engine, not only in the interface. Apply or discard those drafts

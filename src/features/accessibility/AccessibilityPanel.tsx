@@ -129,7 +129,7 @@ export default function AccessibilityPanel(props: Props) {
         {draft.prepared && <p className="semantic-boundary">This recipe does not edit the source. Save the separate copy, then open it to inspect and read its actual tags. Source protection is retained.</p>}
       </>}
       <details className="semantic-scope"><summary>Supported scope and privacy</summary>
-        <p>Up to 100 pages and 2,000 source items. Untagged page text, images, painted graphics and validated top-level Folio reflow paragraphs. Arbitrary nested Forms, annotations/links, interactive forms, optional content, scripts, existing trees and conformance-declared sources are not rewritten.</p>
+        <p>Up to 100 pages and 2,000 source items. Untagged page text, images, painted graphics, validated top-level Folio reflow paragraphs and strictly verified canonical Folio OCR streams. OCR is one exact recorded-text item per complete stream, not verified recognition accuracy or inferred reading order. Arbitrary marked content, nested Forms, annotations/links, interactive forms, optional content, scripts, existing trees and conformance-declared sources are not rewritten.</p>
         <p>Existing supported trees are checked against actual MCIDs, page/Form ownership and reverse parent mappings. This is not full PDF/UA or WCAG validation. No automatic descriptions, AI, uploads or runtime standards downloads. Inspection text stays in memory; no unencrypted report export is provided.</p>
       </details>
     </div>

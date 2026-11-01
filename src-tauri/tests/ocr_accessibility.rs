@@ -301,7 +301,7 @@ fn marker_names_and_forged_ocr_glyph_unicode_actualtext_or_visible_operations_ne
     let (workspace, id, _) = recognize("fra", &["café", "été"], Direction::Ltr, false);
     let source = source_pdf(&workspace, id);
     let stream_id = ocr_stream(&source);
-    for variant in 0..10 {
+    for variant in 0..14 {
         let mut pdf = source.clone();
         if variant <= 4 || variant == 9 {
             let stream = pdf.get_object(stream_id).unwrap().as_stream().unwrap();
@@ -362,6 +362,23 @@ fn marker_names_and_forged_ocr_glyph_unicode_actualtext_or_visible_operations_ne
                 .unwrap();
             stream.set_plain_content(content.encode().unwrap());
             stream.compress().unwrap();
+        } else if variant == 11 {
+            let page = pdf.get_pages()[&1];
+            let contents = pdf
+                .get_dictionary_mut(page)
+                .unwrap()
+                .get_mut(b"Contents")
+                .unwrap()
+                .as_array_mut()
+                .unwrap();
+            contents.swap(0, 1);
+        } else if variant == 12 {
+            pdf.get_object_mut(stream_id)
+                .unwrap()
+                .as_stream_mut()
+                .unwrap()
+                .dict
+                .remove(b"FolioOCR");
         } else {
             let font = *pdf
                 .objects
@@ -426,6 +443,37 @@ fn marker_names_and_forged_ocr_glyph_unicode_actualtext_or_visible_operations_ne
                     stream.set_plain_content(plain);
                     stream.compress().unwrap();
                 }
+                10 => {
+                    let unicode = pdf
+                        .get_dictionary(font)
+                        .unwrap()
+                        .get(b"ToUnicode")
+                        .unwrap()
+                        .as_reference()
+                        .unwrap();
+                    let stream = pdf
+                        .get_object_mut(unicode)
+                        .unwrap()
+                        .as_stream_mut()
+                        .unwrap();
+                    let body = String::from_utf8(stream.get_plain_content().unwrap()).unwrap();
+                    assert!(body.contains("00630061006600E9"));
+                    stream.set_plain_content(
+                        body.replace("00630061006600E9", "0063006100660065")
+                            .into_bytes(),
+                    );
+                    stream.compress().unwrap();
+                }
+                13 => {
+                    let values = pdf
+                        .get_dictionary_mut(descendant)
+                        .unwrap()
+                        .get_mut(b"W")
+                        .unwrap()
+                        .as_array_mut()
+                        .unwrap();
+                    values[1].as_array_mut().unwrap()[0] = Object::Real(0.00005);
+                }
                 _ => {
                     pdf.get_dictionary_mut(descriptor)
                         .unwrap()
@@ -455,14 +503,34 @@ fn actual_saved_ocr_acceptance_inputs_compose_when_explicitly_supplied() {
     let Some(directory) = std::env::var_os("FOLIO_OCR_SEMANTIC_FIXTURES") else {
         return;
     };
-    for (filename, language) in [
-        ("Actual-eng-OCR.pdf", "en-US"),
-        ("Actual-fra-OCR.pdf", "fr-FR"),
-    ] {
-        let source = std::fs::read(std::path::Path::new(&directory).join(filename)).unwrap();
+    let cases = [
+        ("eng", "en-US"),
+        ("fra", "fr-FR"),
+        ("spa", "es"),
+        ("deu", "de"),
+        ("ita", "it"),
+        ("por", "pt"),
+        ("nld", "nl"),
+        ("ell", "el"),
+        ("rus", "ru"),
+        ("ara", "ar"),
+        ("hin", "hi"),
+        ("chi_sim", "zh-Hans"),
+        ("chi_tra", "zh-Hant"),
+        ("jpn", "ja"),
+        ("kor", "ko"),
+    ];
+    let count = if std::env::var_os("FOLIO_OCR_SEMANTIC_ALL_LANGUAGES").is_some() {
+        cases.len()
+    } else {
+        2
+    };
+    for (code, language) in cases.into_iter().take(count) {
+        let filename = format!("Actual-{code}-OCR.pdf");
+        let source = std::fs::read(std::path::Path::new(&directory).join(&filename)).unwrap();
         let mut workspace = Workspace::default();
         let info = workspace
-            .open_bytes(source.clone(), filename.into())
+            .open_bytes(source.clone(), filename.clone())
             .unwrap();
         let report = workspace
             .inspect_accessibility(SourceRef {

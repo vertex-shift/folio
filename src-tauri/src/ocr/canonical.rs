@@ -62,7 +62,7 @@ fn same_object(
     let expected = resolve(expected_doc, expected)?;
     match (actual, expected) {
         (Object::Integer(_) | Object::Real(_), Object::Integer(_) | Object::Real(_)) => {
-            Ok((number(actual)? - number(expected)?).abs() <= 0.0001)
+            Ok(number(actual)? == number(expected)?)
         }
         (Object::Array(a), Object::Array(b)) => {
             if a.len() != b.len() {
@@ -254,6 +254,7 @@ impl Reader {
             }
             let mut codes = BTreeMap::new();
             let mut entries = BTreeMap::new();
+            let languages = catalog::catalog()?.languages.iter().collect::<Vec<_>>();
             for cid in 1..map.len() / 2 {
                 let cid = u16::try_from(cid)
                     .map_err(|_| invalid("Canonical OCR exceeds its CID range."))?;
@@ -268,6 +269,7 @@ impl Reader {
                         || value.chars().any(|character| {
                             character.is_whitespace()
                                 || character.is_control()
+                                || !catalog::permits(character, &languages)
                                 || matches!(character as u32, 0x202a..=0x202e | 0x2066..=0x2069)
                                 || !matches!(character, '\u{200c}' | '\u{200d}')
                                     && face.glyph_index(character).is_none_or(|glyph| glyph.0 == 0)
