@@ -9,9 +9,9 @@ use lopdf::{
     dictionary,
 };
 use serde::{Deserialize, Serialize};
+pub(crate) mod canonical;
 mod catalog;
 mod font;
-pub(crate) mod canonical;
 
 use crate::document::{DocumentInfo, Result, inherited, invalid};
 use crate::page_geometry::PageGeometry;
