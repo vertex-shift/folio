@@ -101,8 +101,7 @@ impl ContentMap {
         document: &Document,
         bytes: Vec<u8>,
         resources: &Dictionary,
-        scope: Scope,
-        prefix: &[usize],
+        (scope, prefix): (Scope, &[usize]),
         mut context: Context,
         runs: &HashMap<Vec<usize>, Option<String>>,
     ) -> Result<()> {
@@ -290,8 +289,7 @@ impl ContentMap {
                                 document,
                                 stream.get_plain_content_with_limit(MAX_EDIT_CONTENT_BYTES)?,
                                 &form_resources(document, stream, resources)?,
-                                child_scope,
-                                &path,
+                                (child_scope, &path),
                                 context.clone(),
                                 runs,
                             )?;
@@ -394,10 +392,10 @@ fn number_tree(
     if depth > 32 {
         return Err(invalid("ParentTree exceeds 32 levels."));
     }
-    if let Object::Reference(id) = object {
-        if !seen.insert(*id) {
-            return Err(invalid("ParentTree contains a cycle or shared node."));
-        }
+    if let Object::Reference(id) = object
+        && !seen.insert(*id)
+    {
+        return Err(invalid("ParentTree contains a cycle or shared node."));
     }
     let dictionary = resolve(document, object)?.as_dict()?;
     if dictionary.has(b"Nums") == dictionary.has(b"Kids") {
@@ -480,10 +478,10 @@ fn id_tree(
     if depth > 32 || result.len() > MAX_ITEMS {
         return Err(invalid("IDTree exceeds its supported size or depth."));
     }
-    if let Object::Reference(id) = object {
-        if !seen.insert(*id) {
-            return Err(invalid("IDTree contains a cycle or shared node."));
-        }
+    if let Object::Reference(id) = object
+        && !seen.insert(*id)
+    {
+        return Err(invalid("IDTree contains a cycle or shared node."));
     }
     let dictionary = resolve(document, object)?.as_dict()?;
     if dictionary.has(b"Names") == dictionary.has(b"Kids") {
@@ -766,8 +764,7 @@ pub(super) fn inspect(document: &Document) -> Result<Reading> {
             document,
             document.get_page_content_with_limit(*id, MAX_EDIT_CONTENT_BYTES)?,
             &page_resources(document, *id)?,
-            scope,
-            &[],
+            (scope, &[]),
             Context {
                 binding: None,
                 artifact: false,
@@ -869,16 +866,15 @@ pub(super) fn inspect(document: &Document) -> Result<Reading> {
             invalid("ParentTree key has no actual page/Form StructParents owner.")
         })?;
         for (mcid, element) in values.iter().enumerate() {
-            if let Some(element) = element {
-                if tree.bindings.get(&Binding {
+            if let Some(element) = element
+                && tree.bindings.get(&Binding {
                     scope: scope.clone(),
                     mcid: mcid as i64,
                 }) != Some(element)
-                {
-                    return Err(invalid(
-                        "ParentTree contains an extra, stale or wrong-scope reverse association.",
-                    ));
-                }
+            {
+                return Err(invalid(
+                    "ParentTree contains an extra, stale or wrong-scope reverse association.",
+                ));
             }
         }
     }

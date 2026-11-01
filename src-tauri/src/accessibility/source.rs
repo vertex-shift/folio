@@ -46,12 +46,12 @@ fn authoring_features(document: &Document) -> Result<()> {
             ));
         }
         let page = document.get_dictionary(*id)?;
-        if let Ok(value) = page.get(b"Annots") {
-            if !resolve(document, value)?.as_array()?.is_empty() {
-                return Err(invalid(
-                    "Annotations and links need additional semantic associations. This document is inspect-only for this bounded authoring mode.",
-                ));
-            }
+        if let Ok(value) = page.get(b"Annots")
+            && !resolve(document, value)?.as_array()?.is_empty()
+        {
+            return Err(invalid(
+                "Annotations and links need additional semantic associations. This document is inspect-only for this bounded authoring mode.",
+            ));
         }
     }
     crate::preflight::walk(document, |object| {

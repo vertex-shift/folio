@@ -211,17 +211,17 @@ pub(crate) fn language(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn inspect_document(
-    document: &Document,
-) -> Result<(
-    String,
-    Option<String>,
-    String,
-    Vec<Candidate>,
-    Vec<SemanticNode>,
-    Vec<String>,
-    bool,
-)> {
+struct DocumentInspection {
+    status: String,
+    language: Option<String>,
+    title: String,
+    candidates: Vec<Candidate>,
+    structure: Vec<SemanticNode>,
+    issues: Vec<String>,
+    complete: bool,
+}
+
+fn inspect_document(document: &Document) -> Result<DocumentInspection> {
     let metadata = crate::metadata::inspect(document)?;
     let lang = document
         .catalog()?
@@ -231,45 +231,45 @@ fn inspect_document(
         .transpose()?;
     if document.catalog()?.has(b"StructTreeRoot") {
         return Ok(match structure::inspect(document) {
-            Ok(result) => (
-                "tagged".into(),
-                lang,
-                metadata.fields.title,
-                vec![],
-                result.nodes,
-                result.issues,
-                result.complete,
-            ),
-            Err(error) => (
-                "malformed_or_unsupported".into(),
-                lang,
-                metadata.fields.title,
-                vec![],
-                vec![],
-                vec![error.to_string()],
-                false,
-            ),
+            Ok(result) => DocumentInspection {
+                status: "tagged".into(),
+                language: lang,
+                title: metadata.fields.title,
+                candidates: vec![],
+                structure: result.nodes,
+                issues: result.issues,
+                complete: result.complete,
+            },
+            Err(error) => DocumentInspection {
+                status: "malformed_or_unsupported".into(),
+                language: lang,
+                title: metadata.fields.title,
+                candidates: vec![],
+                structure: vec![],
+                issues: vec![error.to_string()],
+                complete: false,
+            },
         });
     }
     Ok(match source::inventory(document) {
-        Ok(items) => (
-            "untagged".into(),
-            lang,
-            metadata.fields.title,
-            items.into_iter().map(|item| item.view).collect(),
-            vec![],
-            vec![],
-            false,
-        ),
-        Err(error) => (
-            "unsupported".into(),
-            lang,
-            metadata.fields.title,
-            vec![],
-            vec![],
-            vec![error.to_string()],
-            false,
-        ),
+        Ok(items) => DocumentInspection {
+            status: "untagged".into(),
+            language: lang,
+            title: metadata.fields.title,
+            candidates: items.into_iter().map(|item| item.view).collect(),
+            structure: vec![],
+            issues: vec![],
+            complete: false,
+        },
+        Err(error) => DocumentInspection {
+            status: "unsupported".into(),
+            language: lang,
+            title: metadata.fields.title,
+            candidates: vec![],
+            structure: vec![],
+            issues: vec![error.to_string()],
+            complete: false,
+        },
     })
 }
 
@@ -284,8 +284,15 @@ impl Session {
                 "This PDF restricts copying. Reopen with its owner password to inspect or read its logical structure.",
             ));
         }
-        let (status, language, title, candidates, structure, mut issues, complete) =
-            inspect_document(&self.accessibility_document())?;
+        let DocumentInspection {
+            status,
+            language,
+            title,
+            candidates,
+            structure,
+            mut issues,
+            complete,
+        } = inspect_document(self.accessibility_document())?;
         let allowed = status == "untagged"
             && !candidates.is_empty()
             && self.ensure_management_writable().is_ok();
@@ -338,7 +345,7 @@ impl Session {
                 "The accessibility source changed, including an edit or undo/redo. Inspect the current PDF again; your reviewed values are kept.",
             ));
         }
-        tagged_copy(&self.accessibility_document(), request)
+        tagged_copy(self.accessibility_document(), request)
     }
 }
 
