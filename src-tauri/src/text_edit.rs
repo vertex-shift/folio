@@ -69,7 +69,10 @@ impl Codec {
         }
     }
 
-    pub(crate) fn units(&self, bytes: &[u8]) -> std::result::Result<Vec<(String, Vec<u8>)>, String> {
+    pub(crate) fn units(
+        &self,
+        bytes: &[u8],
+    ) -> std::result::Result<Vec<(String, Vec<u8>)>, String> {
         match self {
             Self::Simple(map) => bytes
                 .iter()
@@ -600,7 +603,10 @@ impl Scanner {
     }
 }
 
-pub(crate) fn strict_codec(document: &Document, font: &Dictionary) -> std::result::Result<Codec, String> {
+pub(crate) fn strict_codec(
+    document: &Document,
+    font: &Dictionary,
+) -> std::result::Result<Codec, String> {
     let subtype = font
         .get(b"Subtype")
         .and_then(Object::as_name)

@@ -1498,9 +1498,15 @@ pub(crate) struct SemanticBlock {
 
 pub(crate) fn semantic_blocks(document: &Document, page: usize) -> Result<Vec<SemanticBlock>> {
     let (scanner, _) = scan_page(document, page)?;
-    Ok(scanner.blocks.into_iter().map(|block| SemanticBlock {
-        view: block.view, end: block.end, managed: block.managed,
-    }).collect())
+    Ok(scanner
+        .blocks
+        .into_iter()
+        .map(|block| SemanticBlock {
+            view: block.view,
+            end: block.end,
+            managed: block.managed,
+        })
+        .collect())
 }
 
 fn validate_style(size: f64, leading: f64) -> Result<()> {

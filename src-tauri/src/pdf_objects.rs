@@ -179,9 +179,13 @@ pub(crate) fn rewrite_operation(
     path: &[usize],
     mut change: impl FnMut(&mut Document, &mut Dictionary, &Operation) -> Result<Vec<Operation>>,
 ) -> Result<()> {
-    rewrite_range(document, page, path, *path.last().unwrap_or(&0), |document, resources, operations| {
-        change(document, resources, &operations[0])
-    })
+    rewrite_range(
+        document,
+        page,
+        path,
+        *path.last().unwrap_or(&0),
+        |document, resources, operations| change(document, resources, &operations[0]),
+    )
 }
 
 pub(crate) fn rewrite_range(
@@ -249,7 +253,9 @@ where
         .ok_or_else(|| invalid("The selected content operation no longer exists."))?
         .clone();
     if path.len() == 1 {
-        let selected = content.operations.get(index..=end)
+        let selected = content
+            .operations
+            .get(index..=end)
             .ok_or_else(|| invalid("The selected source range no longer exists."))?;
         let replacement = change(document, &mut resources, selected)?;
         content.operations.splice(index..=end, replacement);

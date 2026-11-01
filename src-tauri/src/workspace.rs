@@ -296,7 +296,8 @@ impl Workspace {
         revision: u64,
         change: crate::paragraph::ParagraphChange,
     ) -> Result<DocumentInfo> {
-        self.check_revision(id, revision)?.check_paragraph_epoch(change.epoch)?;
+        self.check_revision(id, revision)?
+            .check_paragraph_epoch(change.epoch)?;
         self.current_mut(id, revision)?.edit_paragraph(&change)
     }
 

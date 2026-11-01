@@ -465,7 +465,9 @@ fn handle(
         }
         (&Method::Post, "/accessibility/file") => {
             let input: RedactionJob = json_body(request)?;
-            return Ok(Payload::Pdf(workspace.accessibility_copy_bytes(input.job_id)?));
+            return Ok(Payload::Pdf(
+                workspace.accessibility_copy_bytes(input.job_id)?,
+            ));
         }
         (&Method::Post, "/accessibility/cancel") => {
             let input: RedactionJob = json_body(request)?;
@@ -773,11 +775,19 @@ fn handle(
         }
         (&Method::Post, "/paragraphs") => {
             let input: TextRunsRequest = json_body(request)?;
-            return json(workspace.check_revision(input.document_id, input.revision)?.paragraph_blocks(input.page)?);
+            return json(
+                workspace
+                    .check_revision(input.document_id, input.revision)?
+                    .paragraph_blocks(input.page)?,
+            );
         }
         (&Method::Post, "/paragraphs/preview") => {
             let input: ParagraphRequest = json_body(request)?;
-            return json(workspace.check_revision(input.document_id, input.revision)?.paragraph_preview(&input.change)?);
+            return json(
+                workspace
+                    .check_revision(input.document_id, input.revision)?
+                    .paragraph_preview(&input.change)?,
+            );
         }
         (&Method::Post, "/paragraphs/edit") => {
             let input: ParagraphRequest = json_body(request)?;

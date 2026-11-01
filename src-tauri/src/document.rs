@@ -265,7 +265,10 @@ impl Session {
             },
             password,
             copy_allowed: loaded.copy_allowed,
-            form_fill_allowed: !signed && !archival && !tagged_copy && loaded.permissions.fill_forms_allowed,
+            form_fill_allowed: !signed
+                && !archival
+                && !tagged_copy
+                && loaded.permissions.fill_forms_allowed,
             permissions: loaded.permissions,
             signed,
         };
@@ -371,7 +374,9 @@ impl Session {
 
     fn ensure_signing_permissions(&self) -> Result<()> {
         if crate::accessibility::is_folio_tagged_copy(&self.document) {
-            return Err(invalid("Folio tagged copies are read-only, including signing. Use the original PDF; rewriting could stale its reviewed logical structure."));
+            return Err(invalid(
+                "Folio tagged copies are read-only, including signing. Use the original PDF; rewriting could stale its reviewed logical structure.",
+            ));
         }
         if crate::archive::is_folio_archive(&self.document) {
             return Err(invalid(
@@ -527,7 +532,9 @@ impl Session {
 
     pub(crate) fn check_paragraph_epoch(&self, epoch: u64) -> Result<()> {
         if epoch != self.mutation_epoch {
-            return Err(invalid("The paragraph source epoch changed, including an edit or undo/redo. Reload its source block before applying; your draft is kept."));
+            return Err(invalid(
+                "The paragraph source epoch changed, including an edit or undo/redo. Reload its source block before applying; your draft is kept.",
+            ));
         }
         Ok(())
     }
@@ -648,7 +655,9 @@ impl Session {
         authorization_password: Option<&str>,
     ) -> Result<Vec<u8>> {
         if crate::accessibility::is_folio_tagged_copy(&self.document) {
-            return Err(invalid("Folio tagged copies cannot be reprotected or unprotected. Keep their source protection and edit the original PDF."));
+            return Err(invalid(
+                "Folio tagged copies cannot be reprotected or unprotected. Keep their source protection and edit the original PDF.",
+            ));
         }
         if crate::archive::is_folio_archive(&self.document) {
             return Err(invalid(
