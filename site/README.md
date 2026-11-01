@@ -24,6 +24,22 @@ control stays hidden. Blocked or invalid browser storage produces a visible
 notice; choices still apply for the current visit. Theme colors change atomically,
 while original PDF/workspace imagery keeps its actual colors.
 
+## Motion
+
+The first real document opens with a bounded 740 ms folded-sheet reveal,
+paired with a shorter reveal of the ownership headline. Switching Read / Note /
+Organize gives the actual loaded workspace image a 420 ms sheet transition;
+the caption changes with it. Download and link arrows acknowledge hover and
+keyboard focus without moving their hit targets.
+
+There are no autoplay loops, repeated section reveals, external animation
+libraries or new raster assets. Content and downloads are visible by default;
+without JavaScript the page stays static and fully usable. Reduced motion skips
+the entrance and sheet geometry, retaining a brief 120 ms preview crossfade.
+Live preference changes, hidden pages, printing and repeated preview choices
+cancel running effects. Animation hints are temporary, and late/canceled image
+loads cannot replay a previous preview.
+
 ## Preview and check
 
 From the repository root:
