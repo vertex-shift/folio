@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#225ae6">
+  <title>Folio — An open-source alternative to Adobe Acrobat</title>
+  <meta name="description" content="Your PDFs. Your rules. Meet Folio, a free, local-first desktop PDF workspace. Read, annotate, edit and organize supported PDFs without an account or subscription.">
+  <meta name="robots" content="index,follow">
+  <link rel="canonical" href="https://vertex-shift.github.io/folio/">
+  <link rel="icon" href="./assets/folio.svg" type="image/svg+xml">
+  <link rel="preload" href="./assets/fonts/commissioner-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="sitemap" href="./sitemap.xml" type="application/xml">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Folio">
+  <meta property="og:title" content="Your PDFs. Your rules. Meet Folio.">
+  <meta property="og:description" content="An independent, open-source alternative to Adobe Acrobat. A little less paperwork. No account or subscription.">
+  <meta property="og:url" content="https://vertex-shift.github.io/folio/">
+  <meta property="og:image" content="https://vertex-shift.github.io/folio/assets/social.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Folio: Your PDFs. Your rules. An open-source PDF workspace, with its real document interface.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Your PDFs. Your rules. Meet Folio.">
+  <meta name="twitter:description" content="A free, local-first desktop PDF workspace. An independent open-source alternative to Adobe Acrobat.">
+  <meta name="twitter:image" content="https://vertex-shift.github.io/folio/assets/social.png">
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Folio",
+      "url": "https://vertex-shift.github.io/folio/",
+      "description": "An independent, local-first desktop PDF workspace for reading, annotation, supported source-text editing and page organization.",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": ["macOS 13+ (Apple Silicon)", "Windows (x64)", "Linux (x64)"],
+      "softwareVersion": "0.1.1",
+      "downloadUrl": "https://github.com/vertex-shift/folio/releases/tag/v0.1.1",
+      "license": "https://github.com/vertex-shift/folio/blob/main/LICENSE",
+      "codeRepository": "https://github.com/vertex-shift/folio",
+      "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+    }
+  </script>
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="wordmark" href="./" aria-label="Folio home">
+      <img src="./assets/folio.svg" width="34" height="34" alt="">
+      <span>folio</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="#what-works">The workspace</a>
+      <a href="https://github.com/vertex-shift/folio">GitHub
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg>
+      </a>
+      <a class="nav-download" href="#get-folio">Get Folio</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="intro-title">
+      <h1 id="intro-title">Your PDFs.<br><span>Your rules.</span></h1>
+      <div class="intro-row">
+        <div class="intro-copy">
+          <p class="lead">Meet <strong>Folio</strong>, a free, local-first desktop PDF workspace.
+            An independent, open-source alternative to Adobe Acrobat.</p>
+          <p class="hero-promise">Read. Annotate. Edit supported text.<br> No account. No subscription.</p>
+        </div>
+        <div class="hero-action">
+          <a class="button primary" id="primary-download" href="#get-folio">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></svg>
+            <span id="primary-download-label">Get Folio, free</span>
+          </a>
+          <p id="primary-download-detail">Desktop installers · v0.1.1</p>
+          <a class="quiet-link" href="#get-folio">Windows, Linux &amp; install details</a>
+        </div>
+      </div>
+
+      <div class="workspace-proof">
+        <div class="proof-topline">
+          <div class="preview-tabs" role="tablist" aria-label="Explore the real Folio workspace" hidden>
+            <button type="button" role="tab" id="preview-read" aria-controls="workspace-preview" aria-selected="true" data-preview="read">Read &amp; review</button>
+            <button type="button" role="tab" id="preview-comment" aria-controls="workspace-preview" aria-selected="false" tabindex="-1" data-preview="comment">Leave a note</button>
+            <button type="button" role="tab" id="preview-organize" aria-controls="workspace-preview" aria-selected="false" tabindex="-1" data-preview="organize">Organize pages</button>
+          </div>
+        </div>
+        <p class="preview-build-note">This is the current source build. The v0.1.1 installers have <a href="#source-chapter">fewer features</a>.</p>
+        <div class="proof-frame" id="workspace-preview" role="tabpanel" aria-labelledby="preview-read" tabindex="0">
+          <picture>
+            <source id="preview-detail" media="(max-width: 640px)" srcset="./assets/workspace-read-detail.webp">
+            <img id="preview-image" src="./assets/workspace-read.webp" width="1440" height="1000"
+              alt="Actual Folio desktop workspace reading an original sample PDF, with a real highlight and note."
+              fetchpriority="high">
+          </picture>
+        </div>
+        <div class="proof-caption">
+          <p id="preview-caption">A real PDF. A real workspace. Original sample content.</p>
+          <p>Desktop workspace; detail crop on small screens.</p>
+        </div>
+        <a class="sample-link" href="./assets/try-folio.pdf" download>Try this sample PDF
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></svg>
+        </a>
+        <noscript><p class="small">JavaScript is off. The reading screenshot and all download links still work.</p></noscript>
+      </div>
+    </section>
+
+    <section class="tools-section wrap" id="what-works" aria-labelledby="tools-title">
+      <div class="section-heading">
+        <h2 id="tools-title">For the work between<br>“open” and “send”.</h2>
+        <p>Keep the familiar PDF essentials.<br>Lose the monthly price tag.</p>
+      </div>
+      <div class="tools-layout">
+        <div class="ownership-note">
+          <p>Some files are a quick read.<br>Others need a little work.</p>
+          <p>Folio puts the document first: familiar tools, portable PDF changes, and a source codebase you can actually inspect.</p>
+          <a class="text-link" href="https://github.com/vertex-shift/folio/blob/main/LICENSE">Apache-2.0 licensed
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+          </a>
+        </div>
+        <dl class="workflow-list">
+          <div><dt>Read &amp; find</dt><dd>Continuous pages, search, bookmarks and independent document tabs.</dd></div>
+          <div><dt>Make your mark</dt><dd>Highlights, notes, placed text and pen annotations that travel with the PDF.</dd></div>
+          <div><dt>Actually edit</dt><dd>Replace or delete supported existing text runs, not just cover them with an annotation.</dd></div>
+          <div><dt>Put pages in place</dt><dd>Reorder, rotate, duplicate, combine and extract pages. Undo when an idea changes.</dd></div>
+          <div><dt>Keep control</dt><dd>Process files locally. Open supported password PDFs and retain their protection when saving.</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="source-chapter" id="source-chapter" aria-labelledby="source-title">
+      <div class="wrap source-layout">
+        <div>
+          <h2 id="source-title">The next chapter<br>is open, too.</h2>
+          <a class="button light" href="https://github.com/vertex-shift/folio/blob/main/CONTRIBUTING.md#set-up-development">Build current source
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg>
+          </a>
+        </div>
+        <div class="source-copy">
+          <p><strong>Newer features are on <code>main</code>, not in the v0.1.1 installers.</strong>
+            We keep that distinction visible. A good open-source project earns trust by showing what works &mdash; and what doesn’t.</p>
+          <ul>
+            <li>Measured paragraph reflow inside adjustable boxes.</li>
+            <li>Human-reviewed tagged copies and semantic reading.</li>
+            <li>Pinned offline OCR for 15 languages, including Arabic, Hindi, Japanese and Korean.</li>
+            <li>Offline CRL and RFC3161 signature evidence with explicit custom trust.</li>
+          </ul>
+          <p class="source-boundary">These are delivered subsets, not full Acrobat parity, automatic accessibility certification or qualified-signature assurance.</p>
+          <a class="source-link" href="https://github.com/vertex-shift/folio/blob/main/README.md#what-works">Read the supported workflows and limits
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <section class="download-section wrap" id="get-folio" aria-labelledby="download-title">
+      <div class="download-copy">
+        <h2 id="download-title">A little less<br>paperwork starts here.</h2>
+        <p>Download the <strong>v0.1.1 release</strong> for the core reader and editor.
+          It includes protected PDFs and independent tabs. For the latest feature wave, build from source.</p>
+        <p class="release-caution">These installers are not production-signed. macOS is ad-hoc signed and not notarized; Windows and Linux packages are unsigned.</p>
+        <div class="download-help">
+          <a href="https://github.com/vertex-shift/folio/releases/tag/v0.1.1">Release notes</a>
+          <a href="https://github.com/vertex-shift/folio/releases/download/v0.1.1/SHA256SUMS">Verify checksums</a>
+          <a href="https://github.com/vertex-shift/folio/blob/main/README.md#automated-desktop-builds-and-releases">Install guidance</a>
+        </div>
+      </div>
+      <div class="platform-downloads" aria-label="Choose an installer">
+        <a class="platform-choice" data-platform="macos" href="https://github.com/vertex-shift/folio/releases/download/v0.1.1/Folio_0.1.1_macos_arm64.dmg">
+          <span><strong>macOS</strong><span>Apple Silicon · macOS 13+ · .dmg</span></span>
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></svg>
+        </a>
+        <a class="platform-choice" data-platform="windows" href="https://github.com/vertex-shift/folio/releases/download/v0.1.1/Folio_0.1.1_windows_x64_setup.exe">
+          <span><strong>Windows</strong><span>x64 · .exe installer · WebView2 required</span></span>
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></svg>
+        </a>
+        <a class="platform-choice" data-platform="linux" href="https://github.com/vertex-shift/folio/releases/download/v0.1.1/Folio_0.1.1_linux_x64.deb">
+          <span><strong>Linux</strong><span>x64 · .deb package · WebKitGTK 4.1 required</span></span>
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></svg>
+        </a>
+        <p class="small"><a href="https://github.com/vertex-shift/folio/releases/download/v0.1.1/Folio_0.1.1_linux_x64.AppImage">Prefer a Linux AppImage?</a> x64 only; follow the runtime guidance.
+          Intel macOS and ARM Windows/Linux installers are not provided.</p>
+      </div>
+    </section>
+
+    <section class="faq-section wrap" aria-labelledby="faq-title">
+      <h2 id="faq-title">Good questions.<br>Straight answers.</h2>
+      <div class="faq-list">
+        <details>
+          <summary>Is Folio really free?</summary>
+          <p>Yes. Folio is licensed under Apache-2.0, with no subscription or account required by the app. You can use, inspect and contribute to its source. Third-party dependencies retain their own licenses.</p>
+        </details>
+        <details>
+          <summary>Can it replace every Acrobat workflow?</summary>
+          <p>No. Folio is an independent alternative for supported workflows, not a complete Acrobat replacement. Complex text shaping, arbitrary layout reconstruction, full Office conversion and formal PDF/UA or qualified-signature assurance are not promised. Read the <a href="https://github.com/vertex-shift/folio/blob/main/README.md#what-works">exact boundaries</a> before using it for important work.</p>
+        </details>
+        <details>
+          <summary>What stays on my computer?</summary>
+          <p>The desktop app processes PDF contents locally. This introduction page has no analytics, signup form or PDF upload. Fonts and screenshots are served with the page. Installer downloads, stars and contribution links take you to GitHub.</p>
+        </details>
+        <details>
+          <summary>Why might my computer show an installer warning?</summary>
+          <p>Current releases are unsigned or ad-hoc signed, rather than production-signed and notarized. Download only from the official release, verify SHA256SUMS, and review your operating system’s warning. Do not disable system security to install Folio. Apple’s <a href="https://support.apple.com/en-us/102445">guidance on trusted apps</a> explains macOS approval.</p>
+        </details>
+        <details>
+          <summary>Does a black rectangle permanently redact text?</summary>
+          <p>No. Ordinary annotations and cropping do not erase content. Folio’s applied redaction exports a separate image-only PDF that omits original objects, but loses searchable text and document structure. Preserve the original and share only the deliberately exported copy; <a href="https://github.com/vertex-shift/folio/blob/main/README.md#permanent-redaction">read the limits</a> first.</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="community-section" aria-labelledby="community-title">
+      <div class="wrap community-layout">
+        <div>
+          <h2 id="community-title">Good tools get better<br>when they’re open.</h2>
+          <p>Found a rough edge? Have a workflow worth improving?<br>Help shape an open-source PDF workspace.</p>
+          <div class="community-links">
+            <a class="button primary" href="https://github.com/vertex-shift/folio">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9Z"/></svg>
+              Star on GitHub
+            </a>
+            <a class="text-link" href="https://github.com/vertex-shift/folio/blob/main/CONTRIBUTING.md">Contribute
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+            </a>
+            <a class="text-link" href="https://github.com/vertex-shift/folio/issues">Report a bug</a>
+          </div>
+        </div>
+        <div class="share-note">
+          <p>Know someone with<br>too much paperwork?</p>
+          <button class="button secondary" type="button" id="share-button" hidden>
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 8 6-3m-6 11 6 3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="4" r="3"/><circle cx="18" cy="20" r="3"/></svg>
+            Pass Folio on
+          </button>
+          <p id="share-status" role="status" aria-live="polite"></p>
+          <div id="share-fallback" hidden><label for="share-address">Copy this page address</label>
+            <input id="share-address" type="url" value="https://vertex-shift.github.io/folio/" readonly>
+          </div>
+          <noscript><a href="https://vertex-shift.github.io/folio/">Share this page address</a></noscript>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="site-footer wrap">
+    <a class="wordmark" href="./" aria-label="Folio home"><img src="./assets/folio.svg" width="27" height="27" alt=""><span>folio</span></a>
+    <p>An independent open-source project. A little less paperwork.</p>
+    <div class="footer-links"><a href="https://github.com/vertex-shift/folio/blob/main/LICENSE">License</a><a href="./assets/provenance.json">Asset credits</a><a href="https://github.com/vertex-shift/folio">Source</a></div>
+    <p class="trademark">Not affiliated with Adobe. Adobe and Acrobat are trademarks of Adobe. Folio does not promise full feature parity or certification.</p>
+  </footer>
+</body>
+</html>

@@ -6,6 +6,10 @@ a full Acrobat replacement.
 Its familiar PDF-editor layout is independently implemented; no proprietary
 code, fonts, icons, artwork, or licensing logic was extracted from Acrobat.
 
+[Meet Folio](https://vertex-shift.github.io/folio/) for a product introduction,
+real workspace previews, platform downloads, and contribution links. The page
+distinguishes the released v0.1.1 installers from newer features on `main`.
+
 ## Start the desktop app
 
 Requires macOS 13+, Xcode Command Line Tools, a current stable Rust toolchain,
@@ -72,8 +76,8 @@ CI explicitly selects each platform's installer formats.
 ### Publishing a version
 
 Keep the version in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`,
-`src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json` synchronized, and commit
-those changes to `main`. Push a matching version tag, for example:
+`src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json` synchronized, and merge
+those changes into `main` through a pull request. Push a matching version tag, for example:
 
 ```sh
 git tag -a v0.1.1 -m "Folio 0.1.1"

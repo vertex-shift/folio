@@ -9,6 +9,12 @@ web
 The HTML/CSS interface runs inside a macOS-first Tauri desktop application.
 This is not a hosted service or a mobile application.
 
+The separate static introduction at <https://vertex-shift.github.io/folio/>
+explains the open-source desktop project and links to actual installers and
+source. It has no hosted PDF processing, uploads, signup or analytics. Marketing
+must distinguish released installers from newer source-only workflows rather
+than imply full Acrobat parity or invented adoption metrics.
+
 ## Stack
 
 User-selected: Tauri, with a Rust backend and an HTML/CSS interface.
