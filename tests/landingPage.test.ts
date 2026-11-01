@@ -79,7 +79,8 @@ test("the introduction names the actual independent PDF product and its release/
   assert.match(html, /An independent, open-source alternative to Adobe Acrobat/);
   assert.match(html, /local-first desktop PDF workspace/);
   assert.equal((html.match(/<h1(?:\s|>)/g) ?? []).length, 1);
-  assert.match(html, /Newer features are on <code>main<\/code>, not in the v0\.1\.1 installers/);
+  assert.match(html, /This feature wave is in the v0\.1\.2 installers/);
+  assert.doesNotMatch(html, /fewer features|not in the v0\.1\.2 installers|v0\.1\.1/);
   assert.match(html, /not a complete Acrobat replacement/);
   assert.match(html, /not notarized/);
   assert.match(html, /Windows and Linux packages are unsigned/);
@@ -161,12 +162,12 @@ test("structured data separates the real release, source repository and original
   assert.deepEqual(webpage.primaryImageOfPage, { "@id": image["@id"] });
   assert.equal(application["@id"], `${pageUrl}#application`);
   assert.equal(application.name, "Folio");
-  assert.equal(application.softwareVersion, "0.1.1");
+  assert.equal(application.softwareVersion, "0.1.2");
   assert.deepEqual(application.operatingSystem, ["macOS 13+ (Apple Silicon)", "Windows (x64)", "Linux (x64)"]);
   assert.equal(application.isAccessibleForFree, true);
   assert.equal(application.license, "https://github.com/vertex-shift/folio/blob/main/LICENSE");
   assert.deepEqual(application.offers, { "@type": "Offer", url: application.downloadUrl, price: "0", priceCurrency: "USD" });
-  assert.equal(application.downloadUrl, "https://github.com/vertex-shift/folio/releases/tag/v0.1.1");
+  assert.equal(application.downloadUrl, "https://github.com/vertex-shift/folio/releases/tag/v0.1.2");
   assert.ok(html.includes(`href="${application.downloadUrl}"`));
   assert.equal(application.codeRepository, undefined);
   assert.equal(source["@id"], "https://github.com/vertex-shift/folio");
@@ -220,8 +221,8 @@ test("real platform download URLs match the visible release and never guess unsu
   assert.equal(platformDownload("iPhone"), null);
   for (const value of Object.values(downloads)) {
     assert.ok(html.includes(value.href));
-    assert.match(value.href, /^https:\/\/github\.com\/vertex-shift\/folio\/releases\/download\/v0\.1\.1\//);
-    assert.match(value.detail, /v0\.1\.1/);
+    assert.match(value.href, /^https:\/\/github\.com\/vertex-shift\/folio\/releases\/download\/v0\.1\.2\//);
+    assert.match(value.detail, /v0\.1\.2/);
   }
   assert.match(downloads.macos.detail, /Apple Silicon/);
   assert.match(html, /Intel macOS and ARM Windows\/Linux installers are not provided/);
