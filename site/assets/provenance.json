@@ -1,0 +1,96 @@
+{
+  "screenshotLicense": "Apache-2.0: original Folio UI and fictional demo document.",
+  "fontLicense": "SIL Open Font License 1.1; see fonts/OFL.txt.",
+  "fontSource": "https://fonts.gstatic.com/s/commissioner/v24/tDbw2o2WnlgI0FNDgduEk4jAhwgumbU1SVfU5BD8OuRL8OstC6KOhgvBYWSFJ-Mgdrgiju6fF8m0akXaaRg2_g.woff2",
+  "assets": [
+    {
+      "file": "workspace-read.webp",
+      "sha256": "f2754a49b7c4780dcb387112acf7863cd72f38e3bb1b0b00475dc438e86d1472",
+      "origin": "Actual Folio React/PDF.js UI backed by the Rust/lopdf engine, with scripts/create-site-demo.mjs original fictional PDF.",
+      "sourceCommit": "f7527933d94534a1b44de8f2779f5e585ad0fe31",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "mode": "read",
+      "originalScreenshot": "site-validation/workspace-read.png"
+    },
+    {
+      "file": "workspace-read-detail.webp",
+      "sha256": "34def8cbdb13b220dc02d71724d4391256186e1e3aad638ee3caad53f6e8a20f",
+      "origin": "Labeled detail crop of the same actual desktop screenshot workspace-read.webp; not a mobile application.",
+      "sourceCommit": "f7527933d94534a1b44de8f2779f5e585ad0fe31",
+      "crop": [
+        310,
+        95,
+        900,
+        900
+      ],
+      "mode": "read"
+    },
+    {
+      "file": "workspace-comment.webp",
+      "sha256": "cabf236c2aae5e3d76141d1436d32079cec672e75ac7ed2d367f73f59d9b828c",
+      "origin": "Actual Folio React/PDF.js UI backed by the Rust/lopdf engine, with scripts/create-site-demo.mjs original fictional PDF.",
+      "sourceCommit": "f7527933d94534a1b44de8f2779f5e585ad0fe31",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "mode": "comment",
+      "originalScreenshot": "site-validation/workspace-comment.png"
+    },
+    {
+      "file": "workspace-comment-detail.webp",
+      "sha256": "9f355def8b2c96351e9161439b178470a71d1254684f412c37278bd5212b9aeb",
+      "origin": "Labeled 320x320 detail crop of the actual desktop Comments pane from the original workspace-comment.png capture, showing genuine highlight and note records. Scaled uniformly to 900x900; not synthesized UI or a mobile application.",
+      "sourceCommit": "f7527933d94534a1b44de8f2779f5e585ad0fe31",
+      "crop": [
+        0,
+        242,
+        320,
+        320
+      ],
+      "mode": "comment"
+    },
+    {
+      "file": "workspace-organize.webp",
+      "sha256": "64d641be97556a057645f3ff4d2f85d6621a04b2c2d53cf91a96b0d5d77a3abb",
+      "origin": "Actual Folio React/PDF.js UI backed by the Rust/lopdf engine, with scripts/create-site-demo.mjs original fictional PDF.",
+      "sourceCommit": "f7527933d94534a1b44de8f2779f5e585ad0fe31",
+      "viewport": [
+        1440,
+        1000
+      ],
+      "mode": "organize",
+      "originalScreenshot": "site-validation/workspace-organize.png"
+    },
+    {
+      "file": "workspace-organize-detail.webp",
+      "sha256": "24e7d6c4fc3a0d47ad54d864dce6526e90e2490293168035e6f1fc644d7441c5",
+      "origin": "Labeled detail crop of the same actual desktop screenshot workspace-organize.webp; not a mobile application.",
+      "sourceCommit": "f7527933d94534a1b44de8f2779f5e585ad0fe31",
+      "crop": [
+        310,
+        95,
+        900,
+        900
+      ],
+      "mode": "organize"
+    },
+    {
+      "file": "social.png",
+      "width": 1200,
+      "height": 630,
+      "sha256": "b7e1fab2e7233157c0fdc53a66e09d8e355bc7f8935aa8d8809f0ebe93aa3b28",
+      "origin": "Original Folio social card rendered by scripts/create-site-social.mjs with the locally licensed Commissioner font and the verified actual workspace-read.webp screenshot. No invented product UI, ratings or Adobe assets."
+    }
+  ],
+  "font": {
+    "family": "Commissioner",
+    "file": "fonts/commissioner-latin.woff2",
+    "sha256": "737ec8f28006b815be5333598aa32b203005f5788c8e61b09090b944eac8b79c",
+    "license": "SIL Open Font License 1.1",
+    "licenseSource": "https://raw.githubusercontent.com/google/fonts/9862abc066c9b83bf84c3e8ed1fc2d8d48f9bbf0/ofl/commissioner/OFL.txt"
+  }
+}

@@ -139,6 +139,17 @@ branch. Explain what changed and why, link any related issue, and list the
 checks you ran. Include screenshots for visual changes using only shareable
 example documents. Note platform limitations or behavior changes explicitly.
 
+`main` is PR-only: Windows, macOS and Linux CI must pass against an up-to-date
+branch, and review conversations must be resolved before merging. Direct
+pushes, force pushes and deletion are blocked, without bypass actors.
+Independent approvals are currently optional for the solo-maintainer workflow.
+
+The static [introduction site](site/README.md) lives in `site/`. Run
+`node --test tests/landingPage.test.ts` for site-only content, asset, metadata and
+deployment checks. `npm run test:site` additionally exercises desktop/mobile
+layout, keyboard access, sharing recovery and original sample downloads in
+Playwright. These checks do not launch the native app or read private PDFs.
+
 The [Desktop builds and releases workflow](.github/workflows/build.yml) runs
 frontend and Rust document-engine tests and creates native bundles for Windows
 x64, macOS Apple Silicon, and Linux x64. Fork pull requests may need a
