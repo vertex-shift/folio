@@ -185,9 +185,10 @@ drafts across hidden panels, inactive tabs and page virtualization.
 Confirm the manual review, **Prepare reviewed tagged copy**, then **Save
 separate tagged copy**. The result contains real `StructTreeRoot`/`StructElem`,
 `ParentTree`, unique content MCIDs, page/Form ownership and language entries.
-Validated top-level reflowed Folio paragraphs use isolated Form-stream MCIDs
-and `/Stm` MCR associations, retaining their exact logical text and explicit
-breaks. Original drawing operands and searchable source glyphs remain intact;
+Validated top-level reflowed Folio paragraphs bind their exact page-level Form
+invocation with a page MCID and exact validated logical `ActualText`, including
+explicit breaks. The original untagged Form stream remains byte-identical;
+there is no duplicate child MCID. Original drawing operands and searchable source glyphs remain intact;
 the source bytes, paths and undo history are unchanged. Existing passwords,
 encryption and permissions are preserved. Copy-only/fill-only access does not
 authorize structure edits; normal general-edit authorization is required.

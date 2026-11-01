@@ -407,7 +407,7 @@ fn tagged_copy(document: &Document, request: &CopyRequest) -> Result<Vec<u8>> {
     let mut kids = Vec::new();
     let mut parent_entries = std::collections::BTreeMap::new();
     let mut page_mcids = std::collections::BTreeMap::new();
-    let mut form_key = output.get_pages().len() as i64;
+    let next_parent_key = output.get_pages().len() as i64;
     let mut annotations = Vec::new();
     let mut id_names = Vec::new();
     for (index, entry) in request.entries.iter().enumerate() {
@@ -421,37 +421,21 @@ fn tagged_copy(document: &Document, request: &CopyRequest) -> Result<Vec<u8>> {
                 item: item.clone(),
                 role: entry.role,
                 mcid: None,
-                element: None,
-                scope_key: None,
             });
             continue;
         }
         let element = output.new_object_id();
-        let key = if item.managed {
-            let key = form_key;
-            form_key += 1;
-            key
-        } else {
-            item.view.page as i64
-        };
-        let mcid = if item.managed {
-            0
-        } else {
-            let value = page_mcids.entry(item.view.page).or_insert(0_i64);
-            let mcid = *value;
-            *value += 1;
-            mcid
-        };
+        let key = item.view.page as i64;
+        let value = page_mcids.entry(item.view.page).or_insert(0_i64);
+        let mcid = *value;
+        *value += 1;
         let parents = parent_entries.entry(key).or_insert_with(Vec::new);
         parents.push(Object::Reference(element));
         let id = format!("folio-semantic-{index:04}");
         let mut dictionary = dictionary! {
             "Type"=>"StructElem","S"=>entry.role.name(),"P"=>document_id,"Pg"=>page_id,
-            "ID"=>text_string(&id),
+            "ID"=>text_string(&id),"K"=>mcid,
         };
-        if !item.managed {
-            dictionary.set("K", mcid);
-        }
         if let Some(value) = &entry.language {
             dictionary.set("Lang", text_string(value));
         }
@@ -469,8 +453,6 @@ fn tagged_copy(document: &Document, request: &CopyRequest) -> Result<Vec<u8>> {
             item: item.clone(),
             role: entry.role,
             mcid: Some(mcid),
-            element: Some(element),
-            scope_key: Some(key),
         });
     }
     source::tag_pages(&mut output, &annotations)?;
@@ -489,7 +471,7 @@ fn tagged_copy(document: &Document, request: &CopyRequest) -> Result<Vec<u8>> {
         root_id,
         dictionary! {
             "Type"=>"StructTreeRoot","K"=>vec![Object::Reference(document_id)],
-            "ParentTree"=>parents,"ParentTreeNextKey"=>form_key,"IDTree"=>ids,
+            "ParentTree"=>parents,"ParentTreeNextKey"=>next_parent_key,"IDTree"=>ids,
         }
         .into(),
     );

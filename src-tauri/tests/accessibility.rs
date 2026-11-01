@@ -239,7 +239,7 @@ fn actual_native_preview_request_shape_rejects_unknown_fields() {
 }
 
 #[test]
-fn reflowed_logical_paragraphs_get_unique_form_scopes_and_real_stm_associations() {
+fn reflowed_logical_paragraphs_bind_the_page_invocation_without_mutating_form_streams() {
     let mut workspace = Workspace::default();
     let info = open(&mut workspace);
     let block = workspace
@@ -286,15 +286,27 @@ fn reflowed_logical_paragraphs_get_unique_form_scopes_and_real_stm_associations(
     let mut nodes = Vec::new();
     leaves(&result.structure, &mut nodes);
     assert_eq!(nodes[0].text.as_deref(), Some(text));
-    assert!(nodes[0].bindings[0].stream.is_some());
+    assert!(nodes[0].bindings[0].stream.is_none());
     let pdf = Document::load_mem(&output).unwrap();
     let form = pdf
         .objects
         .values()
         .filter_map(|value| value.as_stream().ok())
-        .find(|value| value.dict.has(b"StructParents"))
+        .find(|value| value.dict.has(b"FolioParagraph"))
         .unwrap();
-    assert!(form.dict.has(b"FolioParagraph"));
+    assert!(!form.dict.has(b"StructParents"));
+    let source = Document::load_mem(workspace.document(info.id).unwrap().bytes()).unwrap();
+    let original = source
+        .objects
+        .values()
+        .filter_map(|value| value.as_stream().ok())
+        .find(|value| value.dict.has(b"FolioParagraph"))
+        .unwrap();
+    assert_eq!(
+        form.content, original.content,
+        "the original Form stream remains byte-exact"
+    );
+    assert_eq!(form.dict, original.dict);
     assert_eq!(
         workspace.document(info.id).unwrap().revision(),
         changed.revision
@@ -602,6 +614,7 @@ fn unsupported_source_features_are_precise_refusals_not_success_shaped_artifacts
                     .unwrap()
                     .set("AcroForm", dictionary! { "Fields"=>Vec::<Object>::new() });
             }
+
             1 => {
                 pdf.catalog_mut()
                     .unwrap()
@@ -625,4 +638,32 @@ fn unsupported_source_features_are_precise_refusals_not_success_shaped_artifacts
         assert!(!report.authoring_allowed);
         assert!(report.candidates.is_empty() && !report.issues.is_empty());
     }
+}
+
+#[test]
+fn partial_paragraph_metrics_never_hide_decodable_source_glyphs() {
+    let mut pdf = fixture();
+    let page = pdf.get_pages()[&1];
+    let content = pdf.add_object(Stream::new(
+        dictionary! {},
+        b"BT /F1 12 Tf 1 0 0 1 32 720 Tm (Bonjour, caf\\351.) Tj ET".to_vec(),
+    ));
+    pdf.get_dictionary_mut(page)
+        .unwrap()
+        .set("Contents", content);
+    let source = bytes(pdf);
+    let session = Session::from_bytes(source.clone(), "accent.pdf".into(), None, 1).unwrap();
+    assert_eq!(
+        session.text_runs(0).unwrap()[0].text.as_deref(),
+        Some("Bonjour, café.")
+    );
+    let report = reopened(source);
+    assert_eq!(report.status, "unsupported", "{:?}", report.issues);
+    assert!(report.candidates.is_empty() && !report.authoring_allowed);
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|issue| issue.contains("partial source text"))
+    );
 }

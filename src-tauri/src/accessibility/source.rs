@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use lopdf::{
-    Document, Object, ObjectId, Stream,
+    Document, Object, Stream,
     content::{Content, Operation},
     dictionary, text_string,
 };
@@ -9,7 +9,7 @@ use lopdf::{
 use super::{Candidate, CandidateKind, MAX_ITEMS, MAX_PAGES, Role};
 use crate::{
     document::{Result, invalid},
-    pdf_objects::{MAX_EDIT_CONTENT_BYTES, install_resource, page_resources, resolve, resource},
+    pdf_objects::{MAX_EDIT_CONTENT_BYTES, page_resources, resolve, resource},
 };
 
 #[derive(Clone)]
@@ -24,8 +24,6 @@ pub(super) struct Tag {
     pub item: Item,
     pub role: Role,
     pub mcid: Option<i64>,
-    pub element: Option<ObjectId>,
-    pub scope_key: Option<i64>,
 }
 
 fn authoring_features(document: &Document) -> Result<()> {
@@ -124,6 +122,7 @@ pub(super) fn inventory(document: &Document) -> Result<Vec<Item>> {
         operation_spans(&bytes, &content.operations)?;
         let resources = page_resources(document, *id)?;
         let blocks = crate::paragraph::semantic_blocks(document, page)?;
+        let runs = crate::text_edit::page_runs(document, page)?;
         if blocks.iter().any(|block| block.view.path.len() != 1) {
             return Err(invalid(format!(
                 "Page {} contains nested Form text. Arbitrary nested Forms cannot be tagged safely in this bounded authoring mode.",
@@ -195,6 +194,35 @@ pub(super) fn inventory(document: &Document) -> Result<Vec<Item>> {
                                     .unwrap_or("unknown source font or layout")
                             ))
                         })?;
+                        let mut decoded = String::new();
+                        for run in runs.iter().filter(|run| {
+                            run.path.len() == 1 && (start..=end).contains(&run.path[0])
+                        }) {
+                            decoded.push_str(run.text.as_deref().ok_or_else(|| invalid("A source text run cannot be decoded completely. It is not silently treated as decorative."))?);
+                        }
+                        if !logical
+                            .chars()
+                            .filter(|character| !character.is_whitespace())
+                            .eq(decoded
+                                .chars()
+                                .filter(|character| !character.is_whitespace()))
+                        {
+                            return Err(invalid(format!(
+                                "Page {} has source glyphs absent from its paragraph description, possibly because source metrics are unsupported. No partial source text is silently tagged.",
+                                page + 1
+                            )));
+                        }
+                        if !block.view.editable {
+                            return Err(invalid(format!(
+                                "Page {} has ambiguous or unsupported paragraph grouping: {}. Its internal reading order is not guessed.",
+                                page + 1,
+                                block
+                                    .view
+                                    .reason
+                                    .as_deref()
+                                    .unwrap_or("source layout could not be validated")
+                            )));
+                        }
                         if !logical.is_empty() {
                             item = Some((
                                 CandidateKind::Text,
@@ -388,54 +416,21 @@ pub(super) fn tag_pages(document: &mut Document, tags: &[Tag]) -> Result<()> {
         let bytes = document.get_page_content_with_limit(id, MAX_EDIT_CONTENT_BYTES)?;
         let operations = Content::decode(&bytes)?.operations;
         let spans = operation_spans(&bytes, &operations)?;
-        let mut resources = page_resources(document, id)?;
+        let resources = page_resources(document, id)?;
         let mut edits = BTreeMap::new();
         for tag in tags.iter().filter(|tag| tag.item.view.page == page) {
             let start = spans[tag.item.start].0;
             let end = spans[tag.item.end].1;
             let body = &bytes[start..end];
-            let marked = if tag.item.managed && tag.role != Role::Artifact {
-                let original = &operations[tag.item.start];
-                let object = resource(
-                    document,
-                    &resources,
-                    b"XObject",
-                    original.operands[0].as_name()?,
-                )?;
-                let mut form = resolve(document, object)?.as_stream()?.clone();
-                let original_bytes = form.get_plain_content_with_limit(MAX_EDIT_CONTENT_BYTES)?;
-                let mut marked = marker(tag.role, tag.mcid, tag.item.view.text.as_deref())?;
-                marked.extend_from_slice(&original_bytes);
-                marked.extend_from_slice(b"\nEMC\n");
-                form.set_plain_content(marked);
-                form.dict
-                    .set("StructParents", tag.scope_key.expect("Form scope"));
-                form.compress()?;
-                let form_id = document.add_object(form);
-                let name = install_resource(
-                    document,
-                    &mut resources,
-                    b"XObject",
-                    "FolioTaggedParagraph",
-                    form_id.into(),
-                )?;
-                let page_id = crate::document::page_id(document, page)?;
-                document
-                    .get_dictionary_mut(tag.element.expect("Form element"))?
-                    .set(
-                        "K",
-                        dictionary! { "Type"=>"MCR","Pg"=>page_id,"Stm"=>form_id,"MCID"=>0 },
-                    );
-                Content {
-                    operations: vec![Operation::new("Do", vec![Object::Name(name)])],
-                }
-                .encode()?
+            // The page's exact Do occurrence owns the semantics; the canonical Form stays unmarked.
+            let logical = if tag.item.managed {
+                tag.item.view.text.as_deref()
             } else {
-                let mut marked = marker(tag.role, tag.mcid, None)?;
-                marked.extend_from_slice(body);
-                marked.extend_from_slice(b"\nEMC\n");
-                marked
+                None
             };
+            let mut marked = marker(tag.role, tag.mcid, logical)?;
+            marked.extend_from_slice(body);
+            marked.extend_from_slice(b"\nEMC\n");
             edits.insert(start, (end, marked));
         }
         let mut marked = Vec::with_capacity(bytes.len() + edits.len() * 64);
@@ -456,9 +451,10 @@ pub(super) fn tag_pages(document: &mut Document, tags: &[Tag]) -> Result<()> {
         let dictionary = document.get_dictionary_mut(id)?;
         dictionary.set("Contents", contents);
         dictionary.set("Resources", resources);
-        if tags.iter().any(|tag| {
-            tag.item.view.page == page && !tag.item.managed && tag.role != Role::Artifact
-        }) {
+        if tags
+            .iter()
+            .any(|tag| tag.item.view.page == page && tag.role != Role::Artifact)
+        {
             dictionary.set("StructParents", page as i64);
         }
         dictionary.set("Tabs", "S");
