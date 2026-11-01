@@ -5,7 +5,10 @@ use cms::{
     content_info::{CmsVersion, ContentInfo},
     signed_data::{SignedData, SignerIdentifier},
 };
-use der::{Decode, Encode, asn1::{ObjectIdentifier, OctetString}};
+use der::{
+    Decode, Encode,
+    asn1::{ObjectIdentifier, OctetString},
+};
 use openssl::{
     asn1::Asn1Time,
     cms::{CMSOptions, CmsContentInfo},
@@ -78,7 +81,9 @@ pub(super) fn message_digest(name: &str) -> CheckResult<MessageDigest> {
         "SHA-256" => Ok(MessageDigest::sha256()),
         "SHA-384" => Ok(MessageDigest::sha384()),
         "SHA-512" => Ok(MessageDigest::sha512()),
-        _ => Err(CheckError::unsupported("Only SHA-256/384/512 digests are supported.")),
+        _ => Err(CheckError::unsupported(
+            "Only SHA-256/384/512 digests are supported.",
+        )),
     }
 }
 
@@ -229,17 +234,23 @@ fn cms_details_for(der: &[u8], timestamp: bool) -> CheckResult<CmsDetails> {
     if signed.encap_content_info.econtent_type != content_type
         || signed.encap_content_info.econtent.is_some() != timestamp
     {
-        return Err(CheckError::unsupported(
-            if timestamp {
-                "An RFC3161 token must contain attached DER TSTInfo, not detached data."
-            } else {
-                "Only detached CMS data signatures are supported."
-            },
-        ));
+        return Err(CheckError::unsupported(if timestamp {
+            "An RFC3161 token must contain attached DER TSTInfo, not detached data."
+        } else {
+            "Only detached CMS data signatures are supported."
+        }));
     }
-    let content = signed.encap_content_info.econtent.as_ref()
-        .map(|value| value.decode_as::<OctetString>().map(|value| value.as_bytes().to_vec()))
-        .transpose().map_err(der_error)?;
+    let content = signed
+        .encap_content_info
+        .econtent
+        .as_ref()
+        .map(|value| {
+            value
+                .decode_as::<OctetString>()
+                .map(|value| value.as_bytes().to_vec())
+        })
+        .transpose()
+        .map_err(der_error)?;
     if signed.signer_infos.0.len() != 1 || signed.digest_algorithms.len() != 1 {
         return Err(CheckError::unsupported(
             "Each PDF signature must contain exactly one CMS signer and digest algorithm.",
@@ -360,8 +371,13 @@ fn cms_details_for(der: &[u8], timestamp: bool) -> CheckResult<CmsDetails> {
                     ));
                 }
                 signing_certificate_v2 = Some(
-                    attribute.values.iter().next().expect("one value checked")
-                        .to_der().map_err(der_error)?,
+                    attribute
+                        .values
+                        .iter()
+                        .next()
+                        .expect("one value checked")
+                        .to_der()
+                        .map_err(der_error)?,
                 );
             }
             if timestamp && attribute.oid.to_string() == "1.2.840.113549.1.9.16.2.12" {
@@ -499,14 +515,22 @@ pub(super) fn verify(der: &[u8], data: &[u8], details: &CmsDetails) -> CheckResu
 pub(super) fn verify_timestamp(der: &[u8], details: &CmsDetails) -> CheckResult<()> {
     let mut cms = CmsContentInfo::from_der(der).map_err(crypto_error)?;
     let mut certificates = Stack::new().map_err(crypto_error)?;
-    certificates.push(details.signer.clone()).map_err(crypto_error)?;
+    certificates
+        .push(details.signer.clone())
+        .map_err(crypto_error)?;
     let mut output = Vec::new();
     cms.verify(
-        Some(&certificates), None, None, Some(&mut output),
+        Some(&certificates),
+        None,
+        None,
+        Some(&mut output),
         CMSOptions::BINARY | CMSOptions::NO_SIGNER_CERT_VERIFY | CMSOptions::NOINTERN,
-    ).map_err(|_| CheckError::invalid(
-        "The RFC3161 TSA CMS signature or signed TSTInfo digest does not verify.",
-    ))?;
+    )
+    .map_err(|_| {
+        CheckError::invalid(
+            "The RFC3161 TSA CMS signature or signed TSTInfo digest does not verify.",
+        )
+    })?;
     if details.content.as_deref() != Some(output.as_slice()) {
         return Err(CheckError::invalid(
             "The verified timestamp content does not match its DER TSTInfo.",

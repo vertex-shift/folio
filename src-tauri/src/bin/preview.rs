@@ -853,21 +853,31 @@ fn handle(
             )?));
         }
         (&Method::Post, "/signatures/evidence/add") => {
-            let input: EvidenceRequest = signature_body(request, folio_core::signatures::MAX_CRL_BYTES * 4 + 8192)?;
+            let input: EvidenceRequest =
+                signature_body(request, folio_core::signatures::MAX_CRL_BYTES * 4 + 8192)?;
             let evidence = zeroize::Zeroizing::new(input.evidence);
             return json(workspace.add_signature_evidence(
                 folio_core::signatures::SignatureEvidenceContext {
-                    document_id: input.document_id, revision: input.revision, epoch: input.epoch, trust_revision: input.trust_revision,
+                    document_id: input.document_id,
+                    revision: input.revision,
+                    epoch: input.epoch,
+                    trust_revision: input.trust_revision,
                 },
-                input.kind, input.signature_id.as_deref(), &evidence,
+                input.kind,
+                input.signature_id.as_deref(),
+                &evidence,
             )?);
         }
         (&Method::Post, "/signatures/evidence/remove") => {
             let input: RemoveEvidenceRequest = signature_body(request, 8192)?;
             return json(workspace.remove_signature_evidence(
                 folio_core::signatures::SignatureEvidenceContext {
-                    document_id: input.document_id, revision: input.revision, epoch: input.epoch, trust_revision: input.trust_revision,
-                }, &input.fingerprint,
+                    document_id: input.document_id,
+                    revision: input.revision,
+                    epoch: input.epoch,
+                    trust_revision: input.trust_revision,
+                },
+                &input.fingerprint,
             )?);
         }
         (&Method::Post, "/forms") => {

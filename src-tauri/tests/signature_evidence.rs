@@ -829,9 +829,23 @@ fn genuine_future_untrusted_wrong_imprint_bad_ess_and_unknown_embedded_attribute
         let (mut workspace, id) = workspace(control.clone());
         anchor(&mut workspace, id);
         full_crls(&mut workspace, id, &[]);
+        add(
+            &mut workspace,
+            id,
+            EvidenceKind::Timestamp,
+            &token(&value, now() - 10, &pki().tsa, &pki().tsa_key, false),
+        );
         let report = workspace.signature_report(id, 0).unwrap();
         assert_eq!(report.signatures[0].integrity, Integrity::Intact);
         assert_eq!(report.signatures[0].trusted_time.status, expected);
+        assert!(
+            report.signatures[0]
+                .trusted_time
+                .timestamps
+                .iter()
+                .any(|timestamp| timestamp.source == "imported"
+                    && timestamp.status == TrustedTimeStatus::VerifiedCustomStore)
+        );
         assert_eq!(workspace.document(id).unwrap().bytes(), control);
     }
     let timestamp = token(&value, now() - 10, &pki().tsa, &pki().tsa_key, false);

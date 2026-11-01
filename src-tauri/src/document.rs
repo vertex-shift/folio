@@ -368,7 +368,8 @@ impl Session {
     }
 
     pub(crate) fn signature_binding(
-        &self, signature_id: &str,
+        &self,
+        signature_id: &str,
     ) -> Result<crate::signatures::evidence::SignatureBinding> {
         crate::signatures::signature_binding(&self.document, &self.bytes, signature_id)
     }

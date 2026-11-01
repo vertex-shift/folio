@@ -168,13 +168,13 @@ impl TrustedTimeEvaluation {
             return Self::not_checked();
         }
         let status = [
-            TrustedTimeStatus::VerifiedCustomStore,
             TrustedTimeStatus::Revoked,
             TrustedTimeStatus::Invalid,
             TrustedTimeStatus::Unsupported,
             TrustedTimeStatus::Future,
             TrustedTimeStatus::Untrusted,
             TrustedTimeStatus::Incomplete,
+            TrustedTimeStatus::VerifiedCustomStore,
         ]
         .into_iter()
         .find(|status| {
@@ -184,9 +184,9 @@ impl TrustedTimeEvaluation {
         })
         .unwrap_or(TrustedTimeStatus::NotChecked);
         let message = if status == TrustedTimeStatus::VerifiedCustomStore {
-            "At least one RFC3161 token authenticates this actual CMS signature value under your custom CA and complete current TSA CRL evidence. Its genTime is a TSA assertion, not the PDF's claimed signing time. This does not establish historical signer/TSA revocation, clear current signer revocation or confer qualified/PAdES-LTV status."
+            "The evaluated RFC3161 tokens authenticate this actual CMS signature value under your custom CA and complete current TSA CRL evidence. Their genTime values are TSA assertions, not the PDF's claimed signing time. This does not establish historical signer/TSA revocation, clear current signer revocation or confer qualified/PAdES-LTV status."
         } else {
-            "No token meets the supported custom-anchor, exact-imprint, date and complete current TSA-revocation checks. Inspect timestamp cryptography and missing/failed evidence separately; no trusted-time assurance is inferred."
+            "Not every bound token meets the supported custom-anchor, exact-imprint, date and complete current TSA-revocation checks. A valid token does not hide failed, future, untrusted or incomplete evidence. Inspect each token separately; no overall trusted-time assurance is inferred."
         };
         Self {
             status,

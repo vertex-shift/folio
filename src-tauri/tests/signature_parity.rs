@@ -436,8 +436,14 @@ fn selected_merged_and_separate_widgets_keep_identity_geometry_other_fields_and_
                 .unwrap()
                 .starts_with("D:")
         );
-        assert_eq!(report.signatures[0].revocation.status, RevocationStatus::NotChecked);
-        assert_eq!(report.signatures[0].trusted_time.status, TrustedTimeStatus::NotChecked);
+        assert_eq!(
+            report.signatures[0].revocation.status,
+            RevocationStatus::NotChecked
+        );
+        assert_eq!(
+            report.signatures[0].trusted_time.status,
+            TrustedTimeStatus::NotChecked
+        );
         assert_eq!(report.empty_fields[0].id, id(fixture.fields[1]));
         source.undo().unwrap();
         assert!(source.info().unwrap().annotations.is_empty());
@@ -1112,7 +1118,13 @@ fn explicit_custom_root_with_embedded_intermediate_is_never_system_or_embedded_s
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["anchors", "evidence", "evidenceBytes", "persistent", "revision"]
+        [
+            "anchors",
+            "evidence",
+            "evidenceBytes",
+            "persistent",
+            "revision"
+        ]
     );
     assert_eq!(
         json["signatures"][0]
@@ -1143,7 +1155,10 @@ fn explicit_custom_root_with_embedded_intermediate_is_never_system_or_embedded_s
         "anchored_custom_store"
     );
     assert_eq!(json["signatures"][0]["revocation"]["status"], "incomplete");
-    assert_eq!(json["signatures"][0]["trustedTime"]["status"], "not_checked");
+    assert_eq!(
+        json["signatures"][0]["trustedTime"]["status"],
+        "not_checked"
+    );
 }
 
 #[test]
@@ -1234,7 +1249,10 @@ fn leaf_current_validity_and_document_purpose_never_become_historical_or_timesta
             report.signatures[0].certificate.as_ref().unwrap().validity,
             validity
         );
-        assert_eq!(report.signatures[0].trusted_time.status, TrustedTimeStatus::NotChecked);
+        assert_eq!(
+            report.signatures[0].trusted_time.status,
+            TrustedTimeStatus::NotChecked
+        );
     }
 }
 

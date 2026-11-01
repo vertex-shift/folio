@@ -14,12 +14,12 @@ use zeroize::Zeroizing;
 
 use crate::document::{Result, invalid};
 
-pub use fields::{SignatureFieldInfo, SignatureWidgetInfo};
 pub use evidence::{
     CertificateRevocation, EvidenceInfo, EvidenceKind, MAX_CRL_BYTES, MAX_EVIDENCE_ITEMS,
     MAX_EVIDENCE_STORE_BYTES, MAX_TIMESTAMP_BYTES, RevocationEvaluation, RevocationStatus,
     read_evidence_file,
 };
+pub use fields::{SignatureFieldInfo, SignatureWidgetInfo};
 pub use timestamp::{TimestampEvaluation, TrustedTimeEvaluation, TrustedTimeStatus};
 pub use trust::{
     ChainEvaluation, MAX_ANCHOR_BYTES, MAX_TRUST_ANCHORS, TrustStore, TrustStoreInfo,
@@ -423,7 +423,9 @@ fn inspect_loaded(
     let mut recheck_at = trust.next_check_at(checked_at)?;
     let signatures = inspect_signatures(document, bytes, trust)?;
     for signature in &signatures {
-        if let Some(deadline) = signature.recheck_at { recheck_at = recheck_at.min(deadline); }
+        if let Some(deadline) = signature.recheck_at {
+            recheck_at = recheck_at.min(deadline);
+        }
     }
     let warnings = if signatures.is_empty() && has_signatures(document) {
         vec!["Signature fields or certification markers are present, but no supported signature dictionary was found. This is not an unsigned-document assurance.".into()]
@@ -476,42 +478,55 @@ fn inspect_signatures(
 
 fn initial_info(candidate: &Candidate<'_>, index: usize, current_bytes: usize) -> SignatureInfo {
     SignatureInfo {
-            id: candidate.id.map_or_else(
-                || format!("direct-{}", index + 1),
-                |id| format!("{}:{}", id.0, id.1),
-            ),
-            integrity: Integrity::Invalid,
-            coverage: Coverage::Unknown,
-            message: String::new(),
-            digest: None,
-            algorithm: None,
-            signed_bytes: None,
-            current_bytes,
-            certificate: None,
-            chain: ChainEvaluation::not_checked(),
-            claimed_signing_time: candidate.dictionary.get(b"M").ok()
-                .filter(|value| value.as_str().is_ok_and(|value| value.len() <= 256))
-                .and_then(|value| lopdf::decode_text_string(value).ok()),
-            signature_value_sha256: None,
-            revocation: RevocationEvaluation::not_checked(
-                "The PDF signature must pass its exact-byte cryptographic checks before evidence can be associated with it.",
-            ),
-            trusted_time: TrustedTimeEvaluation::not_checked(),
-            recheck_at: None,
+        id: candidate.id.map_or_else(
+            || format!("direct-{}", index + 1),
+            |id| format!("{}:{}", id.0, id.1),
+        ),
+        integrity: Integrity::Invalid,
+        coverage: Coverage::Unknown,
+        message: String::new(),
+        digest: None,
+        algorithm: None,
+        signed_bytes: None,
+        current_bytes,
+        certificate: None,
+        chain: ChainEvaluation::not_checked(),
+        claimed_signing_time: candidate
+            .dictionary
+            .get(b"M")
+            .ok()
+            .filter(|value| value.as_str().is_ok_and(|value| value.len() <= 256))
+            .and_then(|value| lopdf::decode_text_string(value).ok()),
+        signature_value_sha256: None,
+        revocation: RevocationEvaluation::not_checked(
+            "The PDF signature must pass its exact-byte cryptographic checks before evidence can be associated with it.",
+        ),
+        trusted_time: TrustedTimeEvaluation::not_checked(),
+        recheck_at: None,
     }
 }
 
 pub(crate) fn signature_binding(
-    document: &Document, bytes: &[u8], signature_id: &str,
+    document: &Document,
+    bytes: &[u8],
+    signature_id: &str,
 ) -> Result<evidence::SignatureBinding> {
     let source = signing_source(document, bytes)?;
     for (index, candidate) in candidates(&source)?.iter().enumerate() {
         let mut info = initial_info(candidate, index, bytes.len());
         if info.id == signature_id {
-            return Ok(inspect_one(&source, bytes, candidate, &mut info, &TrustStore::default())?);
+            return Ok(inspect_one(
+                &source,
+                bytes,
+                candidate,
+                &mut info,
+                &TrustStore::default(),
+            )?);
         }
     }
-    Err(invalid("That actual PDF signature no longer exists. Refresh and select it again."))
+    Err(invalid(
+        "That actual PDF signature no longer exists. Refresh and select it again.",
+    ))
 }
 
 fn inspect_one(
@@ -611,12 +626,21 @@ fn inspect_one(
     if verified.is_ok() {
         info.signature_value_sha256 = Some(binding.signature_value_sha256.clone());
         info.revocation = trust.evidence.revocation(&chain);
-        info.trusted_time = trust.evidence.timestamps(&binding, details.timestamp_token.as_deref(), trust);
+        info.trusted_time =
+            trust
+                .evidence
+                .timestamps(&binding, details.timestamp_token.as_deref(), trust);
         let now = evidence::now()?;
         let deadline = evidence::certificate_deadline(
-            std::iter::once(&details.signer).chain(details.embedded.iter()), now, evidence::inspection_deadline(now)?,
+            std::iter::once(&details.signer).chain(details.embedded.iter()),
+            now,
+            evidence::inspection_deadline(now)?,
         )?;
-        info.recheck_at = Some(info.trusted_time.recheck_at().map_or(deadline, |time| deadline.min(time)));
+        info.recheck_at = Some(
+            info.trusted_time
+                .recheck_at()
+                .map_or(deadline, |time| deadline.min(time)),
+        );
     }
     info.chain = chain.evaluation;
     details.certificate.identity_trust = info.chain.status;

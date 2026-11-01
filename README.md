@@ -508,7 +508,9 @@ across tabs. Nothing is persisted to preferences or disk. Add/remove actions
 use one shared CA/evidence store revision, separate from the source revision;
 removal immediately invalidates cached conclusions
 in active and inactive panels, including late inspection responses. Removing
-all anchors returns reports to `not_checked` without changing any PDF revision.
+all anchors returns document-chain checks to `not_checked` without changing any
+PDF revision. Bound timestamps remain inspectable but cannot be custom-trusted
+without a selected anchor.
 
 OpenSSL verifies chain signatures, paths, current dates, critical extensions,
 CA constraints, and key usages with strict verification, authentication level 2,
@@ -578,6 +580,9 @@ is accepted; unrelated/duplicate unsigned attributes remain refused.
 Imported tokens additionally bind the signer certificate fingerprint and
 actual signature-value SHA-256. Removing an imported token does **not** remove
 an embedded token from the unchanged PDF.
+Every bound token remains inspectable separately. Any failed, future, untrusted
+or incomplete matching token prevents an overall verified-time verdict; a valid
+imported token never hides a failed embedded token with the same signature binding.
 
 **A valid timestamp never clears current signer revocation or untrusted dates,
 and cannot repair invalid PDF integrity or approve later changes.** These

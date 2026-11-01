@@ -479,18 +479,31 @@ async fn choose_signature_evidence(
     signature_id: Option<String>,
 ) -> std::result::Result<Option<crate::signatures::TrustStoreInfo>, String> {
     let selected_id = signature_id.clone();
-    let context = crate::signatures::SignatureEvidenceContext { document_id, revision, epoch, trust_revision };
+    let context = crate::signatures::SignatureEvidenceContext {
+        document_id,
+        revision,
+        epoch,
+        trust_revision,
+    };
     with_state(app.clone(), move |state| {
         state.workspace.check_signature_evidence_context(context)?;
         match (kind, selected_id) {
             (crate::signatures::EvidenceKind::Crl, None) => {}
             (crate::signatures::EvidenceKind::Timestamp, Some(id)) => {
-                state.workspace.document(document_id)?.signature_binding(&id)?;
+                state
+                    .workspace
+                    .document(document_id)?
+                    .signature_binding(&id)?;
             }
-            _ => return Err(crate::document::invalid("Select an actual PDF signature only for timestamp evidence.")),
+            _ => {
+                return Err(crate::document::invalid(
+                    "Select an actual PDF signature only for timestamp evidence.",
+                ));
+            }
         }
         Ok(())
-    }).await?;
+    })
+    .await?;
     let dialog = rfd::AsyncFileDialog::new();
     let dialog = match kind {
         crate::signatures::EvidenceKind::Crl => dialog
@@ -500,14 +513,20 @@ async fn choose_signature_evidence(
             .set_title("Import RFC3161 evidence for the selected PDF signature")
             .add_filter("DER timestamp response/token", &["tsr", "tst", "der"]),
     };
-    let Some(file) = dialog.pick_file().await else { return Ok(None); };
+    let Some(file) = dialog.pick_file().await else {
+        return Ok(None);
+    };
     with_state(app, move |state| {
         state.workspace.check_signature_evidence_context(context)?;
         let bytes = crate::signatures::read_evidence_file(file.path(), kind)?;
         Ok(Some(state.workspace.add_signature_evidence(
-            context, kind, signature_id.as_deref(), &bytes,
+            context,
+            kind,
+            signature_id.as_deref(),
+            &bytes,
         )?))
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -519,10 +538,18 @@ async fn remove_signature_evidence(
     trust_revision: u64,
     fingerprint: String,
 ) -> std::result::Result<crate::signatures::TrustStoreInfo, String> {
-    let context = crate::signatures::SignatureEvidenceContext { document_id, revision, epoch, trust_revision };
+    let context = crate::signatures::SignatureEvidenceContext {
+        document_id,
+        revision,
+        epoch,
+        trust_revision,
+    };
     with_state(app, move |state| {
-        state.workspace.remove_signature_evidence(context, &fingerprint)
-    }).await
+        state
+            .workspace
+            .remove_signature_evidence(context, &fingerprint)
+    })
+    .await
 }
 
 #[tauri::command]

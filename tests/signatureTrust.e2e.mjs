@@ -140,6 +140,10 @@ try {
   const opened = [];
 
   async function openFile(path, name) {
+    await page.waitForFunction(() => {
+      const button = document.querySelector('button[aria-label="Open PDFs in new tabs"]');
+      return button && !button.disabled;
+    });
     const [chooser] = await Promise.all([page.waitForEvent("filechooser"),
       page.getByRole("button", { name: "Open PDFs in new tabs", exact: true }).click()]);
     const [response] = await Promise.all([page.waitForResponse((response) => response.url().endsWith("/__folio/open") && response.request().method() === "POST"),
@@ -154,9 +158,24 @@ try {
   }
 
   async function showSignatures() {
-    await active().getByRole("button", { name: "Show digital signatures", exact: true }).click();
+    const rail = active().getByRole("button", { name: "Show digital signatures", exact: true });
+    if (await rail.isVisible()) await rail.click();
+    else {
+      await active().getByRole("button", { name: "All tools", exact: true }).click();
+      await active().getByRole("button", { name: "Digital signatures", exact: true }).click();
+    }
     await active().locator(".signature-entry, .panel-empty h3").first().waitFor();
     await page.waitForFunction(() => !document.querySelector(".document-workspace:not([hidden]) .signature-progress"));
+  }
+
+  async function activate(name) {
+    await page.getByRole("tab").filter({ hasText: name }).click();
+    await page.waitForFunction((name) => [...document.querySelectorAll(".document-tab.selected")].some((tab) => tab.textContent.includes(name)), name);
+  }
+
+  async function refreshChecks() {
+    await active().locator(".signature-review").evaluate((element) => { element.scrollTop = 0; });
+    await active().getByRole("button", { name: "Refresh checks", exact: true }).click();
   }
 
   async function disclosure(selector) {
@@ -239,24 +258,34 @@ try {
   assert.equal((await inspect(revoked)).signatures[0].revocation.status, "revoked");
   evidence.checks.push({ validTimeNeverClearsSignerRevocation: true });
 
-  await page.getByRole("tab").filter({ hasText: goodName }).click();
+  await activate(goodName);
   await waitStatus("Timestamp verified with custom evidence");
   let captureHeld;
   const captured = new Promise((done) => { captureHeld = done; });
   const held = new Promise((done) => { releaseHeld = done; });
+  let completeHeld;
+  const completedHeld = new Promise((done) => { completeHeld = done; });
   let holdNext = true;
   await page.route("**/__folio/signatures/inspect", async (route) => {
     const request = route.request().postDataJSON();
     if (!holdNext || request.documentId !== good.id) return route.continue();
     holdNext = false;
-    const response = await route.fetch();
-    captureHeld(await response.json());
-    await held;
-    await route.fulfill({ response });
+    try {
+      const response = await route.fetch();
+      captureHeld({ report: await response.json() });
+      await held;
+      await route.fulfill({ response });
+      completeHeld({});
+    } catch (error) {
+      captureHeld({ error });
+      completeHeld({ error });
+    }
   });
-  await active().getByRole("button", { name: "Refresh checks", exact: true }).click();
-  const old = await captured;
-  await page.getByRole("tab").filter({ hasText: revokedName }).click();
+  await refreshChecks();
+  const capture = await captured;
+  if (capture.error) throw capture.error;
+  const old = capture.report;
+  await activate(revokedName);
   await waitStatus("Timestamp verified with custom evidence");
   const issuer = old.trustStore.evidence.find((item) => item.kind === "crl" && item.issuer.includes("intermediate"));
   assert.ok(issuer);
@@ -264,9 +293,11 @@ try {
   await active().getByRole("button", { name: `Remove imported crl ${issuer.fingerprint}`, exact: true }).click();
   await waitStatus("Timestamp TSA evidence incomplete");
   releaseHeld();
+  const completion = await completedHeld;
+  if (completion.error) throw completion.error;
   await page.unroute("**/__folio/signatures/inspect");
   assert.equal(await page.locator(".signature-evidence-result > h4").filter({ hasText: "Timestamp verified with custom evidence" }).count(), 0);
-  await page.getByRole("tab").filter({ hasText: goodName }).click();
+  await activate(goodName);
   await waitStatus("Timestamp TSA evidence incomplete");
   await api("/signatures/evidence/remove", { ...ref(good), epoch: old.epoch, trustRevision: old.trustStore.revision, fingerprint: issuer.fingerprint }, {}, 400);
   await importFile("crl", fixture("issuer-current.crl.pem"));
@@ -276,7 +307,7 @@ try {
   await api("/signatures/evidence/remove", { ...ref(good), epoch: current.epoch, trustRevision: current.trustStore.revision,
     fingerprint: current.trustStore.evidence.find((item) => item.kind === "timestamp").fingerprint }, {}, 400);
   await api("/draft", { documentId: good.id, pending: false });
-  await active().getByRole("button", { name: "Refresh checks", exact: true }).click();
+  await refreshChecks();
   await waitStatus("Timestamp verified with custom evidence");
   evidence.checks.push({ removalInvalidatesInactiveAndLateReports: true, staleStoreAndSameRevisionDraftEpochRefused: true });
 
@@ -296,21 +327,21 @@ try {
   const [stalePicker] = await Promise.all([page.waitForEvent("filechooser"),
     active().getByRole("button", { name: "Import full CRL", exact: true }).click()]);
   const addsBeforeInactive = evidenceAdds;
-  await page.getByRole("tab").filter({ hasText: goodName }).click();
+  await activate(goodName);
   await stalePicker.setFiles(fixture("issuer-current.crl.pem"));
   await page.locator(".document-workspace[hidden] .signature-failure").filter({ hasText: /draft lifetime.*changed/ }).waitFor({ state: "attached" });
   assert.equal(evidenceAdds, addsBeforeInactive);
   assert.equal((await inspect(good)).trustStore.revision, current.trustStore.revision);
-  await page.getByRole("tab").filter({ hasText: "Evidence-draft-fixture.pdf" }).click();
-  await active().getByRole("button", { name: "Show form fields", exact: true }).click();
+  await activate("Evidence-draft-fixture.pdf");
+  await active().getByRole("button", { name: "Review fields", exact: true }).click();
   assert.equal(await active().getByRole("textbox", { name: "Evidence draft retained", exact: true }).inputValue(), "Protected unapplied evidence-context draft");
   evidence.checks.push({ inactivePickerNeverImports: true, realFormDraftPreserved: true });
 
-  await page.getByRole("tab").filter({ hasText: goodName }).click();
+  await activate(goodName);
   await waitStatus("Timestamp verified with custom evidence");
   const freshResponse = page.waitForResponse((response) => response.url().endsWith("/__folio/signatures/inspect")
     && response.request().postDataJSON().documentId === good.id && response.status() === 200);
-  await active().getByRole("button", { name: "Refresh checks", exact: true }).click();
+  await refreshChecks();
   current = await (await freshResponse).json();
   await waitStatus("Timestamp verified with custom evidence");
   const beforeExpiry = current.checkedAtUnixMs;
@@ -334,8 +365,9 @@ try {
     ["Sepia", "sepia", 390, 844], ["High Contrast", "contrast", 1440, 1000],
   ]) {
     await page.setViewportSize({ width, height });
-    if (!(await active().locator(".signatures-panel").isVisible())) await showSignatures();
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
     await theme(label, id);
+    if (!(await active().locator(".signatures-panel").isVisible())) await showSignatures();
     await waitStatus("Timestamp verified with custom evidence");
     await statuses().filter({ hasText: "Timestamp verified with custom evidence" }).scrollIntoViewIfNeeded();
     const layout = await active().locator(".signatures-panel").evaluate((element) => ({
