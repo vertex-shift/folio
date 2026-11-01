@@ -83,6 +83,45 @@ This uses the bundled font and real workspace screenshot. Open Graph / Twitter
 cards, a canonical URL, sitemap and an explicit share action support discovery;
 none is a guarantee of virality, indexing, ratings or adoption.
 
+## Search discovery
+
+The title and description identify a free, open-source desktop PDF reader/editor
+and an independent Acrobat alternative. Search and social previews use consistent
+copy; the original 1200x630 sharing image has explicit dimensions, type and
+alternative text. `max-image-preview:large` permits larger search previews
+without changing the actual image or promising a particular result.
+
+JSON-LD connects the canonical `WebPage`, published `SoftwareApplication`,
+`SoftwareSourceCode` and original `ImageObject` with stable IDs. Keep the app
+version and download offer tied to the actual release. `codeRepository` belongs
+to the source entity; newer source-only features must not be attributed to
+the old installer. There are no invented ratings, reviews or endorsements.
+Google's software-app rich results require a genuine rating or review, so this
+markup does not claim eligibility for a rich result.
+
+The XML sitemap lists only the canonical page and its three real workspace
+images. Update `lastmod` when the public page, its structured data or imagery
+meaningfully changes, not on every build. Do not add guessed URLs, duplicate
+`index.html` entries, artificial priorities or deprecated sitemap ping calls.
+
+For Google indexing, the site owner can verify the URL-prefix property
+`https://vertex-shift.github.io/folio/` in Search Console, submit
+`https://vertex-shift.github.io/folio/sitemap.xml`, and inspect the canonical
+homepage. Verification requires the owner's real token or verification file;
+do not invent one or add a placeholder. This repository does not configure or
+claim Search Console submission.
+
+GitHub project Pages deploys at `/folio/`, not the host root. Crawlers read
+`https://vertex-shift.github.io/robots.txt`; a `site/robots.txt` deployed at
+`/folio/robots.txt` would be ignored. The host-root robots URL currently returns
+404, which does not block crawling, and the page allows indexing. If a separate
+host-root Pages site or custom domain is introduced later, configure and verify
+robots there. Preserve the existing redirect to the trailing-slash canonical.
+
+References: [Google's sitemap guidance](https://developers.google.com/search/docs/crawling-indexing/sitemaps/build-sitemap),
+[robots.txt placement](https://developers.google.com/crawling/docs/robots-txt/create-robots-txt)
+and [software-app structured data](https://developers.google.com/search/docs/appearance/structured-data/software-app).
+
 ## Publish through a PR
 
 `.github/workflows/pages.yml` checks the static files on pull requests and
