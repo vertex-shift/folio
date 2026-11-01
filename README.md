@@ -77,11 +77,20 @@ CI explicitly selects each platform's installer formats.
 
 Keep the version in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`,
 `src-tauri/Cargo.lock`, and `src-tauri/tauri.conf.json` synchronized, and merge
-those changes into `main` through a pull request. Push a matching version tag, for example:
+those changes into `main` through a pull request with all required platform CI.
+Use `npm version VERSION --no-git-tag-version --ignore-scripts` to update the
+npm manifest and lockfile. After updating the Rust manifest, run
+`cargo metadata --manifest-path src-tauri/Cargo.toml --format-version 1`
+to refresh the application's Cargo lock entry; `--no-deps` does not perform
+that resolution.
+
+Tag the exact reviewed main commit, not the feature branch. Fetch and verify
+that `origin/main` contains the intended version before creating a matching tag:
 
 ```sh
-git tag -a v0.1.1 -m "Folio 0.1.1"
-git push origin v0.1.1
+git fetch origin main
+git tag -a v0.1.2 origin/main -m "Folio 0.1.2"
+git push origin refs/tags/v0.1.2
 ```
 
 The tag must match the application version exactly. All three platform builds
@@ -92,6 +101,12 @@ Pull requests, branch pushes, and manual runs do not publish releases.
 Published releases are not overwritten on reruns. If publishing fails after
 creating a draft, inspect and remove that unpublished draft without deleting
 the tag before rerunning the workflow.
+
+Only after the complete release is public, update the introduction's installer
+links, release descriptions and structured data, plus their tests. Remove any
+source-only claims for features now included in the release. Preserve the actual
+platform architectures, checksum links and unsigned / ad-hoc-signing and
+lack-of-notarization notices.
 
 ## What works
 
