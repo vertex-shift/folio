@@ -205,7 +205,18 @@ The private read-only marker is an edit-safety policy, not a trust authority.
 
 **Scope:** up to 100 pages, 2,000 semantic items and bounded decoded streams.
 Authoring supports untagged page text objects, image occurrences, painted
-graphics and validated top-level Folio paragraph Forms. Arbitrary nested/
+graphics, validated top-level Folio paragraph Forms and narrowly verified
+canonical Folio offline-OCR streams. Each complete OCR stream is one exact
+logical-text candidate in its recorded source order; the reviewer still sets
+roles/order/language and deliberately describes or marks the original scan
+image. The helper verifies invisible `Tr3` operations, full-word UTF-16
+`ActualText`/CID/ToUnicode agreement, and the complete pinned font program,
+glyph map, widths and descriptor. A `FolioOCR` marker or font-name prefix alone
+is not authority. Separate page-MCID/`ActualText` delimiters surround the
+original OCR stream reference; its original bytes and fonts remain intact.
+Malformed/forged mappings, visible/extra operations and arbitrary marked
+content remain unsupported. This verifies source structure, not recognition
+accuracy, semantic quality or conformance. Arbitrary nested/
 repeated custom Forms, inline images, annotations/links, interactive forms,
 optional content, scripts, existing trees and PDF/A/PDF/UA-declared sources
 are not rewritten. Unsupported or unparsed content is refused rather than

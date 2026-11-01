@@ -11,6 +11,7 @@ use lopdf::{
 use serde::{Deserialize, Serialize};
 mod catalog;
 mod font;
+pub(crate) mod canonical;
 
 use crate::document::{DocumentInfo, Result, inherited, invalid};
 use crate::page_geometry::PageGeometry;

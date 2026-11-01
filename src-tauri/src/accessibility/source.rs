@@ -18,6 +18,7 @@ pub(super) struct Item {
     pub start: usize,
     pub end: usize,
     pub managed: bool,
+    pub ocr_stream: Option<lopdf::ObjectId>,
 }
 
 pub(super) struct Tag {
@@ -105,6 +106,7 @@ pub(super) fn inventory(document: &Document) -> Result<Vec<Item>> {
     authoring_features(document)?;
     let mut items = Vec::new();
     let mut total_bytes = 0;
+    let mut ocr = crate::ocr::canonical::Reader::default();
     for (page, id) in document.get_pages().values().enumerate() {
         let bytes = document.get_page_content_with_limit(*id, MAX_EDIT_CONTENT_BYTES)?;
         total_bytes += bytes.len();
@@ -121,8 +123,19 @@ pub(super) fn inventory(document: &Document) -> Result<Vec<Item>> {
         }
         operation_spans(&bytes, &content.operations)?;
         let resources = page_resources(document, *id)?;
-        let blocks = crate::paragraph::semantic_blocks(document, page)?;
-        let runs = crate::text_edit::page_runs(document, page)?;
+        let canonical = ocr.page(document, page)?;
+        let mut prefix_end = 0;
+        for span in &canonical {
+            if span.start != prefix_end {
+                return Err(invalid(
+                    "Canonical OCR authoring requires complete pristine prefix streams before original page operators. Arbitrary marked text is not accepted.",
+                ));
+            }
+            prefix_end = span.end + 1;
+        }
+        let analysis = crate::ocr::canonical::analysis_document(document, page, &canonical)?;
+        let blocks = crate::paragraph::semantic_blocks(&analysis, page)?;
+        let runs = crate::text_edit::page_runs(&analysis, page)?;
         if blocks.iter().any(|block| block.view.path.len() != 1) {
             return Err(invalid(format!(
                 "Page {} contains nested Form text. Arbitrary nested Forms cannot be tagged safely in this bounded authoring mode.",
@@ -132,6 +145,23 @@ pub(super) fn inventory(document: &Document) -> Result<Vec<Item>> {
         let mut index = 0;
         let mut depth = 0_usize;
         while let Some(operation) = content.operations.get(index) {
+            if let Some(span) = canonical.iter().find(|span| span.start == index) {
+                items.push(Item {
+                    view: Candidate {
+                        id: format!("page-{page}-ocr-{}-ops-{}-{}", span.stream.0, span.start, span.end),
+                        page, kind: CandidateKind::Text, text: Some(span.text.clone()),
+                        description: "Verified canonical invisible OCR text, in recorded source order; recognition accuracy is not verified".into(),
+                    },
+                    start: span.start, end: span.end, managed: false, ocr_stream: Some(span.stream),
+                });
+                if items.len() > MAX_ITEMS {
+                    return Err(invalid(
+                        "Semantic authoring is limited to 2,000 reviewed source candidates.",
+                    ));
+                }
+                index = span.end + 1;
+                continue;
+            }
             let mut item = None;
             match operation.operator.as_str() {
                 "q" => depth += 1,
@@ -370,6 +400,7 @@ pub(super) fn inventory(document: &Document) -> Result<Vec<Item>> {
                     start,
                     end,
                     managed,
+                    ocr_stream: None,
                 });
                 if items.len() > MAX_ITEMS {
                     return Err(invalid(
@@ -423,31 +454,39 @@ pub(super) fn tag_pages(document: &mut Document, tags: &[Tag]) -> Result<()> {
             let end = spans[tag.item.end].1;
             let body = &bytes[start..end];
             // The page's exact Do occurrence owns the semantics; the canonical Form stays unmarked.
-            let logical = if tag.item.managed {
+            let logical = if tag.item.managed || tag.item.ocr_stream.is_some() {
                 tag.item.view.text.as_deref()
             } else {
                 None
             };
-            let mut marked = marker(tag.role, tag.mcid, logical)?;
-            marked.extend_from_slice(body);
-            marked.extend_from_slice(b"\nEMC\n");
-            edits.insert(start, (end, marked));
+            let prefix = marker(tag.role, tag.mcid, logical)?;
+            edits.insert(start, (end, prefix, body, tag.item.ocr_stream));
         }
         let mut marked = Vec::with_capacity(bytes.len() + edits.len() * 64);
+        let mut contents = Vec::new();
         let mut cursor = 0;
-        for (start, (end, replacement)) in edits {
+        for (start, (end, prefix, body, ocr_stream)) in edits {
             if start < cursor {
                 return Err(invalid("Semantic source ranges overlap."));
             }
             marked.extend_from_slice(&bytes[cursor..start]);
             marked.extend_from_slice(b"\n");
-            marked.extend_from_slice(&replacement);
+            marked.extend_from_slice(&prefix);
+            if let Some(original) = ocr_stream {
+                let mut stream = Stream::new(dictionary! {}, std::mem::take(&mut marked));
+                stream.compress()?;
+                contents.push(Object::Reference(document.add_object(stream)));
+                contents.push(Object::Reference(original));
+            } else {
+                marked.extend_from_slice(body);
+            }
+            marked.extend_from_slice(b"\nEMC\n");
             cursor = end;
         }
         marked.extend_from_slice(&bytes[cursor..]);
         let mut stream = Stream::new(dictionary! {}, marked);
         stream.compress()?;
-        let contents = document.add_object(stream);
+        contents.push(Object::Reference(document.add_object(stream)));
         let dictionary = document.get_dictionary_mut(id)?;
         dictionary.set("Contents", contents);
         dictionary.set("Resources", resources);

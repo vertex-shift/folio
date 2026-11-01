@@ -74,6 +74,12 @@ The desktop app processes document contents locally.
   meaningful source candidate. Preserve visual drawings/searchable text,
   canonical reflow paragraph text, original bytes/history/paths and existing
   protection. Use general-edit authorization, never copy/fill-only rights.
+  Accept canonical offline OCR only after actual full-word encoding, UTF-16
+  ActualText, pinned font/glyph/width/descriptor and invisible-operation
+  validation. Preserve original OCR stream references and fonts; present each
+  complete stream as one exact recorded-text candidate for human review, not
+  inferred reading order or recognition accuracy. Marker/name-only, malformed,
+  visible or arbitrary marked-content sources remain refused.
   Refuse signed/certified, archival, conformance-declared, already tagged or
   ambiguous/unsupported sources rather than damaging claims or content.
   Inspect supported existing tags against real page/Form MCIDs, /Pg and /Stm,

@@ -42,6 +42,7 @@ struct ContentMap {
     bytes: usize,
     operations: usize,
     unbound: usize,
+    ocr: HashMap<usize, Vec<crate::ocr::canonical::CanonicalText>>,
 }
 
 fn integer(document: &Document, object: &Object) -> Result<i64> {
@@ -121,7 +122,28 @@ impl ContentMap {
         let mut stack = Vec::new();
         let mut inside = false;
         let mut graphics_depth = 0_usize;
+        let mut skip_until = None;
         for (index, operation) in content.operations.iter().enumerate() {
+            if skip_until.is_some_and(|end| index <= end) {
+                continue;
+            }
+            if scope.stream.is_none()
+                && prefix.is_empty()
+                && let Some(span) = self
+                    .ocr
+                    .get(&scope.page)
+                    .and_then(|spans| spans.iter().find(|span| span.start == index))
+                    .cloned()
+            {
+                if inside {
+                    return Err(invalid(
+                        "A canonical OCR stream cannot be nested inside another text object.",
+                    ));
+                }
+                self.meaningful(&context, Some(&span.text), true)?;
+                skip_until = Some(span.end);
+                continue;
+            }
             match operation.operator.as_str() {
                 "q" => graphics_depth += 1,
                 "Q" => {
@@ -749,6 +771,7 @@ pub(super) fn inspect(document: &Document) -> Result<Reading> {
     let mut content = ContentMap::default();
     let mut pages = HashMap::new();
     let mut issues = Vec::new();
+    let mut ocr = crate::ocr::canonical::Reader::default();
     for (page, id) in document.get_pages().values().enumerate() {
         if pages.insert(*id, page).is_some() {
             return Err(invalid("The page tree repeats a page object."));
@@ -756,7 +779,10 @@ pub(super) fn inspect(document: &Document) -> Result<Reading> {
         let scope = Scope { page, stream: None };
         let dictionary = document.get_dictionary(*id)?;
         content.register(document, &scope, dictionary)?;
-        let runs = crate::text_edit::page_runs(document, page)?
+        let canonical = ocr.page(document, page)?;
+        let analysis = crate::ocr::canonical::analysis_document(document, page, &canonical)?;
+        content.ocr.insert(page, canonical);
+        let runs = crate::text_edit::page_runs(&analysis, page)?
             .into_iter()
             .map(|run| (run.path, run.text))
             .collect();

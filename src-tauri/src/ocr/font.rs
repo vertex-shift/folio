@@ -88,11 +88,6 @@ pub fn embed(
     direction: Direction,
     words: &[&Word],
 ) -> Result<Embedded> {
-    let data = id.bytes();
-    let face = ttf_parser::Face::parse(data, 0)
-        .map_err(|error| invalid(format!("The OCR font is invalid: {error}")))?;
-    let unit = 1000.0 / f64::from(face.units_per_em());
-    let name = format!("FolioOCRLogicalV1_{}_{}", id.key(), direction.key());
     let mut unique = BTreeMap::new();
     for word in words {
         unique.entry(word.text.clone()).or_insert(false);
@@ -100,6 +95,20 @@ pub fn embed(
             unique.entry(word.separator.clone()).or_insert(true);
         }
     }
+    embed_entries(document, id, direction, unique)
+}
+
+pub(super) fn embed_entries(
+    document: &mut Document,
+    id: FontId,
+    direction: Direction,
+    unique: BTreeMap<String, bool>,
+) -> Result<Embedded> {
+    let data = id.bytes();
+    let face = ttf_parser::Face::parse(data, 0)
+        .map_err(|error| invalid(format!("The OCR font is invalid: {error}")))?;
+    let unit = 1000.0 / f64::from(face.units_per_em());
+    let name = format!("FolioOCRLogicalV1_{}_{}", id.key(), direction.key());
     if unique.len() > 60_000 {
         return Err(invalid(
             "OCR exceeds the 60,000 unique-word font encoding limit. No text was added.",
