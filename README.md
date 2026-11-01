@@ -1750,6 +1750,41 @@ isolated debug target and a caller-selected `FOLIO_IMAGE_EVIDENCE_DIR`.
 It never launches or stops a native Folio application or creates release
 bundles. Use `FOLIO_IMAGE_BROWSER` to select a compatible local Chromium.
 
+Paragraph regressions cover genuine multiline text objects, original embedded
+CID fonts and explicit Noto conversion, whitespace/word wrapping and hard
+breaks, glyph ink bearings/descenders, overflow without partial mutation,
+regular columns and untouched neighbors, inherited post-object text state,
+all right-angle rotations/crops/page-local UserUnit, repeated nested Forms,
+save/reopen/second edit, exact encrypted history, source epoch resurrection,
+read-only/tag/clip refusals and bounded font inspection.
+
+To run the paragraph engine plus actual UI/PDF.js acceptance check:
+
+```sh
+npm run test:paragraph
+```
+
+The runner generates only original synthetic PDFs, opens the real Rust preview
+engine and independently checks every actual PDF.js layout line, target-box
+bounds, old-text removal, pixel changes, unchanged neighboring content/other
+pages, original-font resource reuse and annotation/attachment bytes. It also
+checks persistent text/numeric/cleared drafts across tabs/panels, gesture-only
+protection and teardown, explicit discard, exact-byte undo/redo, source epoch
+guards and save/reopen/re-edit. Backend saving, history, close, signing, OCR,
+comparison, print/image/text/DOCX/optimization, preflight and archive must reject
+unapplied drafts. One bounded desktop/compact screenshot batch checks the
+actual editor/layout, all five appearance states and fixed Apply/Discard controls.
+
+Use `FOLIO_PARAGRAPH_EVIDENCE_DIR` to retain generated PDFs, screenshots and
+`paragraph-evidence.json`, and `FOLIO_PARAGRAPH_BROWSER` for an existing
+compatible Chromium executable. `FOLIO_PARAGRAPH_VISUALS=0` skips the screenshot
+batch; `FOLIO_PARAGRAPH_SKIP_BUILD=1` uses an already-built preview binary and
+existing synthetic `source.pdf` in the evidence directory. Helpers choose free
+loopback ports (prefer UI 1436 / engine 19164), reuse only
+`target/paragraph-build` (or explicit `CARGO_TARGET_DIR`) and stop only their own
+processes. No native Folio app, user documents, keychain, release bundles,
+production versions or third-party document services are touched.
+
 To generate original page-authoring fixtures, set `FOLIO_AUTHORING_FIXTURES` to
 an empty output directory and run:
 

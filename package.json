@@ -15,6 +15,7 @@
     "test:comparison": "node tests/comparison.e2e.mjs",
     "test:archive": "node tests/preflightArchive.e2e.mjs",
     "test:forms": "node tests/formsDesigner.e2e.mjs",
+    "test:paragraph": "node tests/paragraphEditing.e2e.mjs",
     "test:signatures": "node tests/signatures.e2e.mjs",
     "tauri": "tauri",
     "desktop": "tauri dev",

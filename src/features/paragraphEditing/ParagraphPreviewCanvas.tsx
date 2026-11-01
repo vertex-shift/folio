@@ -7,6 +7,7 @@ export default function ParagraphPreviewCanvas({ bytes }: { bytes: number[] }) {
   const host = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(240);
   const [error, setError] = useState<string | null>(null);
+  const [rendering, setRendering] = useState(true);
   useEffect(() => {
     if (!host.current) return;
     const observer = new ResizeObserver(([entry]) => {
@@ -20,6 +21,8 @@ export default function ParagraphPreviewCanvas({ bytes }: { bytes: number[] }) {
     let render: RenderTask | undefined;
     const task = loadPdf(new Uint8Array(bytes));
     setError(null);
+    setRendering(true);
+    host.current?.replaceChildren();
     void task.promise.then(async (pdf) => {
       const page = await pdf.getPage(1);
       if (!active || !host.current) return;
@@ -38,14 +41,16 @@ export default function ParagraphPreviewCanvas({ bytes }: { bytes: number[] }) {
       host.current.replaceChildren(canvas);
       render = page.render({ canvas, viewport, transform: [pixels, 0, 0, pixels, 0, 0] });
       await render.promise;
-    }).catch((error: unknown) => { if (active) setError(errorMessage(error)); });
+      if (active) setRendering(false);
+    }).catch((error: unknown) => { if (active) { setRendering(false); setError(errorMessage(error)); } });
     return () => {
       active = false;
       render?.cancel();
       void task.destroy().catch((error: unknown) => console.error("Could not release paragraph preview:", error));
     };
   }, [bytes, width]);
-  return <div className="paragraph-pdf-preview">
+  return <div className="paragraph-pdf-preview" aria-busy={rendering}>
+    {rendering && <p role="status">Rendering actual PDF preview...</p>}
     <div ref={host} />
     {error && <p className="paragraph-error" role="alert">PDF preview failed: {error}</p>}
   </div>;
