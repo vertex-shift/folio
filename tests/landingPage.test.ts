@@ -3,12 +3,71 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import { downloads, pageUrl, platformDownload } from "../site/app.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const site = path.join(root, "site");
 const html = await readFile(path.join(site, "index.html"), "utf8");
 const css = await readFile(path.join(site, "styles.css"), "utf8");
+const appearanceScript = await readFile(path.join(site, "appearance.js"), "utf8");
+
+interface AppearanceState {
+  preference: string;
+  message: string | null;
+}
+interface AppearanceController {
+  snapshot(): AppearanceState;
+  choose(value: string): AppearanceState;
+}
+function appearance(storage: { getItem(key: string): string | null; setItem(key: string, value: string): void }) {
+  const window: { folioSiteAppearance?: AppearanceController } = {};
+  const dataset: Record<string, string> = {};
+  const document = { documentElement: { dataset } };
+  runInNewContext(appearanceScript, { window, document, localStorage: storage });
+  assert.ok(window.folioSiteAppearance);
+  return { controller: window.folioSiteAppearance, dataset: document.documentElement.dataset };
+}
+
+test("website appearance defaults to System and persists only its own preference before CSS", () => {
+  const values = new Map([["folio.appearance", "sepia"]]);
+  const requested: string[] = [];
+  const storage = {
+    getItem(key: string) { requested.push(key); return values.get(key) ?? null; },
+    setItem(key: string, value: string) { requested.push(key); values.set(key, value); },
+  };
+  const initial = appearance(storage);
+  assert.equal(initial.controller.snapshot().preference, "system");
+  assert.equal(initial.controller.snapshot().message, null);
+  assert.equal(initial.dataset.appearance, "system");
+  for (const value of ["dark", "light", "system"]) {
+    assert.equal(initial.controller.choose(value).preference, value);
+    assert.equal(initial.dataset.appearance, value);
+    assert.equal(appearance(storage).controller.snapshot().preference, value);
+  }
+  assert.ok(requested.every((key) => key === "folio.site.appearance"));
+  assert.equal(values.get("folio.appearance"), "sepia");
+  assert.throws(() => initial.controller.choose("sepia"), /Choose System, Light or Dark/);
+  assert.equal(initial.controller.snapshot().preference, "system");
+  assert.ok(html.indexOf('src="./appearance.js"') < html.indexOf('rel="stylesheet"'));
+  assert.match(css, /prefers-color-scheme: dark/);
+  assert.match(html, /for="website-appearance">Website appearance/);
+});
+
+test("blocked or corrupt appearance storage stays visible and never prevents visit-only choices", () => {
+  const bad = appearance({ getItem: () => "unrecognized", setItem: () => {} });
+  assert.equal(bad.controller.snapshot().preference, "system");
+  assert.match(bad.controller.snapshot().message ?? "", /not recognized/);
+  const blocked = appearance({
+    getItem() { throw new Error("Blocked"); },
+    setItem() { throw new Error("Blocked"); },
+  });
+  assert.equal(blocked.controller.snapshot().preference, "system");
+  assert.match(blocked.controller.snapshot().message ?? "", /storage is unavailable/);
+  assert.equal(blocked.controller.choose("dark").preference, "dark");
+  assert.equal(blocked.dataset.appearance, "dark");
+  assert.match(blocked.controller.snapshot().message ?? "", /could not be saved/);
+});
 
 test("the introduction names the actual independent PDF product and its release/source boundary", () => {
   assert.match(html, /An open-source alternative to Adobe Acrobat/);
@@ -86,7 +145,8 @@ test("the introduction stays lightweight, locally hosted and licensed", async ()
   assert.doesNotMatch(html, /<input[^>]+type="(?:file|email)"/);
   const script = await readFile(path.join(site, "app.mjs"), "utf8");
   assert.doesNotMatch(script, /\bfetch\s*\(|\bXMLHttpRequest\b|\blocalStorage\b|\bdocument\.cookie\b/);
-  assert.ok(Buffer.byteLength(html) + Buffer.byteLength(css) + Buffer.byteLength(script) < 45_000);
+  assert.doesNotMatch(appearanceScript, /\bfetch\s*\(|\bXMLHttpRequest\b|\bdocument\.cookie\b/);
+  assert.ok(Buffer.byteLength(html) + Buffer.byteLength(css) + Buffer.byteLength(script) + Buffer.byteLength(appearanceScript) < 50_000);
   assert.ok((await stat(path.join(site, "assets/fonts/commissioner-latin.woff2"))).size < 50_000);
   assert.match(await readFile(path.join(site, "assets/fonts/OFL.txt"), "utf8"), /SIL OPEN FONT LICENSE Version 1\.1/);
   assert.equal((await readFile(path.join(site, "assets/try-folio.pdf"))).subarray(0, 5).toString(), "%PDF-");

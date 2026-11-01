@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const site = path.join(root, "site");
 const output = path.resolve(process.env.FOLIO_SITE_REVIEW_DIR ?? path.join(root, ".impeccable/review/site"));
 await mkdir(output, { recursive: true });
-const mime = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".mjs": "text/javascript",
+const mime = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".mjs": "text/javascript", ".js": "text/javascript",
   ".svg": "image/svg+xml", ".woff2": "font/woff2", ".webp": "image/webp",
   ".png": "image/png", ".pdf": "application/pdf", ".json": "application/json", ".xml": "application/xml" };
 const server = createServer(async (request, response) => {
@@ -44,6 +44,7 @@ const cases = [
   { name: "narrow", width: 320, height: 760, isMobile: true, hasTouch: true,
     userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1" },
 ];
+cases.push(...cases.map((item) => ({ ...item, name: `${item.name}-dark`, colorScheme: "dark" })));
 async function context(settings = {}) {
   const value = await browser.newContext({ reducedMotion: "reduce", acceptDownloads: true, ...settings });
   await value.route("**/*", (route) => {
@@ -57,6 +58,7 @@ try {
     ...(process.env.FOLIO_SITE_BROWSER ? { executablePath: process.env.FOLIO_SITE_BROWSER } : {}) });
   for (const item of cases) {
     const ctx = await context({ viewport: { width: item.width, height: item.height },
+      colorScheme: item.colorScheme ?? "light",
       deviceScaleFactor: item.deviceScaleFactor ?? 1, isMobile: item.isMobile ?? false,
       hasTouch: item.hasTouch ?? false, ...(item.userAgent ? { userAgent: item.userAgent } : {}) });
     const page = await ctx.newPage();
@@ -70,6 +72,7 @@ try {
     await page.goto(url);
     await page.evaluate(() => document.fonts.ready);
     await page.locator("#preview-image").evaluate((image) => image.decode());
+    assert.equal(await page.getByRole("combobox", { name: "Website appearance", exact: true }).inputValue(), "system");
     const measurements = await page.evaluate(() => {
       const rect = (id) => {
         const value = document.getElementById(id).getBoundingClientRect();
@@ -137,6 +140,31 @@ try {
   await page.goto(url);
   await page.keyboard.press("Tab");
   assert.equal(await page.locator(":focus").innerText(), "Skip to content");
+  const theme = page.getByRole("combobox", { name: "Website appearance", exact: true });
+  const background = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  await page.emulateMedia({ colorScheme: "light" });
+  const light = await background();
+  await page.emulateMedia({ colorScheme: "dark" });
+  const dark = await background();
+  assert.notEqual(light, dark);
+  assert.equal(await theme.inputValue(), "system");
+  await theme.selectOption("light");
+  assert.equal(await background(), light);
+  await page.reload();
+  assert.equal(await theme.inputValue(), "light");
+  assert.equal(await background(), light);
+  await theme.selectOption("dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  assert.equal(await background(), dark);
+  await page.reload();
+  assert.equal(await theme.inputValue(), "dark");
+  await theme.selectOption("system");
+  assert.equal(await background(), light);
+  await page.emulateMedia({ colorScheme: "dark" });
+  assert.equal(await background(), dark);
+  await page.emulateMedia({ colorScheme: "light" });
+  assert.equal(await page.evaluate(() => localStorage.getItem("folio.site.appearance")), "system");
+  evidence.behavior.push("System follows live OS changes; explicit Light/Dark overrides persist across reloads with isolated website storage.");
   await page.getByRole("tab", { name: "Read & review", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
   assert.equal(await page.getByRole("tab", { name: "Leave a note", exact: true }).getAttribute("aria-selected"), "true");
@@ -175,16 +203,30 @@ try {
   evidence.screenshots.push(path.join(output, "share-fallback.png"));
   await ctx.close();
 
-  const noJs = await context({ javaScriptEnabled: false, viewport: { width: 390, height: 844 } });
+  const noJs = await context({ javaScriptEnabled: false, colorScheme: "dark", viewport: { width: 390, height: 844 } });
   const plain = await noJs.newPage();
   await plain.goto(url);
   assert.equal(await plain.locator(".preview-tabs").isHidden(), true);
   assert.equal(await plain.locator("#share-button").isHidden(), true);
+  assert.equal(await plain.locator("#appearance-control").isHidden(), true);
+  assert.equal(await plain.evaluate(() => getComputedStyle(document.body).backgroundColor), dark);
   assert.ok(await plain.locator("[data-platform]").count() === 3);
   await plain.getByText("Is Folio really free?", { exact: true }).click();
   assert.equal(await plain.locator("details").first().getAttribute("open"), "");
-  evidence.behavior.push("No-JavaScript users keep real installer links, the sample PDF, native FAQ disclosure and no dead enhancement controls.");
+  evidence.behavior.push("No-JavaScript users follow the OS dark theme and keep real installer links, the sample PDF, native FAQ disclosure and no dead enhancement controls.");
   await noJs.close();
+  const blocked = await context({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
+  await blocked.addInitScript(() => {
+    Object.defineProperty(window, "localStorage", { get() { throw new Error("Storage blocked"); } });
+  });
+  const temporary = await blocked.newPage();
+  await temporary.goto(url);
+  await temporary.getByRole("status").filter({ hasText: "Browser storage is unavailable" }).waitFor();
+  await temporary.getByRole("combobox", { name: "Website appearance", exact: true }).selectOption("light");
+  assert.equal(await temporary.evaluate(() => getComputedStyle(document.body).backgroundColor), light);
+  await temporary.getByRole("status").filter({ hasText: "could not be saved" }).waitFor();
+  evidence.behavior.push("Blocked browser storage surfaces a visible notice while visit-only appearance selection still works.");
+  await blocked.close();
   assert.deepEqual(errors, []); assert.deepEqual(externalRequests, []);
   evidence.browserErrors = errors; evidence.externalRequests = externalRequests;
   await writeFile(path.join(output, "landing-evidence.json"), JSON.stringify(evidence, null, 2) + "\n");

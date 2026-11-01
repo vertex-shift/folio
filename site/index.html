@@ -9,6 +9,7 @@
   <meta name="robots" content="index,follow">
   <link rel="canonical" href="https://vertex-shift.github.io/folio/">
   <link rel="icon" href="./assets/folio.svg" type="image/svg+xml">
+  <script src="./appearance.js"></script>
   <link rel="preload" href="./assets/fonts/commissioner-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="./styles.css">
   <link rel="sitemap" href="./sitemap.xml" type="application/xml">
@@ -50,14 +51,22 @@
       <img src="./assets/folio.svg" width="34" height="34" alt="">
       <span>folio</span>
     </a>
-    <nav aria-label="Main navigation">
+    <div class="header-actions"><nav aria-label="Main navigation">
       <a href="#what-works">The workspace</a>
-      <a href="https://github.com/vertex-shift/folio">GitHub
+      <a class="nav-source" href="https://github.com/vertex-shift/folio">GitHub
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg>
       </a>
       <a class="nav-download" href="#get-folio">Get Folio</a>
-    </nav>
+    </nav><div class="appearance-control" id="appearance-control" hidden>
+      <label class="visually-hidden" for="website-appearance">Website appearance</label>
+      <select id="website-appearance" title="Website appearance">
+        <option value="system">System</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </div></div>
   </header>
+  <p class="appearance-status wrap" id="appearance-status" role="status" aria-live="polite" hidden></p>
 
   <main id="main">
     <section class="hero wrap" aria-labelledby="intro-title">
@@ -197,7 +206,7 @@
         </details>
         <details>
           <summary>What stays on my computer?</summary>
-          <p>The desktop app processes PDF contents locally. This introduction page has no analytics, signup form or PDF upload. Fonts and screenshots are served with the page. Installer downloads, stars and contribution links take you to GitHub.</p>
+          <p>The desktop app processes PDF contents locally. This introduction page has no analytics, signup form or PDF upload. Fonts and screenshots are served with the page. If browser storage is available, your appearance choice is saved only in this browser; System is the default. Installer downloads, stars and contribution links take you to GitHub.</p>
         </details>
         <details>
           <summary>Why might my computer show an installer warning?</summary>

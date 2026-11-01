@@ -45,6 +45,28 @@ if (typeof document !== "undefined") {
     if (!result) throw new Error(`The Folio introduction is missing its ${id} control.`);
     return result;
   };
+  const appearance = window.folioSiteAppearance;
+  const appearanceStatus = element("appearance-status");
+  if (appearance) {
+    const select = element("website-appearance");
+    const showAppearance = (state) => {
+      select.value = state.preference;
+      appearanceStatus.textContent = state.message ?? "";
+      appearanceStatus.hidden = !state.message;
+    };
+    showAppearance(appearance.snapshot());
+    element("appearance-control").hidden = false;
+    select.addEventListener("change", () => {
+      try { showAppearance(appearance.choose(select.value)); }
+      catch (error) {
+        appearanceStatus.textContent = error instanceof Error ? error.message : "The website appearance could not be changed. Reload the page.";
+        appearanceStatus.hidden = false;
+      }
+    });
+  } else {
+    appearanceStatus.textContent = "Website appearance controls could not load. Reload the page to choose an override; System is still the default.";
+    appearanceStatus.hidden = false;
+  }
   const mobile = navigator.userAgentData?.mobile || /Android|iPhone|iPad|iPod/.test(navigator.userAgent);
   const detected = mobile ? null : platformDownload(navigator.userAgentData?.platform ?? navigator.platform);
   if (detected) {
