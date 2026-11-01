@@ -309,6 +309,36 @@ fn horizontal_japanese_prolonged_sound_marks_keep_the_actual_line_baseline() {
 }
 
 #[test]
+fn fractional_user_unit_mirrors_renderer_multiplication_order_and_exact_pixel_ceil() {
+    let mut source = Document::load_mem(&synthetic(1, false)).unwrap();
+    let page = source.get_dictionary_mut(source.get_pages()[&1]).unwrap();
+    page.set(
+        "MediaBox",
+        vec![(-40).into(), 56.into(), 120.into(), 360.into()],
+    );
+    page.set(
+        "CropBox",
+        vec![(-32).into(), 64.into(), 112.into(), 352.into()],
+    );
+    page.set("Rotate", 270);
+    page.set("UserUnit", 1.25);
+    let mut bytes = Vec::new();
+    source.save_to(&mut bytes).unwrap();
+    let mut workspace = Workspace::default();
+    let info = workspace
+        .open_bytes(bytes, "fractional crop.pdf".into())
+        .unwrap();
+    let mut settings = options(vec![0]);
+    settings.dpi = 300;
+    let plan = workspace.begin_ocr(info.id, 0, settings).unwrap();
+    assert_eq!(plan.pages[0].pixel_width, 1501);
+    assert_eq!(plan.pages[0].pixel_height, 751);
+    assert_eq!(plan.pages[0].source_bounds, [-32.0, 64.0, 112.0, 352.0]);
+    assert_eq!(plan.pages[0].rotation, 270);
+    assert_eq!(plan.pages[0].user_unit, 1.25);
+}
+
+#[test]
 fn staged_ocr_is_atomic_persistent_undoable_and_preserves_original_streams_and_shared_resources() {
     let source = synthetic(4, false);
     let original = Document::load_mem(&source).unwrap();

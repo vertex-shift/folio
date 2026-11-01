@@ -172,7 +172,7 @@ pub(crate) fn plan(
         let bounds = geometry.bounds.map(f64::from);
         let rotation = geometry.rotation;
         let user_unit = f64::from(geometry.user_unit);
-        let scale = user_unit * f64::from(options.dpi) / 72.0;
+        let scale = (f64::from(options.dpi) / 72.0) * user_unit;
         let (mut width, mut height) = (
             (bounds[2] - bounds[0]) * scale,
             (bounds[3] - bounds[1]) * scale,
@@ -471,7 +471,7 @@ fn validate_word(word: &Word, page: &Page) -> Result<()> {
 
 fn pdf_point(page: &Page, dpi: u16, x: f64, y: f64) -> [f64; 2] {
     let [left, bottom, right, top] = page.source_bounds;
-    let scale = page.user_unit * f64::from(dpi) / 72.0;
+    let scale = (f64::from(dpi) / 72.0) * page.user_unit;
     let (x, y) = (x / scale, y / scale);
     match page.rotation {
         0 => [left + x, top - y],
