@@ -138,6 +138,36 @@ try {
   const page = await ctx.newPage();
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(url);
+  const discovery = await page.evaluate(async () => {
+    const title = document.title;
+    const meta = (name) => document.querySelector(`meta[name="${name}"], meta[property="${name}"]`)?.content;
+    const graph = JSON.parse(document.querySelector('script[type="application/ld+json"]').textContent)["@graph"];
+    const response = await fetch(new URL("./sitemap.xml", location.href));
+    const sitemap = new DOMParser().parseFromString(await response.text(), "application/xml");
+    return {
+      title, description: meta("description"), socialTitle: meta("og:title"), twitterTitle: meta("twitter:title"),
+      robots: meta("robots"), canonical: document.querySelector('link[rel="canonical"]').href,
+      graphTypes: graph.map((item) => item["@type"]),
+      sitemapStatus: response.status, xmlErrors: sitemap.querySelectorAll("parsererror").length,
+      sitemapNamespace: sitemap.documentElement.namespaceURI,
+      sitemapPages: Array.from(sitemap.getElementsByTagNameNS("http://www.sitemaps.org/schemas/sitemap/0.9", "loc"), (node) => node.textContent),
+      sitemapImages: Array.from(sitemap.getElementsByTagNameNS("http://www.google.com/schemas/sitemap-image/1.1", "loc"), (node) => node.textContent),
+    };
+  });
+  assert.equal(discovery.title, "Folio | Free Open-Source PDF Editor & Acrobat Alternative");
+  assert.equal(discovery.socialTitle, discovery.title);
+  assert.equal(discovery.twitterTitle, discovery.title);
+  assert.match(discovery.description, /edit supported text/);
+  assert.equal(discovery.robots, "index,follow,max-image-preview:large");
+  assert.equal(discovery.canonical, "https://vertex-shift.github.io/folio/");
+  assert.deepEqual(discovery.graphTypes, ["WebPage", "SoftwareApplication", "SoftwareSourceCode", "ImageObject"]);
+  assert.equal(discovery.sitemapStatus, 200);
+  assert.equal(discovery.xmlErrors, 0);
+  assert.equal(discovery.sitemapNamespace, "http://www.sitemaps.org/schemas/sitemap/0.9");
+  assert.deepEqual(discovery.sitemapPages, [discovery.canonical]);
+  assert.deepEqual(discovery.sitemapImages, ["read", "comment", "organize"].map((view) => `${discovery.canonical}assets/workspace-${view}.webp`));
+  evidence.behavior.push("Real DOM search/social metadata and linked JSON-LD parse correctly; XML parser verifies the canonical/image sitemap.");
+  evidence.discovery = discovery;
   await page.keyboard.press("Tab");
   assert.equal(await page.locator(":focus").innerText(), "Skip to content");
   const theme = page.getByRole("combobox", { name: "Website appearance", exact: true });
@@ -206,6 +236,10 @@ try {
   const noJs = await context({ javaScriptEnabled: false, colorScheme: "dark", viewport: { width: 390, height: 844 } });
   const plain = await noJs.newPage();
   await plain.goto(url);
+  assert.equal(await plain.title(), discovery.title);
+  assert.equal(await plain.locator('link[rel="canonical"]').getAttribute("href"), discovery.canonical);
+  assert.equal(await plain.locator('script[type="application/ld+json"]').count(), 1);
+  assert.match(await plain.locator("main").textContent(), /not a complete Acrobat replacement/);
   assert.equal(await plain.locator(".preview-tabs").isHidden(), true);
   assert.equal(await plain.locator("#share-button").isHidden(), true);
   assert.equal(await plain.locator("#appearance-control").isHidden(), true);

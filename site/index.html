@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#225ae6">
-  <title>Folio — An open-source alternative to Adobe Acrobat</title>
-  <meta name="description" content="Your PDFs. Your rules. Meet Folio, a free, local-first desktop PDF workspace. Read, annotate, edit and organize supported PDFs without an account or subscription.">
-  <meta name="robots" content="index,follow">
+  <title>Folio | Free Open-Source PDF Editor &amp; Acrobat Alternative</title>
+  <meta name="description" content="Free, open-source PDF reader and editor for macOS, Windows and Linux. Read, annotate, edit supported text and organize PDFs locally with Folio.">
+  <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="https://vertex-shift.github.io/folio/">
   <link rel="icon" href="./assets/folio.svg" type="image/svg+xml">
   <script src="./appearance.js"></script>
@@ -15,31 +15,73 @@
   <link rel="sitemap" href="./sitemap.xml" type="application/xml">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Folio">
-  <meta property="og:title" content="Your PDFs. Your rules. Meet Folio.">
-  <meta property="og:description" content="An independent, open-source alternative to Adobe Acrobat. A little less paperwork. No account or subscription.">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:title" content="Folio | Free Open-Source PDF Editor &amp; Acrobat Alternative">
+  <meta property="og:description" content="Free, open-source PDF reader and editor for macOS, Windows and Linux. Read, annotate, edit supported text and organize PDFs locally with Folio.">
   <meta property="og:url" content="https://vertex-shift.github.io/folio/">
   <meta property="og:image" content="https://vertex-shift.github.io/folio/assets/social.png">
+  <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Folio: Your PDFs. Your rules. An open-source PDF workspace, with its real document interface.">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Your PDFs. Your rules. Meet Folio.">
-  <meta name="twitter:description" content="A free, local-first desktop PDF workspace. An independent open-source alternative to Adobe Acrobat.">
+  <meta name="twitter:title" content="Folio | Free Open-Source PDF Editor &amp; Acrobat Alternative">
+  <meta name="twitter:description" content="Free, open-source PDF reader and editor for macOS, Windows and Linux. Read, annotate, edit supported text and organize PDFs locally with Folio.">
   <meta name="twitter:image" content="https://vertex-shift.github.io/folio/assets/social.png">
+  <meta name="twitter:image:alt" content="Folio: Your PDFs. Your rules. An open-source PDF workspace, with its real document interface.">
   <script type="application/ld+json">
     {
       "@context": "https://schema.org",
-      "@type": "SoftwareApplication",
-      "name": "Folio",
-      "url": "https://vertex-shift.github.io/folio/",
-      "description": "An independent, local-first desktop PDF workspace for reading, annotation, supported source-text editing and page organization.",
-      "applicationCategory": "BusinessApplication",
-      "operatingSystem": ["macOS 13+ (Apple Silicon)", "Windows (x64)", "Linux (x64)"],
-      "softwareVersion": "0.1.1",
-      "downloadUrl": "https://github.com/vertex-shift/folio/releases/tag/v0.1.1",
-      "license": "https://github.com/vertex-shift/folio/blob/main/LICENSE",
-      "codeRepository": "https://github.com/vertex-shift/folio",
-      "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+      "@graph": [
+        {
+          "@type": "WebPage",
+          "@id": "https://vertex-shift.github.io/folio/#webpage",
+          "url": "https://vertex-shift.github.io/folio/",
+          "name": "Folio | Free Open-Source PDF Editor & Acrobat Alternative",
+          "description": "Free, open-source PDF reader and editor for macOS, Windows and Linux. Read, annotate, edit supported text and organize PDFs locally with Folio.",
+          "inLanguage": "en",
+          "mainEntity": {"@id": "https://vertex-shift.github.io/folio/#application"},
+          "primaryImageOfPage": {"@id": "https://vertex-shift.github.io/folio/#social-image"},
+          "relatedLink": "https://github.com/vertex-shift/folio"
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://vertex-shift.github.io/folio/#application",
+          "name": "Folio",
+          "url": "https://vertex-shift.github.io/folio/",
+          "description": "An independent, local-first desktop PDF workspace for reading, annotation, supported source-text editing and page organization.",
+          "applicationCategory": "BusinessApplication",
+          "operatingSystem": ["macOS 13+ (Apple Silicon)", "Windows (x64)", "Linux (x64)"],
+          "softwareVersion": "0.1.1",
+          "downloadUrl": "https://github.com/vertex-shift/folio/releases/tag/v0.1.1",
+          "license": "https://github.com/vertex-shift/folio/blob/main/LICENSE",
+          "isAccessibleForFree": true,
+          "offers": {
+            "@type": "Offer",
+            "url": "https://github.com/vertex-shift/folio/releases/tag/v0.1.1",
+            "price": "0",
+            "priceCurrency": "USD"
+          }
+        },
+        {
+          "@type": "SoftwareSourceCode",
+          "@id": "https://github.com/vertex-shift/folio",
+          "name": "Folio source code",
+          "url": "https://github.com/vertex-shift/folio",
+          "codeRepository": "https://github.com/vertex-shift/folio",
+          "programmingLanguage": ["Rust", "TypeScript"],
+          "license": "https://github.com/vertex-shift/folio/blob/main/LICENSE",
+          "targetProduct": {"@id": "https://vertex-shift.github.io/folio/#application"}
+        },
+        {
+          "@type": "ImageObject",
+          "@id": "https://vertex-shift.github.io/folio/#social-image",
+          "contentUrl": "https://vertex-shift.github.io/folio/assets/social.png",
+          "width": 1200,
+          "height": 630,
+          "caption": "Folio: Your PDFs. Your rules. An open-source PDF workspace, with its real document interface."
+        }
+      ]
     }
   </script>
   <script type="module" src="./app.mjs"></script>
