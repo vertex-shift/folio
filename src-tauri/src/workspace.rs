@@ -141,7 +141,10 @@ impl Workspace {
                 || self.drafts.contains(&id)
                 || self.authoring_images.contains(id)
                 || self.image_replacements.contains(id)
-                || self.ocrs.values().any(|job| job.plan.document_id == id && !job.expired())
+                || self
+                    .ocrs
+                    .values()
+                    .any(|job| job.plan.document_id == id && !job.expired())
                 || self.outputs.has_document(id)
                 || self.archives.has_document(id)
                 || self.accessibility.has_document(id))
@@ -792,7 +795,9 @@ impl Workspace {
     fn ensure_ocr_ready(&self, id: u64, revision: u64) -> Result<()> {
         self.ensure_export_ready(id, revision)?.ensure_writable()?;
         if self.accessibility.has_document(id) {
-            return Err(Error::Invalid("Save or cancel the prepared tagged copy before using OCR on its source.".into()));
+            return Err(Error::Invalid(
+                "Save or cancel the prepared tagged copy before using OCR on its source.".into(),
+            ));
         }
         if self
             .redactions
@@ -810,7 +815,8 @@ impl Workspace {
             .ok_or_else(|| Error::Invalid("This OCR job was canceled, expired, or invalidated by a document change. No text was added.".into()))?;
         self.ensure_ocr_ready(job.plan.document_id, job.plan.revision)?;
         if job.plan.epoch != self.technical_epoch(job.plan.document_id)
-            || job.plan.source_epoch != self.document(job.plan.document_id)?.mutation_epoch() {
+            || job.plan.source_epoch != self.document(job.plan.document_id)?.mutation_epoch()
+        {
             return Err(Error::Invalid("The OCR source epoch changed, including drafts, staging or undo/redo. No text was added.".into()));
         }
         self.ocrs
@@ -830,8 +836,11 @@ impl Workspace {
         }
         self.ensure_ocr_ready(job.plan.document_id, job.plan.revision)?;
         if job.plan.epoch != self.technical_epoch(job.plan.document_id)
-            || job.plan.source_epoch != self.document(job.plan.document_id)?.mutation_epoch() {
-            return Err(Error::Invalid("The OCR source epoch changed. No text was added.".into()));
+            || job.plan.source_epoch != self.document(job.plan.document_id)?.mutation_epoch()
+        {
+            return Err(Error::Invalid(
+                "The OCR source epoch changed. No text was added.".into(),
+            ));
         }
         self.current_mut(job.plan.document_id, job.plan.revision)?
             .commit_ocr(&job)

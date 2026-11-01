@@ -688,7 +688,14 @@ impl Session {
                 "This PDF does not allow copying. Reopen it with the owner password before using OCR.",
             ));
         }
-        crate::ocr::plan(&self.document, self.id, self.revision, self.mutation_epoch, job_id, options)
+        crate::ocr::plan(
+            &self.document,
+            self.id,
+            self.revision,
+            self.mutation_epoch,
+            job_id,
+            options,
+        )
     }
 
     pub(crate) fn commit_ocr(&mut self, job: &crate::ocr::Job) -> Result<crate::ocr::Outcome> {
