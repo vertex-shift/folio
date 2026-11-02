@@ -6,8 +6,8 @@ export interface MotionRect {
 }
 
 export const SELECTION_MOTION = {
-  duration: 260,
-  easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+  duration: 380,
+  easing: "cubic-bezier(0.22, 0.8, 0.24, 1)",
 };
 
 export function selectionTransform(from: MotionRect, to: MotionRect): string | null {

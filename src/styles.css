@@ -7,15 +7,16 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-surface: cubic-bezier(0.22, 0.8, 0.24, 1);
   --radius-control: 8px;
   --radius-panel: 10px;
   --radius-floating: 12px;
   --radius-dialog: 16px;
   --motion-feedback: 140ms;
-  --motion-context: 200ms;
+  --motion-context: 280ms;
   --motion-press: 100ms;
-  --motion-surface: 240ms;
-  --motion-detail: 180ms;
+  --motion-surface: 380ms;
+  --motion-detail: 260ms;
 }
 
 * { box-sizing: border-box; }
@@ -86,6 +87,8 @@ a { color: var(--blue-ink); text-underline-offset: 3px; }
 .mode-tabs[data-motion-ready] button::after { display: none; }
 .selection-indicator { position: absolute; z-index: 0; pointer-events: none; border-radius: var(--radius-control); background: var(--blue-tint); }
 .selection-indicator[hidden] { display: none; }
+.selection-indicator::before { content: ""; position: absolute; inset: 0; border: 1px solid var(--blue); border-radius: inherit; opacity: 0; transition: opacity var(--motion-feedback) var(--ease); }
+.selection-indicator[data-moving]::before { opacity: 0.85; }
 .selection-tabs { border: 1px solid var(--border); border-bottom: 0; border-radius: var(--radius-panel) var(--radius-panel) 0 0; background: var(--surface); }
 .selection-modes::after { content: ""; position: absolute; bottom: 3px; left: 14px; right: 14px; height: 2px; border-radius: 2px; background: var(--blue); }
 .mode-tabs button.selected > svg { animation: icon-select var(--motion-detail) var(--ease); }
@@ -112,7 +115,7 @@ a { color: var(--blue-ink); text-underline-offset: 3px; }
 .readonly-banner { min-height: 34px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 7px 20px; background: var(--warning-bg); color: var(--warning-ink); border-bottom: 1px solid var(--warning-border); font-size: 12px; }
 .workspace { flex: 1; display: flex; min-height: 0; position: relative; }
 
-.tools-panel { width: 226px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--border); min-height: 0; z-index: 25; animation: context-reveal var(--motion-surface) var(--ease); }
+.tools-panel { width: 226px; flex-shrink: 0; display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--border); min-height: 0; z-index: 25; animation: context-reveal var(--motion-surface) var(--ease-surface); }
 .tools-panel.panel-search, .tools-panel.panel-comments, .tools-panel.panel-edit, .tools-panel.panel-redact { width: 274px; }
 .tools-panel.panel-forms { width: 300px; }
 .tools-panel.panel-tools { overflow-y: auto; }
@@ -419,7 +422,7 @@ a { color: var(--blue-ink); text-underline-offset: 3px; }
 .organize-readonly { margin: 0 32px 24px; font-size: 11px; color: var(--warning-ink); }
 
 .modal-backdrop { position: fixed; inset: 0; background: var(--overlay); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 24px; animation: scrim-enter var(--motion-context) var(--ease); }
-.dialog { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-dialog); box-shadow: 0 20px 64px var(--shadow-strong), 0 4px 16px var(--shadow-soft); width: 460px; max-width: 100%; max-height: calc(100dvh - 48px); overflow: auto; animation: dialog-enter var(--motion-surface) var(--ease); transform-origin: 50% 35%; }
+.dialog { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-dialog); box-shadow: 0 20px 64px var(--shadow-strong), 0 4px 16px var(--shadow-soft); width: 460px; max-width: 100%; max-height: calc(100dvh - 48px); overflow: auto; animation: dialog-enter var(--motion-surface) var(--ease-surface); transform-origin: 50% 35%; }
 .dialog-header { padding: 22px 22px 12px 26px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .dialog-header h2 { font-size: 20px; font-weight: 600; color: var(--strong); letter-spacing: -0.02em; text-wrap: balance; }
 .dialog-body { padding: 4px 26px 24px; font-size: 12px; line-height: 1.9; color: var(--secondary); }
@@ -457,14 +460,16 @@ kbd { font-family: inherit; font-size: 10px; color: var(--muted); }
 .drop-overlay > div { display: flex; flex-direction: column; align-items: center; gap: 15px; color: var(--drop-ink); }
 .drop-overlay h2 { font-size: 25px; font-weight: 600; letter-spacing: -0.02em; }
 .drop-overlay p { color: var(--drop-ink); font-size: 12px; }
+.workspace-empty > img { animation: brand-unfold 560ms var(--ease-surface); transform-origin: 20% 60%; }
 .spin { animation: spin 900ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes context-reveal { from { clip-path: inset(0 24px 0 0); transform: translateX(-8px); } to { clip-path: inset(0); transform: translateX(0); } }
-@keyframes dialog-enter { from { transform: translateY(10px) scale(0.985); box-shadow: 0 8px 24px var(--shadow-soft), 0 1px 4px var(--shadow-soft); } to { transform: translateY(0) scale(1); box-shadow: 0 20px 64px var(--shadow-strong), 0 4px 16px var(--shadow-soft); } }
+@keyframes brand-unfold { from { clip-path: polygon(0 0, 58% 0, 100% 42%, 100% 100%, 0 100%); transform: perspective(240px) rotateY(-30deg) scale(0.8); } to { clip-path: polygon(0 0, 100% 0, 100% 0, 100% 100%, 0 100%); transform: perspective(240px) rotateY(0deg) scale(1); } }
+@keyframes context-reveal { from { clip-path: inset(0 96px 0 0); transform: translateX(-36px); } to { clip-path: inset(0); transform: translateX(0); } }
+@keyframes dialog-enter { from { transform: translateY(32px) scale(0.94); box-shadow: 0 8px 24px var(--shadow-soft), 0 1px 4px var(--shadow-soft); } to { transform: translateY(0) scale(1); box-shadow: 0 20px 64px var(--shadow-strong), 0 4px 16px var(--shadow-soft); } }
 @keyframes scrim-enter { from { background-color: transparent; } }
 @keyframes notice-enter { from { clip-path: inset(0 0 0 16px round var(--radius-panel)); opacity: 0; } to { clip-path: inset(0 round var(--radius-panel)); opacity: 1; } }
 @keyframes tab-label-enter { from { clip-path: inset(0 20% 0 0); } to { clip-path: inset(0); } }
-@keyframes icon-select { from { transform: scale(0.88); } to { transform: scale(1); } }
+@keyframes icon-select { from { transform: rotate(-14deg) scale(0.72); } to { transform: rotate(0deg) scale(1); } }
 @keyframes state-dot-enter { from { transform: scale(0.6); } to { transform: scale(1); } }
 @keyframes check-draw { from { stroke-dashoffset: 32; } to { stroke-dashoffset: 0; } }
 @keyframes status-enter { from { transform: translateX(-50%) translateY(-4px); opacity: 0; } to { transform: translateX(-50%) translateY(0); opacity: 1; } }

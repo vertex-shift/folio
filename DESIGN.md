@@ -618,23 +618,27 @@ or whole-file verification.
 ## Motion
 
 **Thesis:** the selected work surface travels; the document remains still.
-The focal interaction is a 260ms shared selection surface that glides between
-PDF tabs. Read/Write/Comment/Organize and the review-tool dock echo that
-continuity more quietly. Move the selection paint, never the control targets
-or PDF pixels. Use `cubic-bezier(0.16, 1, 0.3, 1)` for confident deceleration,
-not elastic overshoot.
+The focal interaction is a 380ms shared selection surface that glides between
+PDF tabs, Read/Write/Comment/Organize and review tools. A temporary accent
+outline makes the moving surface legible, then clears on completion or cancel.
+Move selection paint, never control targets or PDF pixels. Surface movement uses
+`cubic-bezier(0.22, 0.8, 0.24, 1)` for a visibly paced arrival without elastic
+overshoot; direct color and press feedback keeps the faster original easing.
 
 `SelectionIndicator.tsx` measures final geometry once and uses Web Animations
 FLIP transforms rather than animating layout properties. Interrupted travel
 starts from the currently visible position. Resizing snaps to accurate bounds;
 hidden workspaces stop moving. The legacy selected styling remains the static
-fallback. All marker surfaces use the current palette and ignore pointer input.
+fallback. All marker surfaces use the current palette and ignore pointer input;
+temporary movement emphasis and compositing hints are removed after travel.
 
-Panels use a 240ms cropped reveal with an 8px lateral settle only when opened
-or changed. Dialogs settle 10px at 0.985 scale with a bounded shadow transition;
+Panels use a 380ms cropped reveal with a 36px lateral arrival only when opened
+or changed. Dialogs settle 32px at 0.94 scale with a bounded shadow transition;
 they stay fully opaque and focusable throughout. The appearance popover opens
-from its trigger, with 180ms icon/label settles spaced 16ms apart, capped at
-64ms total delay. Radio targets and focus rings do not move.
+20px from its trigger at 0.92 scale, with 260ms icon/label settles spaced 32ms
+apart, capped at 128ms total delay. Radio targets and focus rings do not move.
+The empty workspace's original folded-page mark unfolds once in 560ms; actual
+PDF pages are never part of that entrance.
 
 Supporting feedback uses 140ms colors/borders and 100ms press feedback.
 The add-document icon turns without shifting its target; tool arrows lean

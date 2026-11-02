@@ -54,7 +54,7 @@ persist locally and synchronize native light/dark application chrome.
 Semantic color roles change without changing composition, PDF pixels,
 annotation colors, document bytes, or document dirty state.
 
-## Modern polish and subtle motion
+## Modern polish and prominent motion
 
 Refine, do not replace, the incumbent document-first world. Unify controls
 at 8px corners, rows/cards at 10px, floating tools at 12px, and protected
@@ -63,11 +63,14 @@ elevation, compact system typography, and a tonal active mode segment.
 Preserve all five themes, factual copy, tool locations, and PDF pixels.
 
 Motion thesis: the selected work surface travels while the document stays
-still. The focal moment is a 260ms shared tab-selection surface, echoed by
-mode and review-tool selection. Interrupt from the current visual position.
-Supporting panels crop into place in 240ms; dialogs stay opaque while settling
-with bounded depth. The appearance picker's icon/label sequence has at most
-64ms of sibling delay; controls retain fixed targets and immediate focus.
+still. The user requested visibly stronger motion: the shared selection now
+travels for 380ms with temporary accent-edge emphasis, echoed by modes and
+review tools. Interrupt from the current visual position and clean up emphasis
+and compositing hints. Supporting panels arrive from 36px away in 380ms;
+dialogs stay opaque while settling 32px from 0.94 scale with bounded depth.
+The appearance picker opens from 20px/0.92 scale and its icon/label sequence
+has at most 128ms of sibling delay; radio targets retain immediate focus.
+The empty workspace's original page mark unfolds once in 560ms.
 Colors respond in 140ms and press feedback in 100ms. Success checks draw once;
 busy feedback waits 160ms so routine tab switching does not flash a spinner.
 No layout-driving animation, decorative loops, PDF/thumbnail reveals, or new

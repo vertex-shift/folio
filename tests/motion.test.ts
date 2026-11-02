@@ -7,7 +7,8 @@ test("selection surfaces invert position and size without animating layout", () 
     { left: 10, top: 20, width: 100, height: 40 },
     { left: 210, top: 30, width: 200, height: 40 },
   ), "translate(-200px, -10px) scale(0.5, 1)");
-  assert.ok(SELECTION_MOTION.duration > 100 && SELECTION_MOTION.duration < 300);
+  assert.equal(SELECTION_MOTION.duration, 380);
+  assert.equal(SELECTION_MOTION.easing, "cubic-bezier(0.22, 0.8, 0.24, 1)");
 });
 
 test("an interrupted selection starts from its current visible position", () => {
