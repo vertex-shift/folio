@@ -31,6 +31,10 @@ explicit choices stay fixed when the OS appearance changes. The logo, original
 brand-blue source chapter and real PDF/screenshot pixels are never recolored.
 Print output resets to a light palette. No theme changes the desktop app.
 
+Website HTML, CSS, JavaScript and XML use LF in `.gitattributes`, including on
+Windows, so checked-out text has the same bytes and size budget as Pages.
+Images, fonts and PDFs are not covered by those text rules.
+
 ## Motion
 
 The first real document opens with a bounded 740 ms folded-sheet reveal,

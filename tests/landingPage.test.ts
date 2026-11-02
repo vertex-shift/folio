@@ -290,6 +290,17 @@ test("the introduction stays lightweight, locally hosted and licensed", async ()
   assert.ok(await size(site) < 1_800_000, "The whole public site, including social imagery, must stay below 1.8 MiB.");
 });
 
+test("website source keeps LF bytes on Windows without treating media assets as text", async () => {
+  const attributes = await readFile(path.join(root, ".gitattributes"), "utf8");
+  assert.deepEqual(attributes.trim().split(/\r?\n/), [
+    "site/*.html text eol=lf", "site/*.css text eol=lf", "site/*.js text eol=lf",
+    "site/*.mjs text eol=lf", "site/*.xml text eol=lf",
+  ]);
+  for (const file of ["index.html", "styles.css", "appearance.js", "app.mjs", "sitemap.xml"]) {
+    assert.doesNotMatch(await readFile(path.join(site, file), "utf8"), /\r/);
+  }
+});
+
 test("Pages publishes only the site on protected main and uses scoped OIDC permissions", async () => {
   const workflow = await readFile(path.join(root, ".github/workflows/pages.yml"), "utf8");
   assert.match(workflow, /branches: \[main\]/);
