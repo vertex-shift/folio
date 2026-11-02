@@ -1678,8 +1678,10 @@ roles. Preference validation and system/native mappings live in `src/lib/themes.
 
 The interface uses shared rounded-control/elevation tokens and a coordinated
 motion system. A selection surface glides between document tabs, workspace
-modes, and review tools. Panels crop into place, appearance choices settle
-in a short sequence, dialogs gain depth without fading their text, and success
+modes, and review tools in 380ms with a temporary accent outline. Panels
+arrive from farther away, the appearance picker opens with a clearer scale
+change and short choice sequence, and dialogs gain depth without fading their text. The
+empty workspace's folded-page mark unfolds once, and success
 notifications draw their check mark. Hover/press feedback moves icon paint,
 not control targets. Fast tab switches do not flash a busy indicator.
 
@@ -1690,6 +1692,13 @@ retaining clear state cues and gentle color feedback. Theme colors switch
 atomically rather than fading through unreadable intermediate colors.
 The implementation uses CSS and the Web Animations API, with no animation
 package dependency.
+
+`npm run test:motion` checks real workspace motion using an owned loopback
+preview engine and synthetic PDFs, then closes its helpers. Set
+`FOLIO_MOTION_BROWSER` to an installed Chromium executable and
+`FOLIO_MOTION_EVIDENCE_DIR` to retain the bounded visual/JSON evidence.
+`FOLIO_MOTION_SKIP_BUILD=1` reuses an existing compatible preview executable;
+the default builds the current Rust preview first.
 
 ## Important boundaries
 

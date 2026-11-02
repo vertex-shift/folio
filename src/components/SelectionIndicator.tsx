@@ -23,13 +23,21 @@ export default function SelectionIndicator({ kind, selectionKey }: {
     const media = matchMedia("(prefers-reduced-motion: reduce)");
     let animation: Animation | null = null;
 
+    function stop() {
+      animation?.cancel();
+      animation = null;
+      if (marker) {
+        delete marker.dataset.moving;
+        marker.style.removeProperty("will-change");
+      }
+    }
+
     function place(travel: boolean) {
       if (!marker || !container) return;
       const target = container.querySelector<HTMLElement>(targets[kind]);
       const bounds = target?.getBoundingClientRect();
       if (!bounds?.width || !bounds.height) {
-        animation?.cancel();
-        animation = null;
+        stop();
         marker.hidden = true;
         delete container.dataset.motionReady;
         previous.current = null;
@@ -51,8 +59,7 @@ export default function SelectionIndicator({ kind, selectionKey }: {
         && Math.abs(layout.current.width - next.width) < 0.01
         && Math.abs(layout.current.height - next.height) < 0.01) return;
       const from = animation ? marker.getBoundingClientRect() : previous.current;
-      animation?.cancel();
-      animation = null;
+      stop();
       marker.hidden = false;
       Object.assign(marker.style, {
         left: `${next.left}px`, top: `${next.top}px`,
@@ -64,20 +71,22 @@ export default function SelectionIndicator({ kind, selectionKey }: {
       previous.current = final;
       if (travel && transform && !media.matches && document.visibilityState === "visible"
         && typeof marker.animate === "function") {
+        marker.dataset.moving = "true";
+        marker.style.willChange = "transform";
         const current = marker.animate([
           { transform, transformOrigin: "0 0" },
           { transform: "none", transformOrigin: "0 0" },
         ], SELECTION_MOTION);
+        current.id = `folio-selection-${kind}`;
         animation = current;
         current.addEventListener("finish", () => {
-          if (animation === current) animation = null;
+          if (animation === current) stop();
         }, { once: true });
       }
     }
 
     function settle() {
-      animation?.cancel();
-      animation = null;
+      stop();
       if (marker && !marker.hidden) previous.current = marker.getBoundingClientRect();
       place(false);
     }
@@ -94,7 +103,7 @@ export default function SelectionIndicator({ kind, selectionKey }: {
         const bounds = marker.getBoundingClientRect();
         previous.current = bounds.width && bounds.height ? bounds : null;
       }
-      animation?.cancel();
+      stop();
       observer.disconnect();
       media.removeEventListener("change", settle);
       document.removeEventListener("visibilitychange", settle);
