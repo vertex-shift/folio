@@ -35,7 +35,12 @@ await new Promise((resolve, reject) => {
 });
 const address = server.address(), origin = `http://127.0.0.1:${address.port}`, url = origin + "/folio/";
 let browser;
-const errors = [], externalRequests = [], evidence = { url, viewports: [], behavior: [], screenshots: [], motion: [] };
+const errors = [], externalRequests = [], evidence = { url, viewports: [], behavior: [], screenshots: [], motion: [], themes: [] };
+const colorThemes = [
+  { preference: "sepia", background: "rgb(247, 241, 231)", colorScheme: "light" },
+  { preference: "forest", background: "rgb(243, 248, 242)", colorScheme: "light" },
+  { preference: "midnight", background: "rgb(17, 27, 48)", colorScheme: "dark" },
+];
 const cases = [
   { name: "desktop", width: 1440, height: 1000 },
   { name: "user-1280", width: 1280, height: 720, deviceScaleFactor: 2 },
@@ -45,6 +50,13 @@ const cases = [
     userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1" },
 ];
 cases.push(...cases.map((item) => ({ ...item, name: `${item.name}-dark`, colorScheme: "dark" })));
+for (const theme of colorThemes) {
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 320, height: 760 }]) {
+    cases.push({ ...viewport, name: `${theme.preference}-${viewport.width}`,
+      appearance: theme.preference, expectedBackground: theme.background,
+      colorScheme: theme.colorScheme === "light" ? "dark" : "light" });
+  }
+}
 async function context(settings = {}) {
   const value = await browser.newContext({ reducedMotion: "reduce", acceptDownloads: true, ...settings });
   await value.route("**/*", (route) => {
@@ -63,16 +75,35 @@ try {
       hasTouch: item.hasTouch ?? false, ...(item.userAgent ? { userAgent: item.userAgent } : {}) });
     const page = await ctx.newPage();
     page.on("pageerror", (error) => errors.push(error.message));
+    await page.addInitScript(({ preference, origin }) => {
+      if (location.origin !== origin) return;
+      localStorage.setItem("folio.appearance", "contrast");
+      if (preference) localStorage.setItem("folio.site.appearance", preference);
+    }, { preference: item.appearance, origin });
     await page.addInitScript(() => {
       window.folioLayoutShift = 0;
       new PerformanceObserver((list) => {
         for (const value of list.getEntries()) if (!value.hadRecentInput) window.folioLayoutShift += value.value;
       }).observe({ type: "layout-shift", buffered: true });
     });
-    await page.goto(url);
+    if (item.appearance && item.width === 1440) {
+      let releaseStyles;
+      const stylesReady = new Promise((resolve) => { releaseStyles = resolve; });
+      await ctx.route("**/styles.css", async (route) => {
+        await stylesReady;
+        await route.continue();
+      });
+      try {
+        await page.goto(url, { waitUntil: "commit" });
+        await page.waitForFunction((preference) => document.documentElement.dataset.appearance === preference, item.appearance);
+        assert.equal(await page.evaluate(() => window.folioSiteAppearance.snapshot().preference), item.appearance);
+      } finally { releaseStyles(); }
+      await page.waitForLoadState("load");
+    } else await page.goto(url);
     await page.evaluate(() => document.fonts.ready);
     await page.locator("#preview-image").evaluate((image) => image.decode());
-    assert.equal(await page.getByRole("combobox", { name: "Website appearance", exact: true }).inputValue(), "system");
+    assert.equal(await page.getByRole("combobox", { name: "Website appearance", exact: true }).inputValue(), item.appearance ?? "system");
+    assert.equal(await page.evaluate(() => localStorage.getItem("folio.appearance")), "contrast");
     assert.equal(await page.evaluate(() => document.getAnimations().filter((value) => value.id.startsWith("folio-")).length), 0,
       "Reduced motion must skip the document-opening geometry.");
     const measurements = await page.evaluate(() => {
@@ -81,11 +112,12 @@ try {
         return { top: value.top, bottom: value.bottom, width: value.width, height: value.height };
       };
       const color = (value) => {
+        if (/^#[\da-f]{6}$/i.test(value)) return [1, 3, 5].map((index) => parseInt(value.slice(index, index + 2), 16)).concat(1);
         const parts = value.match(/[\d.]+/g)?.map(Number);
         return parts?.length >= 3 ? [...parts.slice(0, 3), parts[3] ?? 1] : [0, 0, 0, 0];
       };
       const blend = (front, back) => front.slice(0, 3).map((value, index) => value * front[3] + back[index] * (1 - front[3]));
-      const luminance = (rgb) => rgb.map((value) => {
+      const luminance = (rgb) => rgb.slice(0, 3).map((value) => {
         const channel = value / 255;
         return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
       }).reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
@@ -94,6 +126,10 @@ try {
         for (let node = element; node; node = node.parentElement) layers.unshift(color(getComputedStyle(node).backgroundColor));
         return layers.reduce((result, layer) => blend(layer, result), [255, 255, 255]);
       };
+      const contrast = (foreground, background) => {
+        const levels = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+        return (levels[0] + .05) / (levels[1] + .05);
+      };
       const failures = [], walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       while (walker.nextNode()) {
         const node = walker.currentNode, parent = node.parentElement, text = node.textContent.trim();
@@ -101,11 +137,23 @@ try {
         const range = document.createRange(); range.selectNodeContents(node);
         if (!range.getBoundingClientRect().width || !range.getBoundingClientRect().height) continue;
         const style = getComputedStyle(parent), bg = background(parent), foreground = blend(color(style.color), bg);
-        const levels = [luminance(foreground), luminance(bg)].sort((a, b) => b - a);
-        const ratio = (levels[0] + .05) / (levels[1] + .05), size = parseFloat(style.fontSize);
+        const ratio = contrast(foreground, bg), size = parseFloat(style.fontSize);
         const threshold = size >= 24 || (Number(style.fontWeight) >= 700 && size >= 18.67) ? 3 : 4.5;
         if (ratio + .01 < threshold) failures.push({ text: text.slice(0, 90), ratio, threshold });
       }
+      const tokens = getComputedStyle(document.documentElement);
+      const paletteContrast = ["sepia", "forest", "midnight"].includes(document.documentElement.dataset.appearance)
+        ? [
+          ["--ink", "--paper", 4.5], ["--muted", "--canvas", 4.5],
+          ["--blue-ink", "--soft-blue", 4.5], ["--on-primary", "--blue", 4.5],
+          ["--on-primary", "--primary-hover", 4.5], ["--ink", "--selection", 4.5],
+          ["--control-border", "--paper", 3], ["--control-hover-border", "--paper", 3],
+          ["--selected-border", "--soft-blue", 3], ["--focus", "--paper", 3],
+          ["--focus", "--canvas", 3], ["--scrollbar", "--canvas", 3],
+        ].map(([foreground, background, threshold]) => ({
+          foreground, background, threshold,
+          ratio: contrast(color(tokens.getPropertyValue(foreground).trim()), color(tokens.getPropertyValue(background).trim())),
+        })) : [];
       return { width: innerWidth, height: innerHeight,
         overflow: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) > innerWidth,
         primaryDownload: rect("primary-download"), screenshot: rect("preview-image"),
@@ -115,11 +163,20 @@ try {
         contrastFailures: failures, layoutShift: window.folioLayoutShift,
         initialResourceBytes: performance.getEntriesByType("resource").reduce((sum, value) => sum + value.encodedBodySize, 0),
         imageSource: document.getElementById("preview-image").currentSrc,
+        appearance: document.documentElement.dataset.appearance,
+        background: getComputedStyle(document.body).backgroundColor, paletteContrast,
+        imageFilter: getComputedStyle(document.getElementById("preview-image")).filter,
+        sourceBackground: getComputedStyle(document.getElementById("source-chapter")).backgroundColor,
       };
     });
     assert.equal(measurements.overflow, false, JSON.stringify(measurements));
     assert.equal(measurements.fontLoaded, true);
     assert.deepEqual(measurements.contrastFailures, []);
+    assert.ok(measurements.paletteContrast.every((item) => item.ratio >= item.threshold),
+      JSON.stringify(measurements.paletteContrast));
+    assert.equal(measurements.imageFilter, "none");
+    assert.equal(measurements.sourceBackground, "rgb(34, 90, 230)");
+    if (item.expectedBackground) assert.equal(measurements.background, item.expectedBackground);
     assert.ok(measurements.primaryDownload.bottom <= item.height, "The main action must be available in the first viewport.");
     const detail = measurements.imageSource.endsWith("-detail.webp");
     const documentHeadingBottom = measurements.screenshot.top
@@ -133,6 +190,33 @@ try {
     await page.screenshot({ path: path.join(output, `${item.name}-first-viewport.png`) });
     evidence.screenshots.push(filename, path.join(output, `${item.name}-first-viewport.png`));
     evidence.viewports.push({ name: item.name, ...measurements });
+    if (item.appearance) {
+      const select = page.getByRole("combobox", { name: "Website appearance", exact: true });
+      await select.focus();
+      const focus = await select.evaluate((node) => {
+        const style = getComputedStyle(node);
+        const measure = document.createElement("span");
+        measure.style.font = style.font;
+        measure.textContent = node.selectedOptions[0].textContent;
+        document.body.append(measure);
+        const labelWidth = measure.getBoundingClientRect().width;
+        measure.remove();
+        return { outline: style.outlineStyle, color: style.outlineColor,
+          labelFits: labelWidth <= node.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 18 };
+      });
+      assert.equal(focus.outline, "solid");
+      assert.equal(focus.labelFits, true, `${item.appearance} must fit in the native selector at ${item.width}px.`);
+      await page.locator("#primary-download").hover();
+      const hover = await page.locator("#primary-download").evaluate((node) => ({
+        background: getComputedStyle(node).backgroundColor,
+        expected: getComputedStyle(document.documentElement).getPropertyValue("--primary-hover").trim(),
+      }));
+      const rgb = hover.expected.match(/[\da-f]{2}/gi).map((value) => parseInt(value, 16));
+      assert.equal(hover.background, `rgb(${rgb.join(", ")})`);
+      await page.emulateMedia({ media: "print" });
+      assert.equal(await page.evaluate(() => getComputedStyle(document.body).backgroundColor), "rgb(255, 255, 255)");
+      assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme), "light");
+    }
     await ctx.close();
   }
 
@@ -325,6 +409,38 @@ try {
   await page.emulateMedia({ colorScheme: "light" });
   assert.equal(await page.evaluate(() => localStorage.getItem("folio.site.appearance")), "system");
   evidence.behavior.push("System follows live OS changes; explicit Light/Dark overrides persist across reloads with isolated website storage.");
+  await page.evaluate(() => localStorage.setItem("folio.appearance", "contrast"));
+  for (const item of colorThemes) {
+    await theme.selectOption(item.preference);
+    for (const os of ["dark", "light"]) {
+      await page.emulateMedia({ colorScheme: os });
+      assert.equal(await background(), item.background);
+      assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme), item.colorScheme);
+    }
+    await page.reload();
+    assert.equal(await theme.inputValue(), item.preference);
+    assert.equal(await background(), item.background);
+    assert.equal(await page.evaluate(() => localStorage.getItem("folio.appearance")), "contrast");
+    const styles = await page.evaluate(() => ({
+      image: document.getElementById("preview-image").currentSrc,
+      sourceBackground: getComputedStyle(document.getElementById("source-chapter")).backgroundColor,
+      selection: getComputedStyle(document.querySelector(".lead"), "::selection").backgroundColor,
+    }));
+    assert.match(styles.image, /workspace-read\.webp$/);
+    assert.equal(styles.sourceBackground, "rgb(34, 90, 230)");
+    evidence.themes.push({ preference: item.preference, background: item.background,
+      colorScheme: item.colorScheme, persistence: true, followsOS: false, ...styles });
+  }
+  await theme.selectOption("system");
+  await theme.focus();
+  await page.keyboard.press("m");
+  assert.equal(await theme.inputValue(), "midnight");
+  assert.equal(await background(), colorThemes[2].background);
+  await theme.selectOption("system");
+  assert.equal(await theme.inputValue(), "system");
+  assert.equal(await background(), light);
+  await theme.blur();
+  evidence.behavior.push("Sepia, Forest and Midnight restore before CSS, persist across reloads and stay fixed across OS changes; native keyboard choices and isolated desktop storage are preserved.");
   await page.getByRole("tab", { name: "Read & review", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
   assert.equal(await page.getByRole("tab", { name: "Leave a note", exact: true }).getAttribute("aria-selected"), "true");
@@ -389,8 +505,27 @@ try {
   await temporary.getByRole("combobox", { name: "Website appearance", exact: true }).selectOption("light");
   assert.equal(await temporary.evaluate(() => getComputedStyle(document.body).backgroundColor), light);
   await temporary.getByRole("status").filter({ hasText: "could not be saved" }).waitFor();
+  for (const item of colorThemes) {
+    await temporary.getByRole("combobox", { name: "Website appearance", exact: true }).selectOption(item.preference);
+    assert.equal(await temporary.evaluate(() => getComputedStyle(document.body).backgroundColor), item.background);
+    await temporary.getByRole("status").filter({ hasText: "could not be saved" }).waitFor();
+  }
   evidence.behavior.push("Blocked browser storage surfaces a visible notice while visit-only appearance selection still works.");
   await blocked.close();
+  const invalid = await context({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
+  await invalid.addInitScript((origin) => {
+    if (location.origin === origin) localStorage.setItem("folio.site.appearance", "not-a-theme");
+  }, origin);
+  const recovered = await invalid.newPage();
+  await recovered.goto(url);
+  assert.equal(await recovered.getByRole("combobox", { name: "Website appearance", exact: true }).inputValue(), "system");
+  assert.equal(await recovered.evaluate(() => getComputedStyle(document.body).backgroundColor), dark);
+  await recovered.getByRole("status").filter({ hasText: "not recognized" }).waitFor();
+  await recovered.getByRole("combobox", { name: "Website appearance", exact: true }).selectOption("forest");
+  assert.equal(await recovered.locator("#appearance-status").isHidden(), true);
+  assert.equal(await recovered.evaluate(() => localStorage.getItem("folio.site.appearance")), "forest");
+  await invalid.close();
+  evidence.behavior.push("An unknown saved theme explicitly recovers to System and a valid new selection replaces it.");
   assert.deepEqual(errors, []); assert.deepEqual(externalRequests, []);
   evidence.browserErrors = errors; evidence.externalRequests = externalRequests;
   await writeFile(path.join(output, "landing-evidence.json"), JSON.stringify(evidence, null, 2) + "\n");

@@ -14,7 +14,7 @@ crop geometry and hashes. Raster sidecars retain their provenance too.
 ## Appearance
 
 The site defaults to **System**, following live `prefers-color-scheme` changes.
-The header offers explicit Light and Dark overrides. Only the
+The header offers explicit Light, Dark, Sepia, Forest and Midnight overrides. Only the
 `folio.site.appearance` browser preference is stored, separately from the desktop
 app's `folio.appearance`; it is never sent to a service. A small blocking
 bootstrap restores the choice before CSS loads, avoiding a wrong-theme flash.
@@ -23,6 +23,13 @@ Without JavaScript, CSS still follows the system preference and the enhancement
 control stays hidden. Blocked or invalid browser storage produces a visible
 notice; choices still apply for the current visit. Theme colors change atomically,
 while original PDF/workspace imagery keeps its actual colors.
+
+Sepia pairs warm paper with brown actions, Forest uses pale green surfaces and
+deep green actions, and Midnight uses deep navy surfaces with periwinkle actions.
+Each maps the same text, control, focus, selection, shadow and scrollbar roles;
+explicit choices stay fixed when the OS appearance changes. The logo, original
+brand-blue source chapter and real PDF/screenshot pixels are never recolored.
+Print output resets to a light palette. No theme changes the desktop app.
 
 ## Motion
 

@@ -46,18 +46,40 @@ test("website appearance defaults to System and persists only its own preference
   assert.equal(initial.controller.snapshot().preference, "system");
   assert.equal(initial.controller.snapshot().message, null);
   assert.equal(initial.dataset.appearance, "system");
-  for (const value of ["dark", "light", "system"]) {
+  for (const value of ["dark", "light", "sepia", "forest", "midnight", "system"]) {
     assert.equal(initial.controller.choose(value).preference, value);
     assert.equal(initial.dataset.appearance, value);
     assert.equal(appearance(storage).controller.snapshot().preference, value);
   }
   assert.ok(requested.every((key) => key === "folio.site.appearance"));
   assert.equal(values.get("folio.appearance"), "sepia");
-  assert.throws(() => initial.controller.choose("sepia"), /Choose System, Light or Dark/);
+  assert.throws(() => initial.controller.choose("contrast"), /Choose a listed website appearance/);
   assert.equal(initial.controller.snapshot().preference, "system");
   assert.ok(html.indexOf('src="./appearance.js"') < html.indexOf('rel="stylesheet"'));
   assert.match(css, /prefers-color-scheme: dark/);
   assert.match(html, /for="website-appearance">Website appearance/);
+});
+
+test("the native selector, early restoration and explicit color palettes support the same choices", () => {
+  const select = html.match(/<select id="website-appearance"[^>]*>([\s\S]+?)<\/select>/)?.[1];
+  assert.ok(select);
+  const options = [...select.matchAll(/<option value="([^"]+)">([^<]+)<\/option>/g)]
+    .map((match) => ({ value: match[1], label: match[2] }));
+  assert.deepEqual(options, [
+    { value: "system", label: "System" }, { value: "light", label: "Light" },
+    { value: "dark", label: "Dark" }, { value: "sepia", label: "Sepia" },
+    { value: "forest", label: "Forest" }, { value: "midnight", label: "Midnight" },
+  ]);
+  for (const { value } of options) {
+    const restored = appearance({ getItem: () => value, setItem: () => {} });
+    assert.equal(restored.dataset.appearance, value);
+    assert.equal(restored.controller.snapshot().message, null);
+  }
+  for (const value of ["sepia", "forest", "midnight"]) {
+    assert.match(css, new RegExp(`:root\\[data-appearance="${value}"\\] \\{`));
+  }
+  assert.doesNotMatch(css, /:root:not\(\[data-appearance="light"\]\)/);
+  assert.match(css, /:root:not\(\[data-appearance\]\), :root\[data-appearance="system"\]/);
 });
 
 test("blocked or corrupt appearance storage stays visible and never prevents visit-only choices", () => {
@@ -70,9 +92,11 @@ test("blocked or corrupt appearance storage stays visible and never prevents vis
   });
   assert.equal(blocked.controller.snapshot().preference, "system");
   assert.match(blocked.controller.snapshot().message ?? "", /storage is unavailable/);
-  assert.equal(blocked.controller.choose("dark").preference, "dark");
-  assert.equal(blocked.dataset.appearance, "dark");
-  assert.match(blocked.controller.snapshot().message ?? "", /could not be saved/);
+  for (const value of ["dark", "sepia", "forest", "midnight"]) {
+    assert.equal(blocked.controller.choose(value).preference, value);
+    assert.equal(blocked.dataset.appearance, value);
+    assert.match(blocked.controller.snapshot().message ?? "", /could not be saved/);
+  }
 });
 
 test("website motion stays progressive, bounded and independent of desktop preferences", async () => {

@@ -52,8 +52,12 @@ independent finish review, and asset provenance before publication through a PR.
 
 ## Website appearance extension
 
-Default to System with live device following, plus persistent Light/Dark
-overrides in the isolated `folio.site.appearance` key. The header uses an
+Default to System with live device following, plus persistent Light, Dark,
+Sepia, Forest and Midnight overrides in the isolated `folio.site.appearance`
+key. Sepia uses warm paper/brown actions, Forest pale green/deep green, and
+Midnight deep navy/periwinkle. These opt-in atmospheres map the same semantic
+text, control, focus, selection, shadow and scrollbar roles without replacing
+the default blue identity. The header uses an
 accessible native selector, not a modal or decorative icon-only switch.
 Dark surfaces inherit the desktop's graphite/slate and pale blue semantics;
 the original blue source chapter and original PDF/screenshot pixels stay true.

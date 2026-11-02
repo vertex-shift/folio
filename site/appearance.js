@@ -1,6 +1,6 @@
 (() => {
   const key = "folio.site.appearance";
-  const choices = ["system", "light", "dark"];
+  const choices = ["system", "light", "dark", "sepia", "forest", "midnight"];
   let preference = "system";
   let message = null;
 
@@ -16,7 +16,7 @@
   window.folioSiteAppearance = Object.freeze({
     snapshot() { return { preference, message }; },
     choose(value) {
-      if (!choices.includes(value)) throw new Error("Choose System, Light or Dark for the website appearance.");
+      if (!choices.includes(value)) throw new Error("Choose a listed website appearance.");
       preference = value;
       document.documentElement.dataset.appearance = value;
       try {
