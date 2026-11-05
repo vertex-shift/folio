@@ -6,7 +6,7 @@ import type { DocumentInfo } from "../src/lib/types.ts";
 import { intersectsPdfRect } from "../src/lib/geometry.ts";
 
 const document: DocumentInfo = { id: 42, revision: 3, name: "Synthetic.pdf", pageCount: 3, byteLength: 1000,
-  dirty: false, canUndo: false, canRedo: false, readOnlyReason: null, passwordProtected: false, copyAllowed: true, annotations: [],
+  dirty: false, canUndo: false, canRedo: false, readOnlyReason: null, passwordProtected: false, copyAllowed: true, annotations: [], pageLabels: null,
   permissions: { ownerAuthenticated: true, printAllowed: true, highQualityPrintAllowed: true,
     copyAllowed: true, modifyAllowed: true, annotateAllowed: true, fillFormsAllowed: true, assembleAllowed: true },
   pages: [0, 90, 270].map((rotation, index) => ({ key: String(index), rotation, geometry: {

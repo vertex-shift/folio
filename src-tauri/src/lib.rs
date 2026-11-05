@@ -13,6 +13,7 @@ pub mod ocr;
 pub mod outlines;
 pub mod output;
 pub mod page_geometry;
+pub mod page_labels;
 mod pages;
 pub mod paragraph;
 mod pdf_objects;

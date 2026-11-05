@@ -12,7 +12,7 @@ function geometry(rotation = 0, userUnit = 1.5): PageGeometry {
 }
 function info(): DocumentInfo {
   return { id: 4, revision: 3, name: "Synthetic.pdf", pageCount: 4, byteLength: 1000, dirty: false, canUndo: false, canRedo: false,
-    readOnlyReason: null, passwordProtected: false, copyAllowed: true, annotations: [],
+    readOnlyReason: null, passwordProtected: false, copyAllowed: true, annotations: [], pageLabels: null,
     permissions: { ownerAuthenticated: true, printAllowed: true, highQualityPrintAllowed: true, copyAllowed: true, modifyAllowed: true, annotateAllowed: true, fillFormsAllowed: true, assembleAllowed: true },
     pages: [0, 90, 180, 270].map((rotation) => ({ key: `${rotation + 1}:0`, rotation, geometry: geometry(rotation) })) };
 }

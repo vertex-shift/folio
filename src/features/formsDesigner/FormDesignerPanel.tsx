@@ -61,6 +61,7 @@ export default function FormDesignerPanel(props: {
   return <div className="form-designer-panel">
     <div className="designer-intro">
       <p>Create interactive PDF fields, or select a logical field to edit its properties and page widgets.</p>
+      {props.info.pageLabels && <p className="muted">Widget page fields use physical positions, not PDF labels.</p>}
       <select aria-label="Create field type" value="" disabled={locked || Boolean(draft?.dirty)}
         onChange={(event) => props.onNew(event.target.value as ControlKind)}>
         <option value="" disabled>Create a field...</option>

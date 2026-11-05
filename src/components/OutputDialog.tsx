@@ -329,6 +329,7 @@ export default function OutputDialog(props: Props) {
             {!allPages && <label className="setting-field">Page numbers<input type="text" value={range} maxLength={4096}
               placeholder={`1-${info.pageCount}`} onChange={(event) => setRange(event.target.value)} /></label>}
           </fieldset>
+          {info.pageLabels && <p className="muted">Page ranges use physical positions, not PDF page labels.</p>}
           {(mode === "print" || mode === "export" && format !== "text") && <label className="setting-field">Resolution<select value={dpi} disabled={props.busy}
             onChange={(event) => {
               const value = Number(event.target.value);

@@ -205,6 +205,16 @@ The desktop app processes document contents locally.
   Keep edits in Session history, retain per-tab drafts, preserve unrelated
   structures, and never describe metadata changes/removal as secure erasure.
   Attachments are untrusted data, never automatically opened or executed.
+- Page labels: real bounded PDF numbering sections with decimal, Roman,
+  repeated-letter and prefix-only styles, Unicode prefixes and numbering
+  restarts. Explicit Label/Page navigation distinguishes exact logical labels
+  from physical positions; duplicate labels are reported rather than guessed.
+  Retain existing labels through moves, deletion, duplication, import and
+  extraction without changing page pixels or printed number stamps. Malformed
+  trees remain explicit reading issues and block structural operations unless
+  deliberately replaced; preserve history, aggregate drafts, signed/read-only
+  guards and source protection. This is navigation metadata, not secure erasure
+  or arbitrary destination/portfolio compatibility.
 - Protection authoring: explicit separate protected/reprotected/unprotected PDF
   copies, using supported AES-256 revision-6 PDF 2.0 encryption and fresh OS
   randomness. Actual owner authorization is required to replace/remove existing

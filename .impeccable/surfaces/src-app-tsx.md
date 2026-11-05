@@ -140,3 +140,17 @@ render only the active document's canvases. Support multi-file picker/drop/
 Finder opening and independent password prompts. Closing is document-scoped;
 quitting protects unsaved inactive documents too. Preserve the incumbent
 palette, compact typography, and reduced-motion behavior.
+
+## PDF page-label metadata
+
+Extend the incumbent Operate surface with a focused numbering-section editor
+from All tools and Organize. Roman front matter, numbering restarts and Unicode
+prefixes are real PDF metadata, not new printed annotations. Keep a fixed
+Apply/Cancel footer, native labeled fields, explicit error retention and the
+single aggregate document draft/protection authority.
+
+The reader and page rail show logical labels with physical-position context.
+Explicit Label/Page navigation avoids guessing duplicate, numeric or `#`
+labels. Labels follow existing page identities through organization/extraction;
+unsupported trees display a notice rather than being silently replaced.
+Preserve pixels, themes, motion and unsaved user work. No new raster assets.

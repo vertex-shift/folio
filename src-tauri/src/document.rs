@@ -68,11 +68,15 @@ pub struct DocumentInfo {
     pub permissions: crate::protection::AccessPermissions,
     pub pages: Vec<PageInfo>,
     pub annotations: Vec<AnnotationInfo>,
+    pub page_labels: Option<crate::page_labels::Info>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Edit {
+    PageLabels {
+        ranges: Vec<crate::page_labels::Range>,
+    },
     Metadata {
         fields: crate::metadata::Fields,
     },
@@ -311,7 +315,11 @@ impl Session {
         let page = crate::pages::blank_page(&mut document, width, height)?;
         let root = document.add_object(dictionary! { "Type" => "Catalog" });
         document.trailer.set("Root", root);
-        rebuild_page_tree(&mut document, &[page])?;
+        rebuild_page_tree(
+            &mut document,
+            &[page],
+            crate::page_labels::Snapshot::default(),
+        )?;
         let mut bytes = Vec::new();
         document.save_to(&mut bytes)?;
         Self::created(bytes, "Untitled.pdf".into(), id)
@@ -465,13 +473,15 @@ impl Session {
             permissions: self.permissions.clone(),
             pages,
             annotations: annotations(&self.document)?,
+            page_labels: crate::page_labels::inspect(&self.document),
         })
     }
 
     pub fn apply(&mut self, edit: Edit) -> Result<DocumentInfo> {
         if matches!(
             &edit,
-            Edit::Metadata { .. }
+            Edit::PageLabels { .. }
+                | Edit::Metadata { .. }
                 | Edit::BookmarkCreate { .. }
                 | Edit::BookmarkRename { .. }
                 | Edit::BookmarkMove { .. }
@@ -954,6 +964,7 @@ pub(crate) fn page_bounds(document: &Document, id: ObjectId) -> Result<[f32; 4]>
 
 fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> {
     match edit {
+        Edit::PageLabels { ranges } => crate::page_labels::update(document, &ranges)?,
         Edit::Crop { pages, margins } => crate::authoring::crop(document, &pages, margins)?,
         Edit::RemoveCrop { pages } => crate::authoring::remove_crop(document, &pages)?,
         Edit::ResetCrop { pages } => crate::authoring::reset_crop(document, &pages)?,
@@ -991,13 +1002,14 @@ fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> 
             crate::text_edit::replace(document, page, &path, &expected, &replacement, font)?;
         }
         Edit::BlankPage { at, width, height } => {
+            let labels = crate::page_labels::Snapshot::capture(document)?;
             let mut order: Vec<_> = document.get_pages().into_values().collect();
             if at > order.len() {
                 return Err(invalid("Choose a valid page insertion position."));
             }
             let id = crate::pages::blank_page(document, width, height)?;
             order.insert(at, id);
-            rebuild_page_tree(document, &order)?;
+            rebuild_page_tree(document, &order, labels)?;
         }
         Edit::Duplicate { page } => crate::pages::duplicate_page(document, page)?,
         Edit::Text {
@@ -1047,15 +1059,17 @@ fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> 
             document.get_dictionary_mut(id)?.set("Rotate", rotation);
         }
         Edit::Move { from, to } => {
+            let labels = crate::page_labels::Snapshot::capture(document)?;
             let mut order: Vec<_> = document.get_pages().values().copied().collect();
             if from >= order.len() || to >= order.len() || from == to {
                 return Err(invalid("Choose two different pages within the document."));
             }
             let id = order.remove(from);
             order.insert(to, id);
-            rebuild_page_tree(document, &order)?;
+            rebuild_page_tree(document, &order, labels)?;
         }
         Edit::Delete { page } => {
+            let labels = crate::page_labels::Snapshot::capture(document)?;
             let mut order: Vec<_> = document.get_pages().values().copied().collect();
             if order.len() <= 1 {
                 return Err(invalid("A PDF must keep at least one page."));
@@ -1073,7 +1087,7 @@ fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> 
             for object in document.objects.values_mut() {
                 retarget_destinations(object, removed, replacement);
             }
-            rebuild_page_tree(document, &order)?;
+            rebuild_page_tree(document, &order, labels)?;
             document.delete_object(removed);
             document.prune_objects();
         }
@@ -1172,7 +1186,11 @@ fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> 
     Ok(())
 }
 
-pub(crate) fn rebuild_page_tree(document: &mut Document, order: &[ObjectId]) -> Result<()> {
+pub(crate) fn rebuild_page_tree(
+    document: &mut Document,
+    order: &[ObjectId],
+    labels: crate::page_labels::Snapshot,
+) -> Result<()> {
     // Reparenting without copying these inherited values loses fonts, page boxes,
     // or rotations on PDFs whose original page tree supplies them.
     let mut inherited_values = Vec::new();
@@ -1198,6 +1216,7 @@ pub(crate) fn rebuild_page_tree(document: &mut Document, order: &[ObjectId]) -> 
         page.set("Parent", root);
     }
     document.catalog_mut()?.set("Pages", root);
+    labels.restore(document, order)?;
     document.prune_objects();
     Ok(())
 }

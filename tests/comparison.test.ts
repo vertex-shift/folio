@@ -19,7 +19,7 @@ const plan: ComparisonPlan = { comparisonId: 1, before: source(1), after: source
 const document = (id: number): DocumentInfo => ({
   id, revision: 3, name: `${id}.pdf`, pageCount: 1, pages: [{ key: "1:0", rotation: 90, geometry }],
   byteLength: 1000, dirty: true, canUndo: true, canRedo: false, readOnlyReason: "Digitally signed PDF: read-only.",
-  copyAllowed: true, passwordProtected: true, annotations: [],
+  copyAllowed: true, passwordProtected: true, annotations: [], pageLabels: null,
   permissions: { copyAllowed: true, printAllowed: true, highQualityPrintAllowed: true,
     fillFormsAllowed: false, ownerAuthenticated: false, modifyAllowed: false, annotateAllowed: false, assembleAllowed: false },
 });
