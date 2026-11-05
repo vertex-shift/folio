@@ -1,15 +1,47 @@
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { awaitOcrStep, horizontalOcrBands, recognitionWords, shiftOcrWords } from "../src/lib/ocr.ts";
+import { awaitOcrStep, horizontalOcrBands, ocrResolutionIssue, recognitionWords, shiftOcrWords } from "../src/lib/ocr.ts";
 import { LocalOcrWorker } from "../src/lib/ocrWorker.ts";
 import { verifiedOcrAsset } from "../src/lib/ocrWorker.ts";
 import { OCR_LANGUAGES, selectedOcrLanguages } from "../src/lib/ocrLanguages.ts";
 import { readFileSync } from "node:fs";
 import type { OcrPagePlan } from "../src/lib/ocrTypes.ts";
 import { parsePageRange } from "../src/lib/pages.ts";
+import type { DocumentInfo } from "../src/lib/types.ts";
+import { OCR_RESOLUTIONS } from "../src/lib/ocrTypes.ts";
 
 const page: OcrPagePlan = { page: 2, sourceBounds: [-20, 30, 320, 230], rotation: 90,
   userUnit: 2, pixelWidth: 1000, pixelHeight: 1500, skipped: false, existingText: false };
+
+function pageGeometry(width: number, height: number, userUnit = 1): DocumentInfo["pages"][number] {
+  const bounds: [number, number, number, number] = [-32, 64, width - 32, height + 64];
+  return { key: "synthetic-scan", rotation: 0, geometry: {
+    mediaBox: bounds, bounds, originalBounds: bounds, rotation: 0, userUnit,
+    widthPoints: width * userUnit, heightPoints: height * userUnit, cropModified: false,
+  } };
+}
+
+test("oversized scan pages recommend an explicit safe resolution instead of silently resampling", () => {
+  const pages = [pageGeometry(600, 800), pageGeometry(2400, 3600)];
+  assert.match(ocrResolutionIssue(pages, [0, 1], 300) ?? "", /Page 2.*300 DPI.*Choose 96 DPI/);
+  assert.match(ocrResolutionIssue(pages, [1], 150) ?? "", /Choose 96 DPI/);
+  for (const dpi of [72, 96] as const) assert.equal(ocrResolutionIssue(pages, [0, 1], dpi), null);
+  assert.equal(ocrResolutionIssue(pages, [0], 300), null);
+  const narrow = [pageGeometry(20_000, 10)];
+  assert.match(ocrResolutionIssue(narrow, [0], 72) ?? "", /Even 72 DPI exceeds/);
+  assert.throws(() => ocrResolutionIssue(pages, [2], 96), /invalid OCR geometry/);
+  assert.throws(() => ocrResolutionIssue([pageGeometry(600, 800, NaN)], [0], 96), /invalid OCR geometry/);
+});
+
+test("OCR budget recommendations include pixel ceilings, CropBox rotation and UserUnit", () => {
+  const exact = pageGeometry(4000, 6000);
+  assert.equal(ocrResolutionIssue([exact], [0], 72), null);
+  assert.match(ocrResolutionIssue([pageGeometry(4000.001, 6000)], [0], 72) ?? "", /exceeds/);
+  const fractional = pageGeometry(144, 288, 1.25);
+  fractional.geometry.rotation = 270;
+  for (const dpi of OCR_RESOLUTIONS) assert.equal(ocrResolutionIssue([fractional], [0], dpi), null);
+  assert.match(ocrResolutionIssue([pageGeometry(2000, 3000, 2)], [0], 96) ?? "", /Choose 72 DPI/);
+});
 
 test("OCR range limits are checked before expanding large source page ranges", () => {
   assert.throws(() => parsePageRange("1-1000000", 1_000_000, 50), /no more than 50/);
@@ -212,6 +244,24 @@ test("every engine/model path is explicitly local and no language cache or autor
   assert.deepEqual(raw.packets[4].payload.options, { rotateAuto: false, rotateRadians: 0 });
   worker.close();
   assert.equal(raw.terminated, true);
+});
+
+test("all explicit OCR resolutions reach the worker unchanged, including oversized-scan settings", async (context) => {
+  fakeBrowser(context);
+  for (const dpi of OCR_RESOLUTIONS) {
+    const worker = new LocalOcrWorker(new AbortController().signal, () => {});
+    const raw = FakeWorker.instances.at(-1)!;
+    raw.automatic = true;
+    await worker.initialize(dpi);
+    const params = raw.packets.find((packet) => packet.action === "setParameters")?.payload.params;
+    assert.ok(params && typeof params === "object");
+    assert.equal(Reflect.get(params, "user_defined_dpi"), String(dpi));
+    worker.close();
+    assert.equal(raw.terminated, true);
+  }
+  const invalid = new LocalOcrWorker(new AbortController().signal, () => {});
+  await assert.rejects(invalid.initialize(75), /Choose 72, 96, 150 or 300 DPI/);
+  assert.equal(FakeWorker.instances.at(-1)!.packets.length, 0);
 });
 
 test("worker errors are visible, terminate resources and never include recognized content", async (context) => {

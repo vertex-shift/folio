@@ -1,6 +1,7 @@
 import { ocrLanguageResources, selectedOcrLanguages } from "./ocrLanguages.ts";
 import type { OcrLanguage } from "./ocrLanguages.ts";
 import { sha256 as digestSha256 } from "@noble/hashes/sha2.js";
+import { OCR_RESOLUTIONS } from "./ocrTypes.ts";
 
 export type OcrWorkerProgress = (fraction: number) => void;
 
@@ -106,7 +107,7 @@ export class LocalOcrWorker {
     const timeout = setTimeout(() => this.close(new Error("OCR initialization exceeded its two-minute limit. No text was added.")), 120_000);
     try {
       const selected = selectedOcrLanguages(languages);
-      if (dpi !== 150 && dpi !== 300) throw new Error("Choose 150 or 300 DPI for OCR.");
+      if (!OCR_RESOLUTIONS.some((value) => value === dpi)) throw new Error("Choose 72, 96, 150 or 300 DPI for OCR.");
       if (segmentation !== "auto" && segmentation !== "single_column") throw new Error("Choose automatic horizontal text or single-column printed text.");
       const langs = [];
       for (const model of ocrLanguageResources(selected)) {

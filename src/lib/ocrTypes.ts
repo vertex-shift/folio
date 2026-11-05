@@ -1,9 +1,12 @@
 import type { DocumentInfo, PdfRect } from "./types.ts";
 import type { OcrLanguage } from "./ocrLanguages.ts";
 
+export const OCR_RESOLUTIONS = [300, 150, 96, 72] as const;
+export type OcrDpi = typeof OCR_RESOLUTIONS[number];
+
 export interface OcrOptions {
   pages: number[];
-  dpi: 150 | 300;
+  dpi: OcrDpi;
   languages: OcrLanguage[];
   layout: "horizontal_print";
   segmentation: "auto" | "single_column";
@@ -27,7 +30,7 @@ export interface OcrPlan {
   revision: number;
   sourceEpoch: number;
   epoch: number;
-  dpi: 150 | 300;
+  dpi: OcrDpi;
   languages: OcrLanguage[];
   layout: "horizontal_print";
   segmentation: "auto" | "single_column";

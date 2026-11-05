@@ -3,6 +3,11 @@ import { useId } from "react";
 import type { OcrOptions, OcrOutcome, OcrProgress } from "../lib/ocrTypes";
 import { OCR_LANGUAGES, ocrLanguageNames, selectedOcrLanguages } from "../lib/ocrLanguages";
 import type { OcrLanguage } from "../lib/ocrLanguages";
+import { OCR_RESOLUTIONS } from "../lib/ocrTypes";
+import { MAX_OCR_PAGES, ocrResolutionIssue } from "../lib/ocr";
+import { parsePageRange } from "../lib/pages";
+import { errorMessage } from "../lib/geometry";
+import type { DocumentInfo } from "../lib/types";
 import "./OcrPanel.css";
 
 interface Props {
@@ -13,7 +18,7 @@ interface Props {
   segmentation: OcrOptions["segmentation"];
   disabled: boolean;
   blockedReason: string | null;
-  pageCount: number;
+  pages: DocumentInfo["pages"];
   outcome: OcrOutcome | null;
   onRange(value: string): void;
   onDpi(value: OcrOptions["dpi"]): void;
@@ -30,7 +35,15 @@ function pageList(pages: number[]): string {
 export default function OcrPanel(props: Props) {
   const rangeHelp = useId();
   const languageHelp = useId();
+  const resolutionHelp = useId();
   const formId = useId();
+  let resolutionIssue: string | null = null;
+  try {
+    const selection = parsePageRange(props.range, props.pages.length, MAX_OCR_PAGES);
+    resolutionIssue = ocrResolutionIssue(props.pages, selection, props.dpi);
+  } catch (error) {
+    resolutionIssue = errorMessage(error);
+  }
   const changeLanguage = (index: number, value: string) => {
     const languages = props.languages.filter((language, position) => position !== index && language !== value);
     if (value) languages.splice(Math.min(index, languages.length), 0, ...selectedOcrLanguages([value]));
@@ -39,9 +52,12 @@ export default function OcrPanel(props: Props) {
   return <div className="ocr-panel"><div className="panel-scroll ocr-panel-content">
     <p>Add an invisible, searchable text layer to scanned pages. Original images and page content stay intact.</p>
     <div className="ocr-local"><ShieldCheck size={15} /><span>15 models included. Recognition and fonts stay on this device, even offline.</span></div>
-    <form id={formId} onSubmit={(event) => { event.preventDefault(); props.onStart(); }}>
+    <form id={formId} onSubmit={(event) => {
+      event.preventDefault();
+      if (!props.disabled && !props.blockedReason && !resolutionIssue) props.onStart();
+    }}>
       <label className="setting-field">Pages to recognize
-        <input type="text" value={props.range} placeholder={`1-${props.pageCount}`} maxLength={400}
+        <input type="text" value={props.range} placeholder={`1-${props.pages.length}`} maxLength={400}
           aria-describedby={rangeHelp} disabled={props.disabled}
           onChange={(event) => props.onRange(event.target.value)} />
       </label>
@@ -79,10 +95,17 @@ export default function OcrPanel(props: Props) {
         ? "Recognizes horizontal ink bands in top-to-bottom order. Use clean, one-column printed scans; tables, columns, dark backgrounds, and handwriting are not supported by this layout."
         : "Automatic layout can omit or split lines. For clean, one-column scans, choose Single-column printed text; always review every line."}</p>
       <label className="setting-field">Scan resolution<select value={props.dpi} disabled={props.disabled}
-        onChange={(event) => props.onDpi(event.target.value === "150" ? 150 : 300)}>
+        aria-describedby={resolutionIssue ? resolutionHelp : undefined}
+        onChange={(event) => {
+          const value = OCR_RESOLUTIONS.find((dpi) => String(dpi) === event.target.value);
+          if (value !== undefined) props.onDpi(value);
+        }}>
         <option value={300}>300 DPI — finer text</option>
         <option value={150}>150 DPI — smaller pages in memory</option>
+        <option value={96}>96 DPI — oversized scans</option>
+        <option value={72}>72 DPI — lowest memory</option>
       </select></label>
+      <p className="ocr-help">Lower resolutions can fit unusually large PDF page sizes, but may miss fine text. Only the recognition input changes; original images and PDF dimensions stay intact.</p>
       <label className="setting-field">Pages with existing text<select value={props.policy} disabled={props.disabled}
         onChange={(event) => props.onPolicy(event.target.value === "force" ? "force" : "skip")}>
         <option value="skip">Skip existing text (recommended)</option>
@@ -103,7 +126,10 @@ export default function OcrPanel(props: Props) {
     <p className="ocr-limits">The invisible layer preserves logical Unicode, including Arabic and Hindi. It does not enable visible Arabic/Indic paragraph editing. Tagged PDFs are refused; recognize the untagged original before making a new tagged copy.</p>
     <p className="ocr-limits">This adds PDF text, not accessibility tags or PDF/UA conformance. No original content is removed or redacted.</p>
   </div><div className="ocr-actions">
-    <button type="submit" form={formId} className="button primary ocr-start" disabled={props.disabled || Boolean(props.blockedReason)}>
+    {resolutionIssue && <p id={resolutionHelp} className="ocr-warning" role="status">{resolutionIssue}</p>}
+    <button type="submit" form={formId} className="button primary ocr-start"
+      aria-describedby={resolutionIssue ? resolutionHelp : undefined}
+      disabled={props.disabled || Boolean(props.blockedReason) || Boolean(resolutionIssue)}>
       <ScanText size={16} />Recognize text
     </button>
   </div></div>;

@@ -328,14 +328,97 @@ fn fractional_user_unit_mirrors_renderer_multiplication_order_and_exact_pixel_ce
     let info = workspace
         .open_bytes(bytes, "fractional crop.pdf".into())
         .unwrap();
-    let mut settings = options(vec![0]);
-    settings.dpi = 300;
-    let plan = workspace.begin_ocr(info.id, 0, settings).unwrap();
-    assert_eq!(plan.pages[0].pixel_width, 1501);
-    assert_eq!(plan.pages[0].pixel_height, 751);
-    assert_eq!(plan.pages[0].source_bounds, [-32.0, 64.0, 112.0, 352.0]);
-    assert_eq!(plan.pages[0].rotation, 270);
-    assert_eq!(plan.pages[0].user_unit, 1.25);
+    for (dpi, width, height) in [
+        (300, 1501, 751),
+        (150, 751, 376),
+        (96, 480, 240),
+        (72, 360, 180),
+    ] {
+        let mut settings = options(vec![0]);
+        settings.dpi = dpi;
+        let plan = workspace.begin_ocr(info.id, 0, settings).unwrap();
+        assert_eq!(plan.pages[0].pixel_width, width);
+        assert_eq!(plan.pages[0].pixel_height, height);
+        assert_eq!(plan.pages[0].source_bounds, [-32.0, 64.0, 112.0, 352.0]);
+        assert_eq!(plan.pages[0].rotation, 270);
+        assert_eq!(plan.pages[0].user_unit, 1.25);
+        workspace.cancel_ocr(plan.job_id);
+    }
+}
+
+#[test]
+fn oversized_scans_support_explicit_lower_dpi_without_resizing_original_pages() {
+    let mut document = Document::load_mem(&synthetic(1, false)).unwrap();
+    let page_id = document.get_pages()[&1];
+    let original_content = document.get_page_content(page_id);
+    let page = document.get_dictionary_mut(page_id).unwrap();
+    page.set(
+        "MediaBox",
+        vec![0.into(), 0.into(), 2400.into(), 3600.into()],
+    );
+    page.set(
+        "CropBox",
+        vec![0.into(), 0.into(), 2400.into(), 3600.into()],
+    );
+    page.set("UserUnit", 1);
+    let mut source = Vec::new();
+    document.save_to(&mut source).unwrap();
+    let mut workspace = Workspace::default();
+    let info = workspace
+        .open_bytes(source.clone(), "Synthetic oversized scan.pdf".into())
+        .unwrap();
+    for dpi in [0, 71, 75, 97, 301] {
+        let mut settings = options(vec![0]);
+        settings.dpi = dpi;
+        assert!(workspace.begin_ocr(info.id, 0, settings).is_err());
+    }
+    for dpi in [150, 300] {
+        let mut settings = options(vec![0]);
+        settings.dpi = dpi;
+        let error = workspace
+            .begin_ocr(info.id, 0, settings)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("24-megapixel") && error.contains("96, 72 DPI"));
+        assert_eq!(workspace.document(info.id).unwrap().bytes(), source);
+    }
+    for (dpi, dimensions) in [(72, (2400, 3600)), (96, (3200, 4800))] {
+        let revision = workspace.document(info.id).unwrap().revision();
+        let mut settings = options(vec![0]);
+        settings.dpi = dpi;
+        let plan = workspace.begin_ocr(info.id, revision, settings).unwrap();
+        assert_eq!(plan.dpi, dpi);
+        assert_eq!(
+            (plan.pages[0].pixel_width, plan.pages[0].pixel_height),
+            dimensions
+        );
+        workspace.stage_ocr_page(plan.job_id, words(0)).unwrap();
+        let outcome = workspace.commit_ocr(plan.job_id).unwrap();
+        assert_eq!(outcome.word_count, 2);
+        let saved = Document::load_mem(workspace.document(info.id).unwrap().bytes()).unwrap();
+        let saved_page_id = saved.get_pages()[&1];
+        let saved_page = saved.get_dictionary(saved_page_id).unwrap();
+        assert_eq!(
+            saved_page.get(b"MediaBox").unwrap(),
+            document
+                .get_dictionary(page_id)
+                .unwrap()
+                .get(b"MediaBox")
+                .unwrap()
+        );
+        assert!(
+            saved
+                .get_page_content(saved_page_id)
+                .ends_with(&original_content)
+        );
+        assert!(saved.extract_text(&[1]).unwrap().contains("FOLIO"));
+        workspace
+            .current_mut(info.id, outcome.document.revision)
+            .unwrap()
+            .undo()
+            .unwrap();
+        assert_eq!(workspace.document(info.id).unwrap().bytes(), source);
+    }
 }
 
 #[test]

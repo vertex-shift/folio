@@ -145,8 +145,8 @@ pub(crate) fn plan(
             "Existing tagged or ambiguously structured PDFs are not supported by OCR. Adding unassociated text could stale their logical structure. Recognize the untagged original before authoring a new tagged copy.",
         ));
     }
-    if ![150, 300].contains(&options.dpi) {
-        return Err(invalid("Choose 150 or 300 DPI for offline OCR."));
+    if ![72, 96, 150, 300].contains(&options.dpi) {
+        return Err(invalid("Choose 72, 96, 150 or 300 DPI for offline OCR."));
     }
     if options.pages.is_empty() || options.pages.len() > MAX_PAGES {
         return Err(invalid("Choose between 1 and 50 pages per OCR job."));
@@ -189,8 +189,21 @@ pub(crate) fn plan(
             || height > 16_384.0
             || width * height > 24_000_000.0
         {
+            let lower = [150, 96, 72]
+                .into_iter()
+                .filter(|dpi| *dpi < options.dpi)
+                .map(|dpi| dpi.to_string())
+                .collect::<Vec<_>>();
+            let recommendation = if lower.is_empty() {
+                "Even 72 DPI exceeds the limit; use a smaller source page.".to_owned()
+            } else {
+                format!(
+                    "Choose a lower resolution ({} DPI) or a smaller source page.",
+                    lower.join(", ")
+                )
+            };
             return Err(invalid(format!(
-                "Page {} exceeds the 24-megapixel or 16,384-pixel OCR limit at {} DPI. Choose 150 DPI or a smaller page; resolution is never lowered silently.",
+                "Page {} exceeds the 24-megapixel or 16,384-pixel OCR limit at {} DPI. {recommendation} Resolution is never lowered silently.",
                 index + 1,
                 options.dpi
             )));

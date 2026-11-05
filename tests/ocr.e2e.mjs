@@ -179,10 +179,12 @@ try {
   const page = await context.newPage();
   page.on("pageerror", (error) => failures.push(error.message));
   const staged = [];
+  let ocrBeginRequests = 0;
   const offlineFixtures=[];
   let capturedPlan;
   page.on("request", (request) => {
     if (request.url().endsWith("/__folio/ocr/page")) staged.push(request.postDataJSON().result);
+    if (request.url().endsWith("/__folio/ocr/begin")) ocrBeginRequests++;
   });
   page.on("response", async (response) => {
     if (response.url().endsWith("/__folio/ocr/begin") && response.ok()) capturedPlan = await response.json();
@@ -408,6 +410,97 @@ try {
   assert.equal(await page.evaluate(() => window.__ocrWorkers.active), 0);
   assert.deepEqual(await bytes(cancelSource), cancelBytes);
   evidence.workerLifecycle = await page.evaluate(() => window.__ocrWorkers);
+  const oversizedImage = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1200; canvas.height = 1800;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "white"; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "black"; context.font = "bold 52px sans-serif";
+    context.fillText("FOLIO OVERSIZED SCAN", 70, 180);
+    context.font = "36px sans-serif";
+    context.fillText("Offline paper stays on this computer.", 70, 290);
+    context.fillText("Searchable document 58247.", 70, 390);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    canvas.width = canvas.height = 0;
+    return Array.from(new Uint8Array(await blob.arrayBuffer()));
+  });
+  const oversized = await PDFDocument.create();
+  const oversizedPage = oversized.addPage([2400, 3600]);
+  oversizedPage.drawImage(await oversized.embedPng(new Uint8Array(oversizedImage)),
+    { x: 0, y: 0, width: 2400, height: 3600 });
+  const oversizedSource = await oversized.save({ useObjectStreams: false });
+  evidence.oversized = [];
+  for (const dpi of [96, 72]) {
+    const name = `oversized-${dpi}-source.pdf`;
+    await fileInput.setInputFiles({ name, mimeType: "application/pdf", buffer: Buffer.from(oversizedSource) });
+    await page.waitForFunction((name) => document.querySelector(".document-tab.selected")?.textContent.includes(name), name);
+    await page.getByRole("button", { name: "Recognize scanned text", exact: true }).click();
+    const active = page.locator(".document-workspace:not([hidden])");
+    await active.getByRole("status").filter({ hasText: "Choose 96 DPI" }).waitFor();
+    assert.equal(await active.getByRole("button", { name: "Recognize text", exact: true }).isDisabled(), true);
+    const previousBegins = ocrBeginRequests;
+    await active.getByLabel("Pages to recognize").press("Enter");
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(ocrBeginRequests, previousBegins, "Keyboard submission must respect the visible resolution warning.");
+    await active.getByLabel("Scan resolution").selectOption("150");
+    await active.getByRole("status").filter({ hasText: "Choose 96 DPI" }).waitFor();
+    assert.equal(await active.getByRole("button", { name: "Recognize text", exact: true }).isDisabled(), true);
+    await active.getByLabel("Scan resolution").selectOption(String(dpi));
+    const first = staged.length;
+    await active.getByRole("button", { name: "Recognize text", exact: true }).click();
+    await active.getByRole("heading", { name: "Searchable text added", exact: true }).waitFor({ timeout: 180_000 });
+    assert.equal(staged.length, first + 1);
+    const result = staged[first];
+    assert.ok(result.words.some((word) => word.text === "OVERSIZED"));
+    assert.equal(capturedPlan.dpi, dpi);
+    assert.deepEqual([capturedPlan.pages[0].pixelWidth, capturedPlan.pages[0].pixelHeight],
+      dpi === 96 ? [3200, 4800] : [2400, 3600]);
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download PDF", exact: true }).click();
+    const savedPath = join(artifacts, `oversized-${dpi}-recognized.pdf`);
+    await (await download).saveAs(savedPath);
+    const saved = new Uint8Array(await readFile(savedPath));
+    await fileInput.setInputFiles(savedPath);
+    await page.waitForFunction((name) => document.querySelector(".document-tab.selected")?.textContent.includes(name),
+      `oversized-${dpi}-recognized.pdf`);
+    await page.locator(".document-workspace:not([hidden]) .textLayer").filter({ hasText: "OVERSIZED" }).first().waitFor();
+    const inspection = await page.evaluate(async ({ original, saved, words, dpi }) => {
+      const { loadPdf } = await import("/src/lib/pdf.ts");
+      const tasks = [loadPdf(new Uint8Array(original)), loadPdf(new Uint8Array(saved))];
+      const documents = await Promise.all(tasks.map((task) => task.promise));
+      try {
+        const pages = await Promise.all(documents.map((pdf) => pdf.getPage(1)));
+        const viewport = pages[1].getViewport({ scale: 1 });
+        const canvases = [];
+        for (const page of pages) {
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+          await page.render({ canvas, viewport, background: "#ffffff" }).promise;
+          canvases.push(canvas);
+        }
+        const pixels = canvases.map((canvas) => canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data);
+        let changedChannels = 0;
+        for (let index = 0; index < pixels[0].length; index++) if (pixels[0][index] !== pixels[1][index]) changedChannels++;
+        for (const canvas of canvases) canvas.width = canvas.height = 0;
+        const content = await pages[1].getTextContent();
+        const items = content.items.filter((item) => "str" in item && item.str.trim());
+        if (items.length !== words.length || items.some((item, index) => item.str !== words[index].text)) {
+          throw new Error("Lower-resolution saved OCR did not preserve each actual recognized word.");
+        }
+        const baselineErrors = items.map((item, index) => {
+          const actual = viewport.convertToViewportPoint(item.transform[4], item.transform[5]);
+          const expected = words[index].baseline.map((value) => value * 72 / dpi);
+          return Math.max(Math.abs(actual[0] - expected[0]), Math.abs(actual[1] - expected[1]));
+        });
+        return { changedChannels, words: items.length, view: pages[1].view,
+          maxBaselineError: Math.max(...baselineErrors) };
+      } finally { await Promise.all(tasks.map((task) => task.destroy())); }
+    }, { original: Array.from(oversizedSource), saved: Array.from(saved), words: result.words, dpi });
+    assert.equal(inspection.changedChannels, 0);
+    assert.deepEqual(inspection.view, [0, 0, 2400, 3600]);
+    assert.ok(inspection.maxBaselineError < 0.05);
+    evidence.oversized.push({ dpi, ...inspection });
+  }
   if (process.env.FOLIO_OCR_MULTILINGUAL || process.argv.includes("--multilingual")) {
     const fixtures = await page.evaluate(async (cases) => {
       const loaded = new Set();
@@ -616,6 +709,14 @@ try {
         await page.getByRole("button",{name:"All tools",exact:true}).click();
         await page.getByRole("button",{name:"Recognize scanned text",exact:true}).click();
       }
+      await active.getByLabel("Scan resolution").selectOption("300");
+      const warning = active.getByRole("status").filter({ hasText: "Choose 96 DPI" });
+      await warning.waitFor();
+      assert.equal(await active.getByRole("button", { name: "Recognize text", exact: true }).isDisabled(), true);
+      const warningBounds = await warning.boundingBox();
+      assert.ok(warningBounds.y >= 0 && warningBounds.y + warningBounds.height <= height);
+      await page.screenshot({path:join(artifacts,`ocr-${theme}-oversized-warning.png`)});
+      await active.getByLabel("Scan resolution").selectOption("96");
       await active.getByRole("button",{name:"Recognize text",exact:true}).focus();
       await page.evaluate(()=>{document.querySelector(".document-workspace:not([hidden]) .ocr-panel-content").scrollTop=0;});
       const metrics=await active.evaluate((workspace)=>{

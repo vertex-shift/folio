@@ -1132,7 +1132,13 @@ not produce a success-shaped partial PDF.
 
 Choose **All tools > Recognize scanned text**, enter pages such as `1, 3-5`,
 choose **300 DPI** (or **150 DPI** for lower memory use), then **Recognize
-text**. English remains the default; select the actual scan language and
+text**. Oversized scan PDFs can declare a physical page much larger than their
+embedded image. Explicit **96 DPI** and **72 DPI** options let these pages fit
+the same bounded recognition budget; the panel identifies an oversized selected
+page and recommends a supported lower resolution before work starts. Lower
+resolution can miss fine text, so review the result. No resolution is lowered
+silently, and original images and page dimensions are never resized.
+English remains the default; select the actual scan language and
 optionally up to two additional languages, with the first model taking priority.
 All fifteen models are included: **English, French, Spanish, German, Italian,
 Portuguese, Dutch, Greek, Russian, Arabic, Hindi, Simplified Chinese,
