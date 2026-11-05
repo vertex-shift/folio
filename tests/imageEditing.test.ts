@@ -6,7 +6,7 @@ import type { DocumentInfo } from "../src/lib/types.ts";
 
 const info: DocumentInfo = {
   id: 42, revision: 7, name: "Synthetic images.pdf", pageCount: 1, byteLength: 1000, dirty: false,
-  canUndo: false, canRedo: false, readOnlyReason: null, passwordProtected: false, copyAllowed: true, annotations: [],
+  canUndo: false, canRedo: false, readOnlyReason: null, passwordProtected: false, copyAllowed: true, annotations: [], pageLabels: null,
   permissions: { ownerAuthenticated: true, printAllowed: true, highQualityPrintAllowed: true, copyAllowed: true,
     modifyAllowed: true, annotateAllowed: true, fillFormsAllowed: true, assembleAllowed: true },
   pages: [{ key: "2:0", rotation: 90, geometry: { mediaBox: [-10, -20, 400, 600], bounds: [20, 30, 380, 570],

@@ -61,7 +61,7 @@ export default function OcrPanel(props: Props) {
           aria-describedby={rangeHelp} disabled={props.disabled}
           onChange={(event) => props.onRange(event.target.value)} />
       </label>
-      <p id={rangeHelp} className="ocr-help">Use page numbers or ranges, such as 1, 3-5. Up to 50 pages per job, processed in document order.</p>
+      <p id={rangeHelp} className="ocr-help">Use physical page positions or ranges, such as 1, 3-5, not PDF labels. Up to 50 pages per job, processed in document order.</p>
       {[0, 1, 2].map((index) => <label className="setting-field" key={index}>
         {index === 0 ? "OCR language" : `Additional language ${index}`}
         <select value={props.languages[index] ?? ""} disabled={props.disabled}

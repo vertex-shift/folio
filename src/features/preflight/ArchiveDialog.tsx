@@ -145,6 +145,7 @@ export default function ArchiveDialog(props: Props) {
           </div>
           {!all && <label className="setting-field">Ascending page numbers<input type="text" maxLength={4096} value={range}
             placeholder={`1-${Math.min(100, props.info.pageCount)}`} onChange={(event) => setRange(event.target.value)} /></label>}
+          {props.info.pageLabels && <p className="muted">Selected pages use physical positions, not PDF labels.</p>}
         </fieldset>
         <label className="setting-field">Resolution<select value={dpi} disabled={props.busy} onChange={(event) => {
           const value = Number(event.target.value); if (value === 150 || value === 300) setDpi(value);

@@ -619,6 +619,23 @@ mask geometry, paper size or opacity changes. Protected-source report export
 uses an explicit unencrypted-content acknowledgment; no implied document trust
 or whole-file verification.
 
+## Logical page labels
+
+All tools and Organize expose the same focused page-label editor. Native
+style/number/prefix controls define real metadata sections; its Apply/Cancel
+footer stays visible while sections scroll. Keep drafts in the document's
+aggregate writing authority and retain values after errors. Existing page
+content and printed stamps never change.
+
+Logical labels appear in the page rail, organization and navigation. A compact
+Label/Page selector separates exact label lookup from physical positions;
+the adjacent counter always shows the physical position. Do not silently pick
+one of duplicate labels or interpret a `#` prefix as a positional command.
+Use native input direction for Unicode labels, bounded ellipsis/tooltips for
+long labels, and explicit notices for unsupported label trees. Unlabelled
+documents retain their existing controls. No new motion, palette or raster
+assets are required.
+
 ## Motion
 
 **Thesis:** the selected work surface travels; the document remains still.

@@ -71,6 +71,7 @@ export default function AuthoringPanel(props: Props) {
           {draft.scope === "range" && <label className="authoring-field">Pages, in this order<input type="text"
             aria-label="Authoring page range" value={draft.range} maxLength={4000} placeholder="1-3, 5"
             onChange={(event) => change({ ...draft, range: event.target.value })} /></label>}
+          <p className="authoring-note">Page scopes and ranges use physical positions, not PDF labels.</p>
         </div>}
         {props.currentPage !== draft.page && <button className="text-button authoring-retarget"
           onClick={() => change({ ...draft, page: props.currentPage })}>Use visible page {props.currentPage + 1}</button>}

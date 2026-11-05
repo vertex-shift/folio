@@ -15,6 +15,9 @@ import {
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { version as appVersion } from "../package.json";
 import Dialog from "./components/Dialog";
+import PageLabelsDialog from "./components/PageLabelsDialog";
+import { createPageLabelDraft, pageLabelChanges, pageLabelsPending, pageLabelText, pageDescription, resolvePageInput } from "./lib/pageLabels";
+import type { PageLabelDraft } from "./lib/pageLabels";
 import PasswordDialog from "./components/PasswordDialog";
 import SelectionIndicator from "./components/SelectionIndicator";
 import IconButton from "./components/IconButton";
@@ -93,6 +96,7 @@ const SignaturesPanel = lazy(() => import("./features/signatures/SignaturesPanel
 type Action = { type: "open" | "example" | "close" }
   | { type: "create"; width: number; height: number };
 type Modal = { type: "shortcuts" | "about" }
+  | { type: "page-labels"; draft: PageLabelDraft }
   | { type: "password"; challenge: PasswordChallenge }
   | { type: "unsaved"; action: Action }
   | { type: "delete"; page: number }
@@ -182,6 +186,7 @@ export default function DocumentWorkspace(props: Props) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(0);
   const [pageInput, setPageInput] = useState("1");
+  const [usePageLabels, setUsePageLabels] = useState(true);
   const [mode, setMode] = useState<Mode>(props.startWriting ? "write" : "read");
   const [panel, setPanel] = useState<Panel>(props.startWriting ? "write" : "tools");
   const [panelOpen, setPanelOpen] = useState(window.innerWidth >= 1100);
@@ -222,7 +227,7 @@ export default function DocumentWorkspace(props: Props) {
   const [redactionProgress, setRedactionProgress] = useState<{
     page: number; count: number; stage: "rendering" | "saving"; canceling: boolean;
   } | null>(null);
-  const pendingWriting = modal?.type === "edit-existing"
+  const pendingWriting = modal?.type === "page-labels" ? pageLabelsPending(modal.draft) : modal?.type === "edit-existing"
     ? modal.text !== modal.expected || modal.font !== "original"
     : Boolean(modal && "text" in modal && modal.text.trim());
   const writingDraftRef = useRef(pendingWriting || pendingMetadata || gestureDraft);
@@ -297,6 +302,10 @@ export default function DocumentWorkspace(props: Props) {
   const utilityPanel = panelOpen && ["properties", "attachments", "bookmarks"].includes(panel);
   const redactionIntent = tool === "redact" || redactions.length > 0;
   const saveLabel = redactionIntent ? "Export redacted copy" : native ? "Save a copy" : "Download PDF";
+  const availableLabels = info?.pageLabels?.labels ?? null;
+  const customNavigationLabels = Boolean(availableLabels?.some((label, index) => label && label !== String(index + 1)));
+  const labelNavigation = usePageLabels && customNavigationLabels;
+  const displayedPage = labelNavigation ? availableLabels?.[page] ?? "" : String(page + 1);
 
   const notifyError = useCallback((message: string) => setError(message), []);
   const onScale = useCallback((scale: number) => setActualScale(scale), []);
@@ -561,6 +570,33 @@ export default function DocumentWorkspace(props: Props) {
     setTool("select");
     setMode("write");
     showPanel("ocr");
+  }
+
+  function showPageLabels() {
+    const current = infoRef.current;
+    if (!current || busyRef.current) { setError("Open a PDF and finish the current action before editing page labels."); return; }
+    if (hasPendingContentEdits() || redactionsRef.current.length) {
+      setError("Apply or discard pending document edits before changing page labels.");
+      return;
+    }
+    try {
+      setModal({ type: "page-labels", draft: createPageLabelDraft(current) });
+    } catch (error) { setError(errorMessage(error)); }
+  }
+
+  function applyPageLabels(reset = false) {
+    const current = infoRef.current;
+    if (!current || modal?.type !== "page-labels") { setError("The page-label draft is no longer available."); return; }
+    try {
+      if (current.id !== modal.draft.documentId || current.revision !== modal.draft.revision) {
+        throw new Error("The PDF changed while these labels were edited. Your draft is retained; review the current document.");
+      }
+      const ranges = reset ? [] : pageLabelChanges(modal.draft, current);
+      edit({ type: "page_labels", ranges }, "Updating PDF page labels...", () => {
+        setModal(null);
+        setToast("Page labels updated. Undo is available; save a copy to keep them.");
+      });
+    } catch (error) { setError(errorMessage(error)); }
   }
 
   function startOcr() {
@@ -1607,7 +1643,7 @@ export default function DocumentWorkspace(props: Props) {
     return () => observer.disconnect();
   }, [mode, props.active]);
 
-  useEffect(() => setPageInput(String(page + 1)), [page]);
+  useEffect(() => setPageInput(displayedPage), [displayedPage]);
 
   useEffect(() => {
     if (!info) return;
@@ -1761,6 +1797,7 @@ export default function DocumentWorkspace(props: Props) {
 
     {info?.readOnlyReason && <div className="readonly-banner" role="status"><LockKeyhole size={15} />{info.readOnlyReason}</div>}
     {info?.passwordProtected && !info.readOnlyReason && <div className="protected-banner" role="status"><LockKeyhole size={15} />Password protected. Ordinary PDF saves keep this document's passwords and permissions.</div>}
+    {info?.pageLabels?.issue && <div className="readonly-banner" role="status"><Info size={15} />{info.pageLabels.issue}</div>}
     {redactions.length > 0 && <div className="readonly-banner redaction-source-banner" role="status"><Eraser size={15} />
       Original PDF: {redactions.length} pending {redactions.length === 1 ? "redaction" : "redactions"}. Only exported copies are redacted.</div>}
     {forms.count > 0 && <div className="protected-banner form-draft-banner" role="status"><ClipboardList size={15} />
@@ -1809,6 +1846,9 @@ export default function DocumentWorkspace(props: Props) {
             </button>
             <button disabled={disabled} onClick={() => showPanel("form-designer")}>
               <span className="tool-icon blue"><ClipboardList size={19} /></span><span>Design form fields</span><ChevronRight size={14} className="list-arrow" />
+            </button>
+            <button disabled={managementEditDisabled} onClick={showPageLabels}>
+              <span className="tool-icon blue"><Hash size={19} /></span><span>PDF page labels</span><ChevronRight size={14} className="list-arrow" />
             </button>
             <button className={tool === "redact" ? "chosen" : ""} disabled={redactDisabled} onClick={() => chooseTool("redact")}>
               <span className="tool-icon neutral"><Eraser size={19} /></span><span>Redact a PDF</span><ChevronRight size={14} className="list-arrow" />
@@ -2011,7 +2051,7 @@ export default function DocumentWorkspace(props: Props) {
                 {search.noText && <button className="button secondary" disabled={editDisabled || info?.copyAllowed === false} onClick={showOcr}>Recognize scanned text</button>}</div>}
             {search.results.map((result, index) =>
               <button key={`${result.page}-${result.index}`} className={`search-result ${activeResult === index ? "selected" : ""}`} onClick={() => chooseResult(index)}>
-                <span>Page {result.page + 1}</span><p>{result.before}<mark>{result.match}</mark>{result.after}</p>
+                <span>{pageDescription(info, result.page).replace(/^page /, "Page ")}</span><p>{result.before}<mark>{result.match}</mark>{result.after}</p>
               </button>)}
           </div>
         </>}
@@ -2034,7 +2074,7 @@ export default function DocumentWorkspace(props: Props) {
                 <button className="comment-content" onClick={() => selectAnnotation(annotation.id)}>
                   <span className="comment-kind">{{ highlight: "Highlighted text", note: "Note", text: "Placed text", ink: "Pen drawing",
                     image: "Inserted image", watermark: "Text watermark", page_number: "Page number" }[annotation.kind]}</span>
-                  <p>{annotation.text || "Highlighted passage"}</p><span className="comment-page">Page {annotation.page + 1}<ChevronRight size={12} /></span>
+                  <p>{annotation.text || "Highlighted passage"}</p><span className="comment-page">{pageDescription(info, annotation.page).replace(/^page /, "Page ")}<ChevronRight size={12} /></span>
                 </button>
               </article>)}
           </div>
@@ -2053,6 +2093,7 @@ export default function DocumentWorkspace(props: Props) {
             <button className="button secondary" disabled={editDisabled} onClick={() => edit({ type: "duplicate", page }, "Duplicating page...", () => setPage(page + 1))}><Copy size={15} />Duplicate</button>
             <button className="button secondary" disabled={editDisabled} onClick={() => setModal({ type: "extract", range: String(page + 1) })}><FileOutput size={15} />Extract pages</button>
             <button className="button secondary" disabled={authoringDisabled} onClick={() => authoring.choose("crop")}><Crop size={15} />Crop pages</button>
+            <button className="button secondary" disabled={managementEditDisabled} onClick={showPageLabels}><Hash size={15} />Page labels</button>
           </div>
           <div className="organize-toolbar"><span><strong>{info.pageCount}</strong> {info.pageCount === 1 ? "page" : "pages"}</span>
             <div className="organize-selection"><span>Page {page + 1} selected</span>
@@ -2079,9 +2120,9 @@ export default function DocumentWorkspace(props: Props) {
                   if (draggedPage !== index) edit({ type: "move", from: draggedPage, to: index }, "Reordering pages...");
                   setDraggedPage(null); setOverPage(null);
                 }}>
-                <button className="organize-page" aria-label={`Select page ${index + 1}`} aria-pressed={page === index} onClick={() => setPage(index)} onDoubleClick={() => changeMode("read")}>
+                <button className="organize-page" aria-label={`Select ${pageDescription(info, index)}`} aria-pressed={page === index} onClick={() => setPage(index)} onDoubleClick={() => changeMode("read")}>
                   {props.active && <Thumbnail pdf={pdf} page={index} width={150} />}
-                  <span className="organize-page-label"><GripVertical size={14} />Page {index + 1}{page === index ? <span className="selection-check"><Check size={11} /></span> : <span />}</span>
+                  <span className="organize-page-label"><GripVertical size={14} /><span className="page-label-text" dir="auto" title={pageDescription(info, index)}>{pageLabelText(info, index)}</span>{page === index ? <span className="selection-check"><Check size={11} /></span> : <span />}</span>
                 </button>
               </div>)}
           </div>
@@ -2167,17 +2208,29 @@ export default function DocumentWorkspace(props: Props) {
           </div>}
           {info && <div className="view-controls" role="toolbar" aria-label="Page and zoom controls">
             <IconButton label="Previous page" disabled={disabled || page === 0} onClick={() => changePage(-1)}><ChevronLeft size={17} /></IconButton>
-            <div className="page-number"><input aria-label="Page number" value={pageInput} inputMode="numeric" disabled={disabled}
+            <div className={`page-number${customNavigationLabels ? " has-labels" : ""}`}>
+              {customNavigationLabels && <select className="page-navigation-mode" aria-label="Page navigation mode"
+                value={usePageLabels ? "label" : "position"} disabled={disabled}
+                onChange={(event) => setUsePageLabels(event.target.value === "label")}>
+                <option value="label">Label</option><option value="position">Page</option>
+              </select>}
+              <input aria-label={labelNavigation ? "Page label" : "Page number"} value={pageInput}
+              inputMode={labelNavigation ? "text" : "numeric"} dir="auto" maxLength={1024} disabled={disabled}
+              placeholder={labelNavigation ? "Unlabeled" : undefined}
+              title={labelNavigation ? "Exact PDF label; choose Page mode for physical positions." : "Physical page position"}
               onChange={(event) => setPageInput(event.target.value)}
               onBlur={(event) => {
-                const next = pageFromInput(event.currentTarget.value, info.pageCount);
-                if (next === null) { setPageInput(String(page + 1)); setToast(`Enter a page from 1 to ${info.pageCount}.`); }
-                else { setPage(next); setPageInput(String(next + 1)); }
+                if (event.currentTarget.value === displayedPage) return;
+                try {
+                  const next = resolvePageInput(event.currentTarget.value, info.pageCount, labelNavigation ? availableLabels : null);
+                  setPage(next);
+                  setPageInput(labelNavigation ? availableLabels?.[next] ?? "" : String(next + 1));
+                } catch (error) { setPageInput(displayedPage); setToast(errorMessage(error)); }
               }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") event.currentTarget.blur();
-                if (event.key === "Escape") { event.currentTarget.value = String(page + 1); setPageInput(String(page + 1)); event.currentTarget.blur(); }
-              }} /><span>/ {info.pageCount}</span></div>
+                if (event.key === "Escape") { event.currentTarget.value = displayedPage; setPageInput(displayedPage); event.currentTarget.blur(); }
+              }} /><span>{customNavigationLabels ? `${page + 1} / ${info.pageCount}` : `/ ${info.pageCount}`}</span></div>
             <IconButton label="Next page" disabled={disabled || page === info.pageCount - 1} onClick={() => changePage(1)}><ChevronRight size={17} /></IconButton>
             <span className="toolbar-divider" />
             <IconButton label="Zoom out" disabled={disabled} onClick={() => changeZoom(1 / 1.2)}><Minus size={16} /></IconButton>
@@ -2207,9 +2260,9 @@ export default function DocumentWorkspace(props: Props) {
         <div className="thumbnail-list">
           {info.pages.map((item, index) =>
             <button className={`page-thumb ${page === index ? "selected" : ""}`} key={item.key}
-              aria-label={`Go to page ${index + 1}`} aria-current={page === index ? "page" : undefined}
+              aria-label={`Go to ${pageDescription(info, index)}`} aria-current={page === index ? "page" : undefined}
               disabled={Boolean(busy)} onClick={() => setPage(index)}>
-              <Thumbnail pdf={pdf} page={index} /><span className="thumbnail-number">{index + 1}</span>
+              <Thumbnail pdf={pdf} page={index} /><span className="thumbnail-number" dir="auto" title={pageDescription(info, index)}>{pageLabelText(info, index)}</span>
             </button>)}
         </div>
         <button className="rail-organize" disabled={disabled || semanticWork || redactions.length > 0 || forms.count > 0 || pendingDesign || images.pending || paragraphs.pending} onClick={() => changeMode("organize")}><LayoutGrid size={14} />Organize pages</button>
@@ -2238,6 +2291,10 @@ export default function DocumentWorkspace(props: Props) {
     {error && !modal && !outputMode && !archiveOpen && !utilityPanel && !(panelOpen && (panel === "accessibility" || panel === "forms" || panel === "form-designer" || panel === "image-edit" || panel === "edit" && textEditScope === "paragraph" || panel === "authoring" && authoring.draft)) && <div className="notification error-notification" role="alert"><span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss error" onClick={() => setError(null)}><X size={16} /></IconButton></div>}
     {toast && !(panelOpen && (panel === "accessibility" || panel === "forms" || panel === "form-designer" || panel === "image-edit" || panel === "edit" && textEditScope === "paragraph" || panel === "authoring" && authoring.draft)) && <div className="notification toast" role="status"><Check size={16} /><span>{toast}</span><IconButton label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></IconButton></div>}
 
+    {modal?.type === "page-labels" && info && <PageLabelsDialog draft={modal.draft} pageCount={info.pageCount}
+      issue={info.pageLabels?.issue ?? null} busy={Boolean(busy)} error={error}
+      onChange={(draft) => { setModal({ type: "page-labels", draft }); setError(null); }}
+      onApply={() => applyPageLabels()} onReset={() => applyPageLabels(true)} onClose={() => setModal(null)} />}
     {modal?.type === "protection-copy" && info && <ProtectionCopyDialog info={info} busy={Boolean(busy)} error={error}
       onClose={() => setModal(null)} onSubmit={exportProtectionCopy} />}
 
@@ -2261,7 +2318,7 @@ export default function DocumentWorkspace(props: Props) {
         }}><option value="">Document root</option>{modal.entries.map((entry) => <option key={entry.id} value={entry.id}>{"— ".repeat(Math.min(entry.depth, 4))}{entry.title}</option>)}</select></label>
         <label className="utility-field">Page<input type="text" inputMode="numeric" value={modal.page} disabled={Boolean(busy)} onChange={(event) => setModal({ ...modal, page: event.target.value })} /></label>
       </div>
-      <p>The bookmark is appended to this group and points to a real PDF page. Use the bookmark controls to move or nest it afterward.</p>
+      <p>The bookmark is appended to this group and points to a real PDF page. The Page field uses a physical position, not a PDF label. Use the bookmark controls to move or nest it afterward.</p>
     </Dialog>}
 
     {modal?.type === "bookmark-rename" && <Dialog title="Rename bookmark" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}
@@ -2474,7 +2531,7 @@ export default function DocumentWorkspace(props: Props) {
         }}><FileOutput size={15} />Export pages</button></>}>
       <p>Create a separate PDF in the order you enter. The working document will not be changed.</p>
       <label className="setting-field">Pages<input data-autofocus type="text" value={modal.range} placeholder="1-3, 5" onChange={(event) => setModal({ ...modal, range: event.target.value })} /></label>
-      <p className="muted">Use page numbers or ranges, such as 1-3, 5. This is not secure redaction or metadata sanitization.</p>
+      <p className="muted">Use physical page positions or ranges, such as 1-3, 5, not PDF labels. This is not secure redaction or metadata sanitization.</p>
     </Dialog>}
 
     {modal?.type === "external" && <Dialog title="Open this link?" error={error} busy={Boolean(busy)} onClose={() => setModal(null)}

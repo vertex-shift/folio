@@ -482,7 +482,11 @@ fn create_pdf(
         }
     }
     check_canceled(cancel)?;
-    rebuild_page_tree(&mut document, &pages)?;
+    rebuild_page_tree(
+        &mut document,
+        &pages,
+        crate::page_labels::Snapshot::default(),
+    )?;
     document.compress();
     let mut bytes = Vec::new();
     document.save_to(&mut bytes)?;

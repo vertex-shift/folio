@@ -44,6 +44,7 @@ pub(crate) fn reject_forms(document: &Document) -> Result<()> {
 
 pub(crate) fn duplicate_page(document: &mut Document, index: usize) -> Result<()> {
     reject_forms(document)?;
+    let mut labels = crate::page_labels::Snapshot::capture(document)?;
     let id = page_id(document, index)?;
     let mut page = document.get_dictionary(id)?.clone();
     for key in [b"Resources".as_slice(), b"MediaBox", b"CropBox", b"Rotate"] {
@@ -67,6 +68,7 @@ pub(crate) fn duplicate_page(document: &mut Document, index: usize) -> Result<()
     }
     page.remove(b"Annots");
     let duplicate = document.add_object(page);
+    labels.duplicate(id, duplicate);
     let mut entries = Vec::new();
     for mut annotation in annotations {
         annotation.set("P", duplicate);
@@ -83,12 +85,14 @@ pub(crate) fn duplicate_page(document: &mut Document, index: usize) -> Result<()
     }
     let mut order: Vec<_> = document.get_pages().into_values().collect();
     order.insert(index + 1, duplicate);
-    rebuild_page_tree(document, &order)
+    rebuild_page_tree(document, &order, labels)
 }
 
 pub(crate) fn import_pages(document: &mut Document, mut donor: Document, at: usize) -> Result<()> {
     reject_forms(document)?;
     reject_forms(&donor)?;
+    let mut labels = crate::page_labels::Snapshot::capture(document)?;
+    let donor_labels = crate::page_labels::Snapshot::capture(&donor)?;
     if donor.catalog()?.has(b"OCProperties") {
         return Err(invalid(
             "Importing a PDF with optional-content layers is not supported yet. Use a flattened copy.",
@@ -116,11 +120,12 @@ pub(crate) fn import_pages(document: &mut Document, mut donor: Document, at: usi
             .checked_add(1)
             .ok_or_else(|| invalid("This PDF has too many objects."))?,
     );
-    let incoming: Vec<_> = donor.get_pages().into_values().collect();
+    let renumbered: Vec<_> = donor.get_pages().into_values().collect();
+    labels.import(donor_labels, &incoming, &renumbered)?;
     document.max_id = donor.max_id;
     document.objects.extend(donor.objects);
-    order.splice(at..at, incoming);
-    rebuild_page_tree(document, &order)
+    order.splice(at..at, renumbered);
+    rebuild_page_tree(document, &order, labels)
 }
 
 pub(crate) fn extract_pages(document: &Document, pages: &[usize]) -> Result<Vec<u8>> {
@@ -134,6 +139,7 @@ pub(crate) fn extract_pages(document: &Document, pages: &[usize]) -> Result<Vec<
         return Err(invalid("Select valid, non-repeating pages to extract."));
     }
     let mut extracted = document.clone();
+    let labels = crate::page_labels::Snapshot::capture(document)?;
     let order: Vec<_> = pages.iter().map(|index| all[*index]).collect();
     let kept: HashSet<_> = order.iter().copied().collect();
     for id in &all {
@@ -143,14 +149,13 @@ pub(crate) fn extract_pages(document: &Document, pages: &[usize]) -> Result<Vec<
             }
         }
     }
-    rebuild_page_tree(&mut extracted, &order)?;
+    rebuild_page_tree(&mut extracted, &order, labels)?;
     // Page destinations and structural metadata must not keep discarded content reachable.
     for id in &all {
         if !kept.contains(id) {
             extracted.delete_object(*id);
         }
     }
-    extracted.catalog_mut()?.remove(b"PageLabels");
     extracted.prune_objects();
     let mut bytes = Vec::new();
     extracted.save_to(&mut bytes)?;

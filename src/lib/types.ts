@@ -1,5 +1,6 @@
 import type { NumberPosition, PageGeometry } from "./authoring.ts";
 import type { MetadataFields, ProtectionAccess } from "./documentUtilitiesModel";
+import type { PageLabelRange, PageLabelsInfo } from "./pageLabels";
 
 export type Quad = [number, number, number, number, number, number, number, number];
 export type Point = [number, number];
@@ -61,6 +62,7 @@ export interface DocumentInfo {
   pages: { key: string; rotation: number; geometry: PageGeometry }[];
   permissions: ProtectionAccess;
   annotations: AnnotationInfo[];
+  pageLabels: PageLabelsInfo | null;
 }
 
 export interface PasswordChallenge {
@@ -96,6 +98,7 @@ export interface ExistingTextRun {
 export type ReplacementFont = "original" | "noto";
 
 export type Edit =
+  | { type: "page_labels"; ranges: PageLabelRange[] }
   | { type: "metadata"; fields: MetadataFields }
   | { type: "bookmark_create"; parent: string | null; at: number; title: string; page: number }
   | { type: "bookmark_rename"; id: string; title: string }

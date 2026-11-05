@@ -121,6 +121,7 @@ lack-of-notarization notices.
 | Read | Continuous vertical scrolling, real PDF rendering, selectable/copyable text, lazy thumbnails, synchronized page navigation, zoom, fit page/width, hand panning |
 | Accessibility | Inspect supported actual tag/order/Alt/Lang bindings; explicit reviewed headings, paragraphs, figure alternatives/decorative Artifacts and separate protected-as-source tagged copies; semantic HTML reading without duplicate canvas text |
 | Navigate | Create, rename, nest, reorder, and delete real PDF bookmarks; internal links; confirmed external web/email links |
+| Page labels | Read and edit PDF numbering sections, Roman/decimal/repeated-letter labels and Unicode prefixes; preserve labels through page operations and distinguish labels from physical positions |
 | Document properties | Inspect/edit title, author, subject, and keywords; synchronize supported existing XMP with classic Info metadata |
 | Attachments | Inspect, embed, remove, and explicitly save bounded document-level embedded files without opening them |
 | Protection copies | Separate AES-256 revision-6 protected/reprotected or unprotected copies, with owner authorization and explicit permissions |
@@ -1336,6 +1337,63 @@ as `3, 1`. Invalid ranges and repeated pages are rejected. Export does not
 alter the document, its saved state, or its undo history. Native extraction
 refuses to overwrite the active PDF. Extraction is not sanitization.
 
+## PDF page labels
+
+Choose **All tools > PDF page labels**, or **Organize > Page labels**, to number
+front matter and sections without drawing numbers on the page. A section starts
+at a **physical page position**, selects decimal, upper/lower Roman,
+upper/lower letters or prefix-only labels, and sets its prefix and starting
+number. Keep the first section at page 1; later starts must be distinct and
+ascending. Standard PDF letter numbering is `A…Z, AA, BB…ZZ, AAA`, not spreadsheet
+column numbering. Prefixes preserve Unicode. Apply makes one undoable metadata
+change; save a copy to keep it. Cancel discards the draft, while validation
+failures retain it. Label drafts participate in the existing aggregate
+save/export/OCR/comparison/signing protection.
+
+Reading, thumbnails, organization, search results and comments show the
+document's logical labels. When labels differ from ordinary physical numbers,
+the navigation control offers **Label** and **Page** modes. Labels match exactly
+and are case-sensitive; Page mode always uses positions 1 through the page count.
+The adjacent counter remains the physical position. Numeric and `#` prefixes
+are literal labels in Label mode, never implicit shortcuts to another page.
+Duplicate labels are allowed by PDF; Folio reports the ambiguity rather than
+guessing a target. Page lists use physical positions for empty labels; select
+Page mode to navigate those pages.
+Export, extraction, OCR and other page ranges still use physical positions.
+
+Reordering and deleting retain existing labels by actual page identity.
+Extraction preserves the selected pages' labels in the requested order rather
+than dropping them. Duplication retains the copied label, and import carries
+supported donor labels. New pages without custom labels use their combined
+physical positions. Unlabelled documents keep the previous ordinary numbering
+behavior. These labels do not change printed page-number stamps or PDF pixels.
+
+Supported number trees are bounded to 10,000 pages/entries, 2,048 nodes and 32
+nested levels. The editor accepts up to 256 numbering sections, 512 UTF-8 bytes per
+single-line prefix, 1 KiB per expanded label and 1 MiB of label text, with
+positive 32-bit starting numbers. Malformed, cyclic, unsupported or excessive
+trees produce an explicit reading notice and physical navigation; structural
+page operations refuse to discard their unknown meaning. Applying a new valid
+definition or **Reset to page positions** explicitly replaces/removes the old
+label metadata. This is not secure metadata erasure. Signed and generated
+read-only copies remain read-only; protected edits and saved/extracted copies
+retain their passwords and permissions. As with document-management edits,
+label authoring requires the 64 MiB undo-snapshot budget.
+
+The existing `edit_document` / `POST /edit` action uses
+`{type:"page_labels",ranges:[{page:0,style:"roman_lower",prefix:"",start:1},...]}`;
+API page starts are zero-based. `DocumentInfo.pageLabels` is null only when no
+label metadata exists; otherwise it contains `labels`, `ranges` and `issue`,
+even for an explicit ordinary decimal sequence. An unsupported tree has null
+labels and an explicit issue rather than a success-shaped guessed result.
+
+`npm run test:page-labels` exercises actual UI authoring/navigation, saved
+PDF.js labels and pixels, page operations and protected save/reopen with
+synthetic documents. Set `FOLIO_PAGE_LABELS_BROWSER` to an installed Chromium
+executable and `FOLIO_PAGE_LABELS_EVIDENCE` for owned artifacts. Its loopback
+helpers close after the check; `FOLIO_PAGE_LABELS_SKIP_BUILD=1` reuses a compatible
+preview executable. No private input document is needed.
+
 ## Page authoring
 
 Open **Page authoring** from All tools or the writing panel. It groups **Image**,
@@ -1738,7 +1796,8 @@ the default builds the current Rust preview first.
 - Ordinary edits use a full PDF rewrite; only separate signature-copy exports
   use the narrow append-only incremental workflow. Work on copies.
   Complex portfolios, tagged-PDF structure, uncommon annotations, and advanced
-  page-label/destination semantics need broader compatibility work.
+  destination semantics and page-label trees outside the supported bounds need
+  broader compatibility work.
 - Maximum input/edited file size: **128 MiB**. Search displays the first
   **500 matches** and explicitly indicates when more exist.
 - Undo keeps up to **20 snapshots within a 64 MiB history budget**. Older
