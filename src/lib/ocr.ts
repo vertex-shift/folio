@@ -2,16 +2,43 @@ import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import type { OcrPagePlan, OcrPageResult, OcrPlan, OcrProgress, OcrWord } from "./ocrTypes.ts";
 import { LocalOcrWorker } from "./ocrWorker.ts";
 import { selectedOcrLanguages } from "./ocrLanguages.ts";
+import { OCR_RESOLUTIONS } from "./ocrTypes.ts";
+import type { OcrDpi } from "./ocrTypes.ts";
+import type { DocumentInfo } from "./types.ts";
 export { LocalOcrWorker } from "./ocrWorker.ts";
 
 export const MAX_OCR_PAGES = 50;
 export const MAX_OCR_BANDS = 128;
+const MAX_OCR_PIXELS = 24_000_000;
+const MAX_OCR_DIMENSION = 16_384;
+
+export function ocrResolutionIssue(pages: DocumentInfo["pages"], selection: readonly number[], dpi: OcrDpi): string | null {
+  const fits = (index: number, resolution: OcrDpi) => {
+    const geometry = pages[index]?.geometry;
+    if (!geometry || !geometry.bounds.every(Number.isFinite) || !Number.isFinite(geometry.userUnit)
+      || geometry.userUnit <= 0 || ![0, 90, 180, 270].includes(geometry.rotation)) {
+      throw new Error("A selected page has invalid OCR geometry.");
+    }
+    const scale = (resolution / 72) * geometry.userUnit;
+    const width = Math.ceil((geometry.bounds[2] - geometry.bounds[0]) * scale);
+    const height = Math.ceil((geometry.bounds[3] - geometry.bounds[1]) * scale);
+    if (width <= 0 || height <= 0) throw new Error("A selected page has invalid OCR bounds.");
+    return width <= MAX_OCR_DIMENSION && height <= MAX_OCR_DIMENSION && width * height <= MAX_OCR_PIXELS;
+  };
+  const oversized = selection.find((index) => !fits(index, dpi));
+  if (oversized === undefined) return null;
+  const lower = OCR_RESOLUTIONS.find((resolution) => resolution < dpi && selection.every((index) => fits(index, resolution)));
+  return `Page ${oversized + 1} exceeds the 24-megapixel or 16,384-pixel OCR limit at ${dpi} DPI. ${
+    lower ? `Choose ${lower} DPI for this page range.` : "Even 72 DPI exceeds the limit; use a smaller source page."
+  } The original PDF is not resized or resampled.`;
+}
 
 export async function horizontalOcrBands(pixels: Uint8ClampedArray, width: number, height: number, dpi: number,
   signal: AbortSignal): Promise<{ top: number; height: number }[]> {
   signal.throwIfAborted();
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0
-    || width > 16_384 || height > 16_384 || width * height > 24_000_000 || pixels.length !== width * height * 4 || ![150, 300].includes(dpi)) {
+    || width > MAX_OCR_DIMENSION || height > MAX_OCR_DIMENSION || width * height > MAX_OCR_PIXELS
+    || pixels.length !== width * height * 4 || !OCR_RESOLUTIONS.some((value) => value === dpi)) {
     throw new Error("The single-column OCR image has invalid or excessive geometry.");
   }
   const gap = Math.max(3, Math.round(dpi / 40));
@@ -171,6 +198,7 @@ export async function recognizeOcrPages(
 ): Promise<void> {
   const pages = plan.pages.filter((page) => !page.skipped);
   const languages = selectedOcrLanguages(plan.languages);
+  if (!OCR_RESOLUTIONS.includes(plan.dpi)) throw new Error("The OCR plan has an unsupported scan resolution.");
   if (plan.layout !== "horizontal_print") throw new Error("Offline OCR supports horizontal printed text only.");
   if (plan.segmentation !== "auto" && plan.segmentation !== "single_column") throw new Error("The OCR plan has an unsupported text layout.");
   if (plan.pages.length > MAX_OCR_PAGES || !plan.pages.length || plan.pages.some((page) => page.page >= pdf.numPages)) {
@@ -238,7 +266,7 @@ export async function recognizeOcrPages(
               image.toBlob((value) => value ? resolve(value) : reject(new Error("The OCR scan could not be encoded. No text was added.")), "image/png");
             }), controller.signal);
             pngBytes += blob.size;
-            if (pngBytes > 64 * 1024 * 1024) throw new Error("The rendered OCR page inputs exceed 64 MiB. Try 150 DPI; no text was added.");
+            if (pngBytes > 64 * 1024 * 1024) throw new Error("The rendered OCR page inputs exceed 64 MiB. Choose a lower scan resolution; no text was added.");
             controller.signal.throwIfAborted();
             progress({ stage: "recognizing", page: currentPage, completed, total: pages.length, fraction: bandIndex / bandCount });
             const output = await worker.recognize(await awaitOcrStep(blob.arrayBuffer(), controller.signal));

@@ -15,6 +15,7 @@
 .ocr-catalog li + li { margin-top: 8px; }
 .ocr-warning { color: var(--warning-ink); background: var(--warning-bg); border: 1px solid var(--warning-border); border-radius: var(--radius-control); padding: 10px; margin-top: 12px; }
 .ocr-actions { flex-shrink: 0; padding: 12px 20px; border-top: 1px solid var(--line); background: var(--surface); }
+.ocr-actions .ocr-warning { margin: 0 0 10px; font-size: 11px; line-height: 1.7; }
 .ocr-start { width: 100%; }
 .ocr-outcome { padding-block: 16px; border-block: 1px solid var(--line); margin-bottom: 20px; overflow-wrap: anywhere; }
 .ocr-outcome h3 { color: var(--ink); font-size: 13px; font-weight: 600; margin-bottom: 8px; }

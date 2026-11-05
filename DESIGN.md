@@ -395,7 +395,11 @@ The tool panel is 226px wide; search/comments use 274px. The thumbnail
 rail is 157px, and the utility rail is 43px.
 
 The document scroll area owns page overflow, including at high zoom.
-The OCR panel retains the document-first Operate layout. Native selects choose
+The OCR panel retains the document-first Operate layout. Oversized selected pages
+show their resolution warning beside the fixed recognition action, not below the
+scroll fold. Offer explicit 72/96 DPI alongside 150/300, recommend a safe choice
+without silently reducing quality, and keep original page/image geometry intact.
+Native selects choose
 one primary and up to two additional bundled models, with selected scripts and
 directions visible and the full catalog in a disclosure. Model checking,
 unsupported language/layout, force duplication and no-text outcomes stay

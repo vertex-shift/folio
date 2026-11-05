@@ -1963,7 +1963,7 @@ export default function DocumentWorkspace(props: Props) {
           onClear={() => { setError(null); setModal({ type: "redaction-clear" }); }} onExport={reviewRedactions}
           onDraw={() => setPanelOpen(false)} />}
         {panel === "ocr" && <OcrPanel range={ocrRange} dpi={ocrDpi} policy={ocrPolicy} languages={ocrLanguages} segmentation={ocrSegmentation}
-          pageCount={info?.pageCount ?? 0} disabled={disabled || !pdf}
+          pages={info?.pages ?? []} disabled={disabled || !pdf}
           blockedReason={info?.readOnlyReason ?? (info?.copyAllowed === false ? "This PDF does not allow copying. Reopen it with the owner password."
             : pendingDraft ? "Finish or cancel writing/form drafts and clear pending redaction marks before using OCR." : null)}
           outcome={ocrOutcome} onRange={setOcrRange} onDpi={setOcrDpi} onPolicy={setOcrPolicy}
