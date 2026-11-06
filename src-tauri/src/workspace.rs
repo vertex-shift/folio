@@ -31,6 +31,9 @@ pub struct Workspace {
     pub(crate) accessibility: crate::accessibility::AccessibilityJobs,
     technical_epochs: BTreeMap<u64, u64>,
     signature_trust: crate::signatures::TrustStore,
+    recovery: Option<crate::recovery::Store>,
+    recovery_error: Option<String>,
+    recovery_stopped: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -92,6 +95,124 @@ impl OpenOutcome {
 }
 
 impl Workspace {
+    pub fn configure_recovery(&mut self, root: PathBuf) {
+        match crate::recovery::Store::open(root) {
+            Ok(store) => self.recovery = Some(store),
+            Err(error) => {
+                self.recovery_error = Some(error.to_string());
+                eprintln!("Local recovery unavailable: {error}");
+            }
+        }
+    }
+
+    fn recovery_eligible(&self, session: &Session) -> bool {
+        session.is_dirty() && session.recovery_allowed() && !self.recovery_pending(session)
+    }
+
+    fn recovery_pending(&self, session: &Session) -> bool {
+        self.ensure_export_ready(session.id, session.revision())
+            .is_err()
+            || self.has_redaction_job(session.id)
+            || self
+                .ocrs
+                .values()
+                .any(|job| job.plan.document_id == session.id && !job.expired())
+            || self.outputs.has_document(session.id)
+            || self.archives.has_document(session.id)
+            || self.accessibility.has_document(session.id)
+    }
+
+    pub fn sync_recovery(&mut self) {
+        if self.recovery_stopped {
+            return;
+        }
+        let Some(mut store) = self.recovery.take() else {
+            return;
+        };
+        let eligible: Vec<_> = self
+            .sessions
+            .values()
+            .filter(|session| self.recovery_eligible(session))
+            .collect();
+        self.recovery_error = match store.sync(&eligible) {
+            Ok(()) => None,
+            Err(error) => {
+                eprintln!("Local recovery checkpoint failed: {error}");
+                Some(error.to_string())
+            }
+        };
+        self.recovery = Some(store);
+    }
+
+    pub fn recovery_status(&self) -> crate::recovery::Status {
+        let mut status = match &self.recovery {
+            Some(store) => match store.status() {
+                Ok(status) => status,
+                Err(error) => {
+                    return crate::recovery::Status {
+                        error: Some(error.to_string()),
+                        ..Default::default()
+                    };
+                }
+            },
+            None => crate::recovery::Status::default(),
+        };
+        status.error = self.recovery_error.clone();
+        status.excluded = self
+            .sessions
+            .values()
+            .filter(|session| {
+                (session.is_dirty() || self.recovery_pending(session))
+                    && !self.recovery_eligible(session)
+            })
+            .map(|session| {
+                format!(
+                    "{}: protected/read-only PDF or pending work; no recovery checkpoint.",
+                    session.name
+                )
+            })
+            .collect();
+        status
+    }
+
+    pub fn set_recovery_enabled(&mut self, enabled: bool) -> Result<()> {
+        self.recovery.as_mut().ok_or_else(|| Error::Invalid(
+            "Recovery storage is unavailable. Restart Folio after resolving the storage error.".into()
+        ))?.set_enabled(enabled)?;
+        self.sync_recovery();
+        Ok(())
+    }
+
+    pub fn recover_document(&mut self, token: String) -> Result<DocumentInfo> {
+        let store = self
+            .recovery
+            .as_ref()
+            .ok_or_else(|| Error::Invalid("Recovery storage is unavailable.".into()))?;
+        let session = store.read(&token, self.next_id + 1)?;
+        let info = session.info()?;
+        self.recovery
+            .as_mut()
+            .expect("store checked")
+            .adopt(token, &session);
+        self.add(session)?;
+        Ok(info)
+    }
+
+    pub fn discard_recovery(&mut self, token: &str) -> Result<()> {
+        self.recovery
+            .as_mut()
+            .ok_or_else(|| Error::Invalid("Recovery storage is unavailable.".into()))?
+            .discard(token)
+    }
+
+    pub fn clean_recovery_exit(&mut self) -> Result<()> {
+        if let Some(store) = &mut self.recovery {
+            store.clean_exit()?;
+        }
+        self.recovery_stopped = true;
+        Ok(())
+    }
+
     pub fn snapshot(&mut self) -> Result<WorkspaceInfo> {
         if !self.initialized {
             self.bootstrap()?;
@@ -326,6 +447,7 @@ impl Workspace {
     }
 
     pub fn ensure_output_available(&self, id: u64, path: &Path) -> Result<()> {
+        self.document(id)?.ensure_recovery_output(path)?;
         for session in self.sessions.values().filter(|session| session.id != id) {
             for other in [&session.source_path, &session.saved_path]
                 .into_iter()

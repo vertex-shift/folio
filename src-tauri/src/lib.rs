@@ -19,6 +19,7 @@ pub mod paragraph;
 mod pdf_objects;
 pub mod preflight;
 pub mod protection;
+pub mod recovery;
 pub mod redaction;
 pub mod signatures;
 pub mod text_edit;

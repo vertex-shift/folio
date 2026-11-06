@@ -15,6 +15,18 @@ struct Revision {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecoverySetting {
+    enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveryToken {
+    token: String,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct EditRequest {
     document_id: u64,
@@ -392,6 +404,24 @@ fn handle(
     }
     let route = request.url().to_owned();
     let info = match (request.method(), route.as_str()) {
+        (&Method::Get, "/recovery") => {
+            workspace.sync_recovery();
+            return json(workspace.recovery_status());
+        }
+        (&Method::Post, "/recovery/setting") => {
+            let input: RecoverySetting = json_body(request)?;
+            workspace.set_recovery_enabled(input.enabled)?;
+            return json(());
+        }
+        (&Method::Post, "/recovery/recover") => {
+            let input: RecoveryToken = json_body(request)?;
+            workspace.recover_document(input.token)?
+        }
+        (&Method::Post, "/recovery/discard") => {
+            let input: RecoveryToken = json_body(request)?;
+            workspace.discard_recovery(&input.token)?;
+            return json(());
+        }
         (&Method::Get, "/bootstrap") => return json(workspace.snapshot()?),
         (&Method::Post, "/demo") => workspace.open_demo()?,
         (&Method::Post, "/create") => {
@@ -1068,23 +1098,27 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let frontend_port = local_port("FOLIO_DEV_PORT", 1420)?;
     let server = Server::http(("127.0.0.1", port))?;
     let mut workspace = Workspace::default();
+    if let Some(root) = std::env::var_os("FOLIO_PREVIEW_RECOVERY_DIR") {
+        workspace.configure_recovery(root.into());
+    }
     println!("Folio Rust preview engine ready at http://127.0.0.1:{port}");
     for mut request in server.incoming_requests() {
-        let (bytes, content_type, status) =
-            match handle(&mut request, &mut workspace, frontend_port) {
-                Ok(Payload::Json(value)) => (serde_json::to_vec(&value)?, "application/json", 200),
-                Ok(Payload::Pdf(bytes)) => (bytes, "application/pdf", 200),
-                Ok(Payload::Attachment(bytes)) => (bytes, "application/octet-stream", 200),
-                Ok(Payload::Output(bytes, mime)) => (bytes, mime, 200),
-                Err(error) => {
-                    eprintln!("Preview request failed: {error}");
-                    (
-                        serde_json::to_vec(&serde_json::json!({ "error": error.to_string() }))?,
-                        "application/json",
-                        400,
-                    )
-                }
-            };
+        let result = handle(&mut request, &mut workspace, frontend_port);
+        workspace.sync_recovery();
+        let (bytes, content_type, status) = match result {
+            Ok(Payload::Json(value)) => (serde_json::to_vec(&value)?, "application/json", 200),
+            Ok(Payload::Pdf(bytes)) => (bytes, "application/pdf", 200),
+            Ok(Payload::Attachment(bytes)) => (bytes, "application/octet-stream", 200),
+            Ok(Payload::Output(bytes, mime)) => (bytes, mime, 200),
+            Err(error) => {
+                eprintln!("Preview request failed: {error}");
+                (
+                    serde_json::to_vec(&serde_json::json!({ "error": error.to_string() }))?,
+                    "application/json",
+                    400,
+                )
+            }
+        };
         let response = Response::from_data(bytes)
             .with_status_code(StatusCode(status))
             .with_header(

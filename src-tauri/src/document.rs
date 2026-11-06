@@ -206,9 +206,57 @@ pub struct Session {
     form_fill_allowed: bool,
     permissions: crate::protection::AccessPermissions,
     signed: bool,
+    recovery_originals: Vec<PathBuf>,
 }
 
 impl Session {
+    pub(crate) fn recovery_allowed(&self) -> bool {
+        self.password.is_none() && !self.document.is_encrypted() && self.read_only_reason.is_none()
+    }
+
+    pub(crate) fn recovery_originals(&self) -> &[PathBuf] {
+        &self.recovery_originals
+    }
+
+    pub(crate) fn recovered(
+        bytes: Vec<u8>,
+        name: String,
+        source: Option<PathBuf>,
+        saved: Option<PathBuf>,
+        mut originals: Vec<PathBuf>,
+        id: u64,
+    ) -> Result<Self> {
+        let mut session = Self::from_bytes(bytes, name, source.clone(), id)?;
+        if !session.recovery_allowed() {
+            return Err(invalid(
+                "Protected or read-only PDFs cannot be recovered from local storage.",
+            ));
+        }
+        for path in [source, saved].into_iter().flatten() {
+            if !originals.contains(&path) {
+                originals.push(path);
+            }
+        }
+        session.recovery_originals = originals;
+        session.saved_revision = u64::MAX;
+        Ok(session)
+    }
+
+    pub(crate) fn ensure_recovery_output(&self, path: &Path) -> Result<()> {
+        for original in &self.recovery_originals {
+            if path == original
+                || (path.exists()
+                    && original.exists()
+                    && path.canonicalize()? == original.canonicalize()?)
+            {
+                return Err(invalid(
+                    "Save this recovered PDF to a different file. Recovery must not overwrite its original source or saved copy.",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn from_bytes(
         bytes: Vec<u8>,
         name: String,
@@ -248,6 +296,7 @@ impl Session {
             bytes,
             revision: 0,
             saved_revision: 0,
+            recovery_originals: Vec::new(),
             next_revision: 1,
             mutation_epoch: 0,
             undo: VecDeque::new(),
@@ -872,6 +921,7 @@ impl Session {
     }
 
     pub fn save_as(&mut self, path: &Path) -> Result<DocumentInfo> {
+        self.ensure_recovery_output(path)?;
         atomic_write(path, &self.bytes)?;
         self.record_saved(path.to_path_buf(), self.revision);
         self.info()

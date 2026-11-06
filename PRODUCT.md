@@ -48,6 +48,12 @@ The desktop app processes document contents locally.
   history, navigation/search/zoom/tools, and pending marks. Render only the
   active tab's canvases. Guard closing each tab and quitting with any inactive
   unsaved work; refuse overwriting another tab's open file.
+- Crash recovery is explicit opt-in local storage, not source-file autosave.
+  Atomic bounded checkpoints cover eligible applied edits only; exclude all
+  protected/read-only PDFs and tabs with pending drafts, marks or output jobs.
+  Startup inspect/recover/discard controls disclose full unencrypted PDF storage,
+  missing unapplied work, and storage failures. Recovered tabs are unsaved copies
+  without undo history; preserve original files and existing save/close/quit guards.
 - Authoring milestone: Letter/A4 blank PDFs; editable placed-text and pen
   annotations; duplicate/blank/imported pages; extraction by page range;
   bookmark and internal-link navigation; confirmed external web/email links.

@@ -427,6 +427,19 @@ a { color: var(--blue-ink); text-underline-offset: 3px; }
 .dialog-header h2 { font-size: 20px; font-weight: 600; color: var(--strong); letter-spacing: -0.02em; text-wrap: balance; }
 .dialog-body { padding: 4px 26px 24px; font-size: 12px; line-height: 1.9; color: var(--secondary); }
 .dialog-body > p + p { margin-top: 13px; }
+.recovery-dialog { width: 640px; }
+.recovery-dialog h3 { margin-block: 24px 8px; font-size: 13px; color: var(--strong); }
+.recovery-location, .recovery-list, .recovery-dialog li { overflow-wrap: anywhere; }
+.recovery-location { margin-block: 8px 16px; }
+.recovery-list { list-style: none; padding: 0; margin: 16px 0; }
+.recovery-list > li { padding-block: 16px; border-bottom: 1px solid var(--border); }
+.recovery-list > li > strong, .recovery-list > li > span { display: block; }
+.recovery-list > li > span { color: var(--muted); }
+.recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.recovery-confirm { padding: 16px; margin-block: 16px; border: 1px solid var(--warning-border); background: var(--warning-bg); color: var(--warning-ink); border-radius: var(--radius-control); }
+.recovery-confirm .button { margin: 8px 8px 0 0; white-space: normal; }
+.recovery-warning { position: fixed; bottom: 24px; left: 24px; right: 24px; z-index: 90; display: flex; align-items: center; justify-content: space-between; gap: 16px; max-height: 30dvh; overflow-y: auto; padding: 12px 16px; border: 1px solid var(--warning-border); border-radius: var(--radius-control); background: var(--warning-bg); color: var(--warning-ink); box-shadow: 0 4px 16px var(--shadow-soft); font-size: 12px; }
+.recovery-warning > span { min-width: 0; overflow-wrap: anywhere; }
 .dialog-body strong { font-weight: 600; color: var(--strong); }
 .dialog-actions { border-top: 1px solid var(--line); padding: 17px 23px; display: flex; align-items: center; justify-content: flex-end; gap: 9px; background: var(--panel); }
 .dialog-actions .button { min-height: 34px; font-size: 11px; }

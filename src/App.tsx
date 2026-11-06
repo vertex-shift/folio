@@ -9,6 +9,7 @@ import Dialog from "./components/Dialog";
 import DocumentTabs from "./components/DocumentTabs";
 import IconButton from "./components/IconButton";
 import PasswordDialog from "./components/PasswordDialog";
+import RecoveryControls from "./components/RecoveryControls";
 import { bridge, native, runtimeIssue } from "./lib/bridge";
 import { errorMessage } from "./lib/geometry";
 import { adjacentTab, unsavedTabs } from "./lib/tabs";
@@ -31,6 +32,7 @@ export default function App() {
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [quit, setQuit] = useState(false);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [comparisonRunning, setComparisonRunning] = useState(false);
@@ -53,7 +55,7 @@ export default function App() {
   const pending = new Set(documents.filter((document) => activities[document.id]?.pendingDraft).map((document) => document.id));
   const busy = loading || working || creationBusy || documents.some((document) => activities[document.id]?.busy)
     || !documents.length && Boolean(activities[0]?.busy);
-  const blocked = busy || creationOpen || comparisonExporting || passwords.length > 0 || quit
+  const blocked = busy || creationOpen || comparisonExporting || passwords.length > 0 || quit || recoveryOpen
     || Boolean(activities[activeId ?? 0]?.modal);
   blockedRef.current = blocked;
   const unsaved = unsavedTabs(documents, pending);
@@ -360,6 +362,7 @@ export default function App() {
       <div className="titlebar-space" data-tauri-drag-region={native || undefined} />
       <span className="runtime-label"><ShieldCheck size={13} />{runtimeIssue ? "Runtime unavailable" : native ? "Local files" : "Browser preview"}</span>
       <AppearancePicker onError={reportError} />
+      <RecoveryControls blocked={blocked} open={recoveryOpen} onOpenChange={setRecoveryOpen} onRecovered={onOpened} />
       <IconButton label="About Folio" disabled={blocked} onClick={() => menu("about")}><CircleHelp size={17} /></IconButton>
     </header>
     {loading ? <div className="workspace-empty"><LoaderCircle className="spin" size={26} /><p>Opening workspace...</p></div>
