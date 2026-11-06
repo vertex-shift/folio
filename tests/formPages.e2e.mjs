@@ -65,6 +65,10 @@ try {
     const snapshot = await (await api("/bootstrap")).json();
     return snapshot.documents.find((doc) => doc.id === snapshot.activeId);
   };
+  const draftAcknowledged = (id, pending) => page.waitForResponse((response) =>
+    response.url().endsWith("/__folio/draft")
+    && response.request().postDataJSON().documentId === id
+    && response.request().postDataJSON().pending === pending && response.ok());
   const bytes = async () => {
     const info = await current();
     const response = await fetch(`http://127.0.0.1:${backendPort}/bytes`, {
@@ -156,7 +160,9 @@ try {
   await workspace().getByRole("button", { name: "Organize", exact: true }).click();
   await workspace().getByRole("button", { name: "Crop pages", exact: true }).click();
   await workspace().getByLabel("Top margin (pt)", { exact: true }).fill("10");
+  const appliedDraft = draftAcknowledged(original.id, false);
   await workspace().getByRole("button", { name: "Apply crop", exact: true }).click();
+  await appliedDraft;
   await settled();
   const cropped = await bytes();
   assert.notEqual(hash(cropped), hash(source));
@@ -167,12 +173,16 @@ try {
   await workspace().getByRole("button", { name: "Reset original crop", exact: true }).click(); await settled();
   assert.deepEqual(await render(await bytes()), originalPixels);
   const unchanged = await current(), unchangedBytes = await bytes();
+  const failedDraft = draftAcknowledged(unchanged.id, true);
   await workspace().getByLabel("Top margin (pt)", { exact: true }).fill("200");
+  await failedDraft;
   await workspace().getByRole("button", { name: "Apply crop", exact: true }).click();
   await workspace().getByRole("alert").filter({ hasText: /widget.*visible crop/i }).waitFor();
   assert.equal((await current()).revision, unchanged.revision);
   await api("/undo", { documentId: unchanged.id, revision: unchanged.revision }, /pending|draft|Apply or discard/i);
+  const discardedDraft = draftAcknowledged(unchanged.id, false);
   await workspace().getByRole("button", { name: "Discard authoring draft", exact: true }).click(); await settled();
+  await discardedDraft;
   assert.deepEqual(await bytes(), unchangedBytes);
   evidence.checks.push("UI crop, exact-byte undo/redo and reset preserve rendered appearances; clipping is refused and failed drafts remain protected.");
   await workspace().getByRole("button", { name: "Organize", exact: true }).click();
