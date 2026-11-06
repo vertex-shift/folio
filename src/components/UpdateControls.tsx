@@ -27,14 +27,19 @@ export function UpdatePanel({ status, error, onCheck, onClose }: {
   </section>;
 }
 
-export default function UpdateControls({ open, onOpenChange }: {
+export default function UpdateControls({ open, onOpenChange, disabled = false }: {
   open: boolean;
   onOpenChange(open: boolean): void;
+  disabled?: boolean;
 }) {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const container = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (disabled && open) onOpenChange(false);
+  }, [disabled, open, onOpenChange]);
 
   useEffect(() => {
     if (!native) return;
@@ -77,7 +82,7 @@ export default function UpdateControls({ open, onOpenChange }: {
   return <div ref={container} className="update-controls">
     <button ref={trigger} className={`icon-button${attention ? " active" : ""}`}
       title={status ? updateSummary(status) : "App updates"} aria-label="App updates"
-      aria-expanded={open} onClick={() => onOpenChange(!open)}>
+      aria-expanded={open} disabled={disabled} onClick={() => onOpenChange(!open)}>
       <ArrowDownToLine size={17} />{attention && <span className="update-dot" />}
     </button>
     {open && <UpdatePanel status={status} error={error} onClose={() => {

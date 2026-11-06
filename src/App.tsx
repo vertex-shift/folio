@@ -249,7 +249,7 @@ export default function App() {
   }
 
   function menu(id: string) {
-    if (id === "check-updates") { setUpdatesOpen(true); return; }
+    if (id === "check-updates") { if (!blockedRef.current) setUpdatesOpen(true); return; }
     if (id === "open") { open(); return; }
     if (id === "create-files") { createFromFiles(); return; }
     if (id === "close-tab") {
@@ -375,7 +375,7 @@ export default function App() {
       <span className="runtime-label"><ShieldCheck size={13} />{runtimeIssue ? "Runtime unavailable" : native ? "Local files" : "Browser preview"}</span>
       <AppearancePicker onError={reportError} />
       <RecoveryControls blocked={blocked} open={recoveryOpen} onOpenChange={setRecoveryOpen} onRecovered={onOpened} />
-      <UpdateControls open={updatesOpen} onOpenChange={setUpdatesOpen} />
+      <UpdateControls open={updatesOpen} onOpenChange={setUpdatesOpen} disabled={blocked} />
       <IconButton label="About Folio" disabled={blocked} onClick={() => menu("about")}><CircleHelp size={17} /></IconButton>
     </header>
     {loading ? <div className="workspace-empty"><LoaderCircle className="spin" size={26} /><p>Opening workspace...</p></div>

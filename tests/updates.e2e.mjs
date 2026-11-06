@@ -27,9 +27,11 @@ try {
               import "/src/themes.css"; import "/src/styles.css";
               function Harness() {
                 const [open, setOpen] = React.useState(false);
+                const [disabled, setDisabled] = React.useState(false);
+                window.setUpdaterBlocked = setDisabled;
                 return React.createElement("header", {className:"titlebar"},
                   React.createElement("div", {className:"titlebar-space"}),
-                  React.createElement(UpdateControls, {open, onOpenChange:setOpen}));
+                  React.createElement(UpdateControls, {open, onOpenChange:setOpen, disabled}));
               }
               createRoot(document.body).render(React.createElement(Harness));
             </script></body></html>`));
@@ -108,6 +110,11 @@ try {
   await page.getByText("Use your package manager.", { exact: true }).waitFor();
   assert.equal(await panel.getByRole("button", { name: "Check for updates", exact: true }).isDisabled(), true);
   evidence.checks.push("failure retries, unsupported installations, narrow layout and Escape focus restoration");
+  await page.evaluate(() => window.setUpdaterBlocked(true));
+  await page.waitForFunction(() => document.querySelector('[aria-label="App updates"][aria-expanded]')?.disabled);
+  await panel.waitFor({ state: "detached" });
+  assert.equal(await panel.count(), 0);
+  evidence.checks.push("document/modal busy state closes the popover and disables its trigger");
   assert.deepEqual(evidence.errors, []);
   assert.deepEqual(evidence.externalRequests, []);
   console.log("Updater UI browser checks passed; this fixture mocks native transport, not installation.");
