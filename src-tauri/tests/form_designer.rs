@@ -475,6 +475,407 @@ fn inherited_fixture() -> Document {
     document
 }
 
+fn page_operation_fixture() -> Session {
+    let mut document = inherited_fixture();
+    let form = document
+        .catalog()
+        .unwrap()
+        .get(b"AcroForm")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    document
+        .get_dictionary_mut(form)
+        .unwrap()
+        .set("NeedAppearances", false);
+    let mut session =
+        Session::from_bytes(bytes(&mut document), "Page forms.pdf".into(), None, 1).unwrap();
+    for at in [1, 2] {
+        session
+            .apply(Edit::BlankPage {
+                at,
+                width: 612.0,
+                height: 792.0,
+            })
+            .unwrap();
+    }
+    session
+        .apply(Edit::PageLabels {
+            ranges: vec![folio_core::page_labels::Range {
+                page: 0,
+                style: folio_core::page_labels::Style::Decimal,
+                prefix: String::new(),
+                start: 1,
+            }],
+        })
+        .unwrap();
+    fill_text(&mut session, "person.first", "Repeated value");
+    fill_text(&mut session, "person.second", "Sibling value");
+    session
+        .design_form_fields(vec![create(
+            definition(ControlKind::Signature, "empty_signature"),
+            vec![widget(0, 40.0, 400.0, 200.0, 30.0)],
+        )])
+        .unwrap();
+    session
+}
+
+fn form_graph(document: &Document) -> BTreeMap<ObjectId, String> {
+    fn walk(document: &Document, value: &Object, graph: &mut BTreeMap<ObjectId, String>) {
+        match value {
+            Object::Reference(id) => {
+                if graph.contains_key(id) {
+                    return;
+                }
+                let object = document.get_object(*id).unwrap();
+                graph.insert(*id, format!("{object:?}"));
+                walk(document, object, graph);
+            }
+            Object::Array(values) => {
+                for value in values {
+                    walk(document, value, graph);
+                }
+            }
+            Object::Dictionary(dict) => {
+                for (key, value) in dict {
+                    if key != b"P" {
+                        walk(document, value, graph);
+                    }
+                }
+            }
+            Object::Stream(stream) => {
+                walk(document, &Object::Dictionary(stream.dict.clone()), graph);
+            }
+            _ => {}
+        }
+    }
+    let mut graph = BTreeMap::new();
+    let form = document.catalog().unwrap().get(b"AcroForm").unwrap();
+    walk(document, form, &mut graph);
+    // Include a direct AcroForm dictionary as well as all of its indirect resources.
+    graph.insert((0, 0), format!("{form:?}"));
+    graph
+}
+
+#[test]
+fn form_page_operations_preserve_field_graph_values_appearances_labels_and_history() {
+    let mut session = page_operation_fixture();
+    let before = load(session.bytes());
+    let graph = form_graph(&before);
+    let fields = serde_json::to_value(session.form_fields().unwrap()).unwrap();
+    let source = session.bytes().to_vec();
+    let original_page = before.get_pages()[&1];
+    session
+        .apply(Edit::Crop {
+            pages: vec![0, 1],
+            margins: [10.0; 4],
+        })
+        .unwrap();
+    assert_eq!(form_graph(&load(session.bytes())), graph);
+    let cropped = session.bytes().to_vec();
+    session.undo().unwrap();
+    assert_eq!(session.bytes(), source);
+    session.redo().unwrap();
+    assert_eq!(session.bytes(), cropped);
+    session.apply(Edit::Move { from: 0, to: 2 }).unwrap();
+    session.apply(Edit::Delete { page: 0 }).unwrap();
+    let saved = session.bytes().to_vec();
+    let mut reopened = Session::from_bytes(saved, "Reopened.pdf".into(), None, 2).unwrap();
+    assert_eq!(reopened.info().unwrap().page_count, 2);
+    assert_eq!(
+        reopened
+            .info()
+            .unwrap()
+            .page_labels
+            .unwrap()
+            .labels
+            .unwrap(),
+        vec!["3", "1"]
+    );
+    assert_eq!(load(reopened.bytes()).get_pages()[&2], original_page);
+    assert_eq!(form_graph(&load(reopened.bytes())), graph);
+    let after_fields = reopened.form_fields().unwrap();
+    assert_eq!(after_fields.fields.len(), 3);
+    for field in &after_fields.fields {
+        assert!(field.widgets.iter().all(|widget| widget.page == 1));
+    }
+    reopened.apply(Edit::ResetCrop { pages: vec![1] }).unwrap();
+    reopened.apply(Edit::Move { from: 1, to: 0 }).unwrap();
+    assert_eq!(
+        serde_json::to_value(reopened.form_fields().unwrap()).unwrap(),
+        fields
+    );
+    assert_eq!(form_graph(&load(reopened.bytes())), graph);
+    fill_text(&mut reopened, "person.first", "Still editable");
+    assert_eq!(
+        field(&reopened, "person.first").value,
+        Some(FieldValue::Text {
+            text: "Still editable".into()
+        })
+    );
+}
+
+#[test]
+fn form_crops_and_rotation_use_all_right_angles_nonzero_origins_and_user_unit() {
+    let mut document = geometry_document();
+    let mut session =
+        Session::from_bytes(bytes(&mut document), "Geometry forms.pdf".into(), None, 1).unwrap();
+    let mut definition = definition(ControlKind::Text, "repeated");
+    definition.font_size = 0.0;
+    session
+        .design_form_fields(vec![create(
+            definition,
+            (0..4)
+                .map(|page| widget(page, 30.0, 40.0, 120.0, 24.0))
+                .collect(),
+        )])
+        .unwrap();
+    fill_text(&mut session, "repeated", "Shared");
+    let graph = form_graph(&load(session.bytes()));
+    session
+        .apply(Edit::Crop {
+            pages: vec![0, 1, 2, 3],
+            margins: [10.0; 4],
+        })
+        .unwrap();
+    for page in 0..4 {
+        session.apply(Edit::Rotate { page, degrees: 90 }).unwrap();
+    }
+    session
+        .apply(Edit::RemoveCrop {
+            pages: vec![0, 1, 2, 3],
+        })
+        .unwrap();
+    session
+        .apply(Edit::ResetCrop {
+            pages: vec![0, 1, 2, 3],
+        })
+        .unwrap();
+    assert_eq!(form_graph(&load(session.bytes())), graph);
+    let reopened = Session::from_bytes(
+        session.bytes().to_vec(),
+        "Geometry saved.pdf".into(),
+        None,
+        2,
+    )
+    .unwrap();
+    assert_eq!(field(&reopened, "repeated").widgets.len(), 4);
+    assert_eq!(
+        field(&reopened, "repeated").value,
+        Some(FieldValue::Text {
+            text: "Shared".into()
+        })
+    );
+}
+
+#[test]
+fn form_page_refusals_are_atomic_and_do_not_create_history() {
+    let mut session = page_operation_fixture();
+    let source = session.bytes().to_vec();
+    let revision = session.revision();
+    for edit in [
+        Edit::Crop {
+            pages: vec![1, 0],
+            margins: [180.0, 0.0, 0.0, 0.0],
+        },
+        Edit::Delete { page: 0 },
+        Edit::Duplicate { page: 1 },
+    ] {
+        assert!(session.apply(edit).is_err());
+        assert_eq!(session.bytes(), source);
+        assert_eq!(session.revision(), revision);
+    }
+    assert!(session.extract_pages(&[1]).is_err());
+    assert!(
+        session
+            .import_pages(Session::blank(612.0, 792.0, 3).unwrap().bytes().to_vec(), 1)
+            .is_err()
+    );
+    let mut plain = Session::blank(612.0, 792.0, 3).unwrap();
+    assert!(plain.import_pages(source.clone(), 1).is_err());
+    session.apply(Edit::Delete { page: 2 }).unwrap();
+    session.apply(Edit::Delete { page: 1 }).unwrap();
+    assert!(
+        session
+            .apply(Edit::Delete { page: 0 })
+            .unwrap_err()
+            .to_string()
+            .contains("at least one page")
+    );
+    for mode in 0..20 {
+        let mut document = load(&source);
+        let fields = session.form_fields().unwrap();
+        let first = object_key(
+            &fields
+                .fields
+                .iter()
+                .find(|field| field.name == "person.first")
+                .unwrap()
+                .id,
+        );
+        let widget = object_key(
+            &fields
+                .fields
+                .iter()
+                .find(|field| field.name == "person.first")
+                .unwrap()
+                .widgets[0]
+                .id,
+        );
+        let page = document.get_pages()[&1];
+        let form_id = document
+            .catalog()
+            .unwrap()
+            .get(b"AcroForm")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        match mode {
+            0 => document
+                .get_dictionary_mut(form_id)
+                .unwrap()
+                .set("XFA", Object::string_literal("unsupported")),
+            1 => document
+                .get_dictionary_mut(form_id)
+                .unwrap()
+                .set("NeedAppearances", true),
+            2 => document
+                .get_dictionary_mut(form_id)
+                .unwrap()
+                .set("CO", vec![Object::Reference(first)]),
+            3 => document
+                .get_dictionary_mut(first)
+                .unwrap()
+                .set("AA", dictionary! {}),
+            4 => document
+                .get_dictionary_mut(page)
+                .unwrap()
+                .set("AA", dictionary! {}),
+            5 => document.get_dictionary_mut(first).unwrap().set("Ff", 1),
+            6 => document.get_dictionary_mut(widget).unwrap().set("F", 128),
+            7 => {
+                document.get_dictionary_mut(widget).unwrap().remove(b"AP");
+            }
+            8 => document
+                .get_dictionary_mut(widget)
+                .unwrap()
+                .set("Parent", widget),
+            9 => {
+                let orphan = document.add_object(
+                    dictionary! { "Subtype" => "Widget", "Rect" => numbers(&[1.0, 1.0, 2.0, 2.0]) },
+                );
+                document
+                    .get_dictionary_mut(document.get_pages()[&2])
+                    .unwrap()
+                    .set("Annots", vec![Object::Reference(orphan)]);
+            }
+            10 => document
+                .catalog_mut()
+                .unwrap()
+                .set("OpenAction", dictionary! { "S" => "JavaScript" }),
+            11 => document.catalog_mut().unwrap().set("Perms", dictionary! {}),
+            12 => {
+                document
+                    .get_dictionary_mut(form_id)
+                    .unwrap()
+                    .set("SigFlags", 2);
+            }
+            13 => document
+                .catalog_mut()
+                .unwrap()
+                .set("MarkInfo", dictionary! { "Marked" => true }),
+            14 => document.catalog_mut().unwrap().set("FolioTaggedCopy", true),
+            15 => document
+                .catalog_mut()
+                .unwrap()
+                .set("FolioRasterArchive", true),
+            16 => {
+                document.add_object(dictionary! { "Type" => "Sig", "ByteRange" => vec![0.into(), 1.into()], "Contents" => Object::string_literal("signed") });
+            }
+            17 => {
+                let metadata = document.add_object(Stream::new(
+                    dictionary! { "Type" => "Metadata", "Subtype" => "XML" },
+                    br#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/" pdfaid:part="2"/></rdf:RDF></x:xmpmeta>"#.to_vec(),
+                ));
+                document.catalog_mut().unwrap().set("Metadata", metadata);
+            }
+            18 => {
+                let parent = document
+                    .get_dictionary(first)
+                    .unwrap()
+                    .get(b"Parent")
+                    .unwrap()
+                    .as_reference()
+                    .unwrap();
+                document.get_dictionary_mut(parent).unwrap().set(
+                    "Kids",
+                    vec![Object::Reference(first), Object::Reference(first)],
+                );
+            }
+            _ => {
+                document
+                    .get_dictionary_mut(first)
+                    .unwrap()
+                    .remove(b"Parent");
+            }
+        }
+        let bytes = bytes(&mut document);
+        let mut unsupported =
+            Session::from_bytes(bytes.clone(), "Unsupported.pdf".into(), None, 4).unwrap();
+        let revision = unsupported.revision();
+        assert!(
+            unsupported
+                .apply(Edit::Crop {
+                    pages: vec![1],
+                    margins: [1.0; 4]
+                })
+                .is_err(),
+            "mode {mode}"
+        );
+        assert!(
+            unsupported.apply(Edit::Delete { page: 1 }).is_err(),
+            "mode {mode}"
+        );
+        assert!(
+            unsupported.apply(Edit::Move { from: 0, to: 1 }).is_err(),
+            "mode {mode}"
+        );
+        assert_eq!(unsupported.bytes(), bytes);
+        assert_eq!(unsupported.revision(), revision);
+    }
+}
+
+#[test]
+fn deleting_widget_free_pages_refuses_indirect_changes_to_form_resources() {
+    let source = page_operation_fixture();
+    let mut document = load(source.bytes());
+    let removed = document.get_pages()[&2];
+    let form = document
+        .catalog()
+        .unwrap()
+        .get(b"AcroForm")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    document.get_dictionary_mut(form).unwrap().set(
+        "CustomDestination",
+        vec![Object::Reference(removed), Object::Name(b"Fit".to_vec())],
+    );
+    let source = bytes(&mut document);
+    let mut session =
+        Session::from_bytes(source.clone(), "Referenced page.pdf".into(), None, 1).unwrap();
+    let revision = session.revision();
+    assert!(
+        session
+            .apply(Edit::Delete { page: 1 })
+            .unwrap_err()
+            .to_string()
+            .contains("form's field tree")
+    );
+    assert_eq!(session.bytes(), source);
+    assert_eq!(session.revision(), revision);
+}
+
 #[test]
 fn inherited_parent_values_defaults_and_siblings_survive_property_layout_and_removal() {
     let mut document = inherited_fixture();
@@ -819,6 +1220,71 @@ fn encrypted(mut document: Document, aes256: bool, permissions: Permissions) -> 
     let state = EncryptionState::try_from(version).unwrap();
     document.encrypt(&state).unwrap();
     bytes(&mut document)
+}
+
+#[test]
+fn form_page_edits_require_general_permission_and_preserve_encryption_and_history() {
+    let source = page_operation_fixture();
+    for aes256 in [false, true] {
+        let protected = encrypted(load(source.bytes()), aes256, Permissions::FILLABLE);
+        let mut user = Session::from_bytes_with_password(
+            protected.clone(),
+            "Restricted pages.pdf".into(),
+            None,
+            1,
+            Some("user"),
+        )
+        .unwrap();
+        let revision = user.revision();
+        assert!(
+            user.apply(Edit::Crop {
+                pages: vec![0],
+                margins: [1.0; 4]
+            })
+            .is_err()
+        );
+        assert!(user.apply(Edit::Delete { page: 1 }).is_err());
+        assert_eq!(user.bytes(), protected);
+        assert_eq!(user.revision(), revision);
+        let mut owner = Session::from_bytes_with_password(
+            protected.clone(),
+            "Owner pages.pdf".into(),
+            None,
+            2,
+            Some("owner"),
+        )
+        .unwrap();
+        owner
+            .apply(Edit::Crop {
+                pages: vec![0],
+                margins: [1.0; 4],
+            })
+            .unwrap();
+        owner.apply(Edit::Delete { page: 1 }).unwrap();
+        let edited = owner.bytes().to_vec();
+        let encrypted_output =
+            Document::load_mem_with_options(&edited, LoadOptions::default()).unwrap();
+        assert!(encrypted_output.is_encrypted());
+        let reopened = Session::from_bytes_with_password(
+            edited.clone(),
+            "Saved encrypted.pdf".into(),
+            None,
+            3,
+            Some("owner"),
+        )
+        .unwrap();
+        assert_eq!(reopened.info().unwrap().page_count, 2);
+        assert_eq!(
+            field(&reopened, "person.first").value,
+            field(&source, "person.first").value
+        );
+        owner.undo().unwrap();
+        owner.undo().unwrap();
+        assert_eq!(owner.bytes(), protected);
+        owner.redo().unwrap();
+        owner.redo().unwrap();
+        assert_eq!(owner.bytes(), edited);
+    }
 }
 
 #[test]

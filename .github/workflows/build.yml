@@ -171,6 +171,18 @@ jobs:
           timeout --signal=TERM --kill-after=10s 4m \
             node tests/recovery.e2e.mjs 2>&1 | tee "$FOLIO_RECOVERY_EVIDENCE/runner.log"
 
+      - name: Check form-aware page browser workflow
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        env:
+          FOLIO_FORM_PAGES_SKIP_BUILD: "1"
+          FOLIO_FORM_PAGES_EVIDENCE: ${{ runner.temp }}/browser-workflows/form-pages
+        run: |
+          set -euo pipefail
+          mkdir -p "$FOLIO_FORM_PAGES_EVIDENCE"
+          timeout --signal=TERM --kill-after=10s 4m \
+            node tests/formPages.e2e.mjs 2>&1 | tee "$FOLIO_FORM_PAGES_EVIDENCE/runner.log"
+
       - name: Upload browser workflow failure evidence
         if: failure() && runner.os == 'Linux'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

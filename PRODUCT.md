@@ -161,7 +161,16 @@ The desktop app processes document contents locally.
   button appearance transforms/resources, remove widgets and field actions, and
   preserve source/history/protection. Reject unsupported or hidden values instead
   of silently omitting them. This is not sanitization, redaction, PDF/A or
-  signature preservation; existing form/XFA page-operation guards remain.
+  signature preservation.
+- Bounded interactive-form page operations: crop/reset/full-MediaBox without
+  clipping any widget, rotate/reorder, and delete widget-free pages only.
+  Preserve original logical fields, inherited values, repeated widgets,
+  appearances/resources, unsigned signature slots, page labels, encryption and
+  undo/redo through saved reopen; never flatten or prune fields implicitly.
+  Refuse widget-bearing page deletion, duplication/import/extraction, XFA,
+  actions/scripts/calculations, signed/certified, read-only/locked or malformed
+  forms, missing/regeneration-needed appearances, tagged/structure-declared and
+  conformance-declared forms. General-edit permission remains required.
 - Redaction: mark page rectangles and export a separate, fresh image-only PDF.
   Permanently replace marked pixels with opaque black before lossless image
   encoding; copy no original PDF objects, text layer, attachments, or metadata.

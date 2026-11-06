@@ -861,7 +861,8 @@ and existing encryption. Draft/revision checks run again after the native
 dialog, and source/saved/other-tab paths are protected. Other page content,
 annotations, metadata and attachments remain. **This is not secure
 sanitization, redaction, PDF/A conversion or digital-signature preservation.**
-Legacy page-operation guards for interactive forms/XFA remain unchanged.
+Bounded interactive page operations are described below; static export does not
+remove those safeguards from the source.
 Original synthetic API/history/protection fixtures are in
 `src-tauri/tests/form_designer.rs`.
 
@@ -1472,7 +1473,48 @@ underlying drawing instructions are never changed.
 recoverable. Use the separate **Redact a PDF** export for permanent removal.
 PDF rendering, continuous layout, thumbnails, writing/selection overlays, and
 redaction export all use the actual cropped geometry. Cropping documents with
-interactive form fields/widgets or XFA remains unsupported.
+interactive form fields is supported only within the bounded rules below.
+
+### Bounded interactive-form page operations
+
+Static, unsigned AcroForms can use **Crop**, **Show full MediaBox**,
+**Reset original crop**, page rotation/reordering, and deletion of **pages
+without widgets**. Every widget must remain wholly inside its visible crop:
+a crop that clips even one widget fails for the entire selected-page batch.
+Deleting a page containing any widget is refused, even if the same logical
+field has another widget elsewhere. The last page cannot be deleted.
+
+These operations retain existing field objects, inherited and qualified names,
+current/default values, repeated-widget associations, button appearance states,
+appearance streams/resources, and empty signature slots. They do not regenerate,
+flatten, rename or silently remove fields. Page labels follow their original
+pages. Crops use each page's rotation, offset CropBox and physical UserUnit.
+Undo/redo, encrypted saves and saved-PDF reopen keep the same guarantees;
+empty signature slots remain unsigned.
+
+The bounded subset requires a valid, unambiguous supported field tree, visible
+unlocked widgets and existing normal appearances. Read-only fields/widgets,
+orphan/direct/shared widgets, unknown controls, malformed trees/geometry,
+NeedAppearances, XFA, calculations, actions/scripts, signatures/certification,
+tagged/structure-declared and PDF/A/PDF/UA-declared forms are refused.
+Existing general-edit permissions and Folio archival/tagged-copy read-only
+policies still apply; form-filling permission alone does not permit page edits.
+Unsupported operations fail atomically without creating undo entries, changing
+source bytes, clearing drafts or exporting a partially modified PDF.
+
+Duplication, PDF insertion (whether the form is the source or destination),
+and extraction still refuse interactive forms, including widget-free selections.
+Safe field-tree pruning, cross-document name/resource merging and copying
+widgets are **not implemented**. Use a deliberately exported static copy if
+interactivity is not needed; that is a separate, explicit operation.
+
+`src-tauri/tests/form_designer.rs` covers preservation, refusal, history,
+inherited/repeated fields, unsigned slots, permissions and geometry.
+`npm run test:form-pages` exercises real Chromium UI crop/history, refusal
+messages and draft protection, reorder/widget-free deletion, actual download
+and reopen. Independent PDF-lib values and PDF.js pixels/labels verify that
+the result stays interactive. Linux CI runs it against the shared preview
+engine, with failure evidence uploaded alongside the other browser workflows.
 
 **Watermark:** place a centered, single-line text stamp on chosen pages, with
 font size (6-144 pt), color, opacity, and angle (-90 to 90 degrees). Positive
@@ -1822,8 +1864,12 @@ the default builds the current Rust preview first.
 - Supported AcroForms can be filled and authored within the explicit subset
   above. XFA, calculations, scripts/actions, field-type conversion and
   signature-field filling through the Forms panel are not supported.
-  Cropping, deleting, duplicating, importing, or extracting pages in PDFs with form
-  fields or XFA is refused. Duplicate pages with popup/reply annotations
+  Supported static AcroForms allow widget-preserving crop/reset/full-MediaBox,
+  rotation/reordering, and deletion of **widget-free pages only**, as detailed in
+  Bounded interactive-form page operations.
+  Deleting pages containing widgets, duplicating, importing or extracting pages
+  in PDFs with form fields, and all these operations on XFA are refused.
+  Duplicate pages with popup/reply annotations
   and imported documents with optional-content layers also require a
   flattened copy.
 - Signed PDFs remain read-only, including for extraction and import as a

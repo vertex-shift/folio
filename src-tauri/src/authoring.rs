@@ -257,7 +257,7 @@ fn remember_crop(document: &mut Document, page: ObjectId) -> Result<()> {
 }
 
 pub(crate) fn crop(document: &mut Document, pages: &[usize], margins: [f32; 4]) -> Result<()> {
-    crate::pages::reject_forms(document)?;
+    crate::forms::page_operations::check(document)?;
     if margins
         .iter()
         .any(|value| !value.is_finite() || *value < 0.0)
@@ -283,11 +283,11 @@ pub(crate) fn crop(document: &mut Document, pages: &[usize], margins: [f32; 4]) 
             .get_dictionary_mut(id)?
             .set("CropBox", numbers(&bounds));
     }
-    Ok(())
+    crate::forms::page_operations::check(document)
 }
 
 pub(crate) fn remove_crop(document: &mut Document, pages: &[usize]) -> Result<()> {
-    crate::pages::reject_forms(document)?;
+    crate::forms::page_operations::check(document)?;
     for id in chosen_pages(document, pages)? {
         let geometry = PageGeometry::for_page(document, id)?;
         remember_crop(document, id)?;
@@ -295,11 +295,11 @@ pub(crate) fn remove_crop(document: &mut Document, pages: &[usize]) -> Result<()
             .get_dictionary_mut(id)?
             .set("CropBox", numbers(&geometry.media_box));
     }
-    Ok(())
+    crate::forms::page_operations::check(document)
 }
 
 pub(crate) fn reset_crop(document: &mut Document, pages: &[usize]) -> Result<()> {
-    crate::pages::reject_forms(document)?;
+    crate::forms::page_operations::check(document)?;
     let mut restored = false;
     for id in chosen_pages(document, pages)? {
         let page = document.get_dictionary(id)?;
@@ -320,7 +320,7 @@ pub(crate) fn reset_crop(document: &mut Document, pages: &[usize]) -> Result<()>
             "There is no Folio crop to reset on the chosen pages.",
         ));
     }
-    Ok(())
+    crate::forms::page_operations::check(document)
 }
 
 fn graphics_state(opacity: f32) -> Dictionary {
