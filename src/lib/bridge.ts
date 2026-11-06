@@ -21,6 +21,16 @@ const runtime = await resolveRuntime({
 export const native = runtime.native;
 export const runtimeIssue = runtime.issue;
 
+export interface RecoveryStatus {
+  available: boolean;
+  enabled: boolean;
+  location: string | null;
+  entries: { token: string; name: string; byteLength: number; modified: number; problem: string | null }[];
+  checkpointed: number;
+  excluded: string[];
+  error: string | null;
+}
+
 export async function previewResponse(route: string, options: RequestInit = {}): Promise<Response> {
   if (runtimeIssue) throw new Error(runtimeIssue);
   if (!import.meta.env.DEV) {
@@ -76,6 +86,20 @@ export function downloadPdf(bytes: Uint8Array, name: string) {
 }
 
 export const bridge = {
+  recoveryStatus(): Promise<RecoveryStatus> {
+    return native ? invoke("recovery_status") : previewJson("/recovery");
+  },
+  async setRecoveryEnabled(enabled: boolean): Promise<void> {
+    if (native) await invoke("set_recovery_enabled", { enabled });
+    else await previewJson("/recovery/setting", post({ enabled }));
+  },
+  recoverDocument(token: string): Promise<DocumentInfo> {
+    return native ? invoke("recover_document", { token }) : previewJson("/recovery/recover", post({ token }));
+  },
+  async discardRecovery(token: string): Promise<void> {
+    if (native) await invoke("discard_recovery", { token });
+    else await previewJson("/recovery/discard", post({ token }));
+  },
   bootstrap(): Promise<WorkspaceInfo> {
     if (runtimeIssue) return Promise.reject(new Error(runtimeIssue));
     return native ? invoke("bootstrap") : previewJson("/bootstrap");

@@ -180,8 +180,47 @@ tab, including inactive ones, and lets you review unsaved documents or
 explicitly discard all of them. Saving/exporting cannot overwrite a file
 that is open in another tab.
 
-Tabs and view state are in-memory, not an autosave or restart-recovery system.
-Save copies of important work before quitting.
+Tabs and view state remain in memory. Optional local crash recovery covers only
+eligible applied document edits; it is not autosave or a replacement for saving.
+
+### Local crash recovery (opt-in)
+
+Open **Local recovery** in the title bar to inspect storage and enable recovery.
+It is **off by default**. When enabled, the Rust engine checkpoints dirty,
+unprotected, editable PDFs after completed document actions, including inactive
+tabs. Copies are atomic, flushed, checksummed, and bounded to **16 copies /
+256 MiB total**, with the existing **128 MiB per-PDF** limit. Startup lists
+previous-session copies by name, time and size. Recover opens a new **unsaved**
+tab; save to a new filename. Recovery does not touch source files, and recovered
+tabs cannot overwrite their recorded original source or saved-copy paths.
+
+**Recovery writes full PDF contents to local disk without Folio encryption.**
+This can include sensitive text underneath unapplied redaction marks. Your OS
+account, other software and device backups may access it. Never enable it for
+work that must not be stored this way. Passwords and decrypted protected PDFs
+are never checkpointed, even after owner-password unlock. Signed/read-only
+documents are excluded. Storage is the desktop app's OS-local-data directory,
+under `recovery`; the dialog shows the exact path. Unix permissions are private;
+Windows inherits the user's app-data permissions. One recovery writer holds an
+OS file lock; another instance reports unavailable storage rather than sharing it.
+
+**Unapplied work is not recovered:** writing/form/paragraph/image drafts,
+redaction marks, OCR jobs and prepared exports are not serialized. A tab with
+pending work has its checkpoint removed until that work is applied or discarded.
+The dialog and workspace warning identify excluded tabs. Undo/redo history,
+tab order, viewing state, comparison results, signing identities and trust
+evidence are not recovered. A crash during an action can leave an older
+checkpoint or no checkpoint; no protection against hardware loss is promised.
+
+Save, close or explicit discard removes the tab's checkpoint; normal quit
+removes the current session's checkpoints. Unopened previous-session copies
+remain until recovered and saved/closed, explicitly discarded, or recovery is
+disabled. Turning recovery off deletes all recovery copies, not open PDFs or
+sources. Deletion is **not secure erasure** and backups may retain data.
+Interrupted temporary writes are removed on the next storage initialization.
+Corrupt copies are never silently opened; inspect the error and discard them
+explicitly. Storage/size/cleanup failures are shown, never reported as a
+successful document save. Existing editing and close/quit guards remain active.
 
 ## Reviewed PDF structure and accessible reading
 
@@ -1803,13 +1842,23 @@ the default builds the current Rust preview first.
 - Undo keeps up to **20 snapshots within a 64 MiB history budget**. Older
   snapshots are evicted; a document larger than the budget may have no undo
   snapshot. History is in memory only.
-- No autosave or crash recovery. Only applied form values, annotations, and page edits
-  belong to the document; save a copy before quitting.
+- No source-file autosave. Opt-in [local crash recovery](#local-crash-recovery-opt-in)
+  covers only eligible applied edits, not pending drafts or protected PDFs.
+  Save a copy before quitting.
 - Cropping, page deletion, text replacement, ordinary annotations, and extraction are
   **not secure redaction**. Use the dedicated redacted-copy export for marked
   regions, accept its image-only limitations, and verify the exported file.
 
 ## Browser preview
+
+Recovery storage is unavailable in preview by default. To exercise the same Rust
+recovery store with synthetic PDFs, set `FOLIO_PREVIEW_RECOVERY_DIR` to a dedicated
+local test directory before starting the preview backend. Never point it at
+desktop recovery storage. `npm run test:recovery` uses an isolated directory and
+owned loopback servers, hard-terminates/restarts the engine, and checks startup
+controls, exact recovered bytes, pending-work exclusions, protected PDFs,
+corruption/discard, opt-out and source preservation. It does not test native
+file pickers or simulate hardware/power failure.
 
 The development preview uses the **same Rust document engine**, not a
 JavaScript substitute. Start these in separate terminals:

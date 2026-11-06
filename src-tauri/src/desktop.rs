@@ -56,11 +56,47 @@ async fn with_state<T: Send + 'static>(
         let mut state = state
             .lock()
             .map_err(|_| Error::Invalid("Document state is unavailable. Restart Folio.".into()))?;
-        action(&mut state)
+        let result = action(&mut state);
+        state.workspace.sync_recovery();
+        let recovery = state.workspace.recovery_status();
+        if let Err(error) = app.emit("folio-recovery", &recovery) {
+            eprintln!("Could not deliver recovery status: {error}");
+        }
+        result
     })
     .await
     .map_err(|error| format!("The document task failed: {error}"))?
     .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn recovery_status(app: AppHandle) -> std::result::Result<crate::recovery::Status, String> {
+    with_state(app, |state| {
+        state.workspace.sync_recovery();
+        Ok(state.workspace.recovery_status())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_recovery_enabled(app: AppHandle, enabled: bool) -> std::result::Result<(), String> {
+    with_state(app, move |state| {
+        state.workspace.set_recovery_enabled(enabled)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn recover_document(
+    app: AppHandle,
+    token: String,
+) -> std::result::Result<DocumentInfo, String> {
+    with_state(app, move |state| state.workspace.recover_document(token)).await
+}
+
+#[tauri::command]
+async fn discard_recovery(app: AppHandle, token: String) -> std::result::Result<(), String> {
+    with_state(app, move |state| state.workspace.discard_recovery(&token)).await
 }
 
 #[tauri::command]
@@ -857,6 +893,10 @@ fn close_application(app: AppHandle, discard_changes: bool) -> std::result::Resu
         if state.workspace.has_unsaved_changes() && !discard_changes {
             return Err("There are unsaved PDF tabs or pending drafts. Review them or explicitly discard all changes before quitting.".into());
         }
+        state
+            .workspace
+            .clean_recovery_exit()
+            .map_err(|error| error.to_string())?;
         state.allow_exit = true;
     }
     app.exit(0);
@@ -1015,6 +1055,12 @@ pub fn run() {
             ..Default::default()
         }))
         .setup(|app| {
+            let root = app.path().app_local_data_dir()?.join("recovery");
+            app.state::<SharedState>()
+                .lock()
+                .map_err(|_| "Document state is unavailable.")?
+                .workspace
+                .configure_recovery(root);
             app.set_menu(menu(app.handle())?)?;
             Ok(())
         })
@@ -1035,6 +1081,10 @@ pub fn run() {
             import_document_pages,
             extract_document_pages,
             bootstrap,
+            recovery_status,
+            set_recovery_enabled,
+            recover_document,
+            discard_recovery,
             open_document,
             open_document_path,
             open_document_paths,
