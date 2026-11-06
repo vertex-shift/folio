@@ -301,6 +301,17 @@ The desktop app processes document contents locally.
   Keep routine movement below 300ms, support interruption and live Reduce
   Motion, suppress fast busy flashes, and add no motion dependency.
 - Preserve the original file by default; expose unsaved changes and failures.
+- Desktop software updates: check the stable public GitHub release feed shortly
+  after launch and every six hours; download and verify signed-version-bound
+  packages in the background. Install ready updates only after the normal
+  document/draft/job quit guards and recovery cleanup accept closing, never
+  force a restart or wait for an incomplete download. Surface failures without
+  changing the current app; let a later quit skip a failed installation.
+  Windows x64 NSIS, macOS Apple Silicon and Linux x64 AppImage only; package-
+  managed Linux and development builds do not auto-install. Release metadata/
+  package requests send no document content, names, credentials or recovery data.
+  Old binaries require a one-time manual installation of an update-enabled
+  release. Updater signatures are not OS publisher signing or notarization.
 - Existing digital signatures must not be invalidated silently.
 - Cryptographic signatures: inspect the supported detached CMS subset locally,
   with strict ByteRange/Contents/revision checks. Keep signed-byte integrity,

@@ -10,6 +10,7 @@ import DocumentTabs from "./components/DocumentTabs";
 import IconButton from "./components/IconButton";
 import PasswordDialog from "./components/PasswordDialog";
 import RecoveryControls from "./components/RecoveryControls";
+import UpdateControls from "./components/UpdateControls";
 import { bridge, native, runtimeIssue } from "./lib/bridge";
 import { errorMessage } from "./lib/geometry";
 import { adjacentTab, unsavedTabs } from "./lib/tabs";
@@ -33,6 +34,8 @@ export default function App() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [quit, setQuit] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
   const [comparisonRunning, setComparisonRunning] = useState(false);
@@ -228,7 +231,15 @@ export default function App() {
   function requestQuit() {
     if (blockedRef.current) { setError("Finish the current action or dialog before quitting."); return; }
     if (events.current.hasUnsaved) setQuit(true);
-    else void run(async () => bridge.close(false));
+    else closeApp(false);
+  }
+
+  function closeApp(discardChanges: boolean) {
+    setClosing(true);
+    void run(async () => {
+      try { await bridge.close(discardChanges); }
+      finally { setClosing(false); }
+    });
   }
 
   function createFromFiles() {
@@ -238,6 +249,7 @@ export default function App() {
   }
 
   function menu(id: string) {
+    if (id === "check-updates") { if (!blockedRef.current) setUpdatesOpen(true); return; }
     if (id === "open") { open(); return; }
     if (id === "create-files") { createFromFiles(); return; }
     if (id === "close-tab") {
@@ -363,6 +375,7 @@ export default function App() {
       <span className="runtime-label"><ShieldCheck size={13} />{runtimeIssue ? "Runtime unavailable" : native ? "Local files" : "Browser preview"}</span>
       <AppearancePicker onError={reportError} />
       <RecoveryControls blocked={blocked} open={recoveryOpen} onOpenChange={setRecoveryOpen} onRecovered={onOpened} />
+      <UpdateControls open={updatesOpen} onOpenChange={setUpdatesOpen} disabled={blocked} />
       <IconButton label="About Folio" disabled={blocked} onClick={() => menu("about")}><CircleHelp size={17} /></IconButton>
     </header>
     {loading ? <div className="workspace-empty"><LoaderCircle className="spin" size={26} /><p>Opening workspace...</p></div>
@@ -376,7 +389,8 @@ export default function App() {
       onOpen={open} onClose={() => setComparisonOpen(false)} onActivity={onComparisonActivity} onResourceError={reportError} />
     {creationOpen && <CreatePdfDialog onCreated={onOpened} onClose={() => setCreationOpen(false)}
       onActivity={onCreationActivity} onResourceError={reportError} />}
-    {showWorking && <div className="tab-action-status" role="status"><LoaderCircle size={14} className="spin" />Preparing document tabs...</div>}
+    {showWorking && <div className="tab-action-status" role="status"><LoaderCircle size={14} className="spin" />
+      {closing ? "Closing Folio and installing any ready update..." : "Preparing document tabs..."}</div>}
     {error && <div className="notification error-notification workspace-error" role="alert">
       <span><strong>That didn&apos;t work.</strong>{error}</span><IconButton label="Dismiss workspace error" onClick={() => setError(null)}><X size={16} /></IconButton>
     </div>}
@@ -386,7 +400,7 @@ export default function App() {
       onCancel={() => { void answerPassword(null); }} />}
     {quit && <Dialog title="Keep your open PDFs?" error={error} busy={working} onClose={() => setQuit(false)}
       actions={<><button className="button secondary" disabled={working} onClick={() => setQuit(false)}>Cancel</button>
-        <button className="button text-danger" disabled={working} onClick={() => { void run(async () => bridge.close(true)); }}>Discard all &amp; quit</button>
+        <button className="button text-danger" disabled={working} onClick={() => closeApp(true)}>Discard all &amp; quit</button>
         <button className="button primary" disabled={working} onClick={() => {
           const document = unsaved[0];
           setQuit(false);

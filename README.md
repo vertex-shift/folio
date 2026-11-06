@@ -70,7 +70,9 @@ AppImage's extraction mode.
 
 These are not production-signed releases. Windows bundles
 are unsigned, macOS bundles are ad-hoc signed and not notarized, and Linux
-packages are unsigned. No signing secrets are configured.
+packages are unsigned by operating-system publishers. Update packages have a
+separate cryptographic signature verified by Folio; that does not replace
+Windows publisher signing or macOS Developer ID signing/notarization.
 Intel macOS and ARM Windows/Linux builds are not included.
 The existing `npm run bundle` command remains a macOS `.app`-only local build;
 CI explicitly selects each platform's installer formats.
@@ -97,7 +99,8 @@ git push origin refs/tags/v0.1.2
 
 The tag must match the application version exactly. All three platform builds
 must succeed before publishing. The workflow creates a draft, uploads all four
-installers and their checksums, then publishes the complete release; tags with
+installers, signed updater packages, `latest.json` and their checksums, then
+publishes the complete release; tags with
 a prerelease suffix, such as `v0.2.0-beta.1`, produce GitHub prereleases.
 Pull requests, branch pushes, and manual runs do not publish releases.
 Published releases are not overwritten on reruns. If publishing fails after
@@ -109,6 +112,47 @@ links, release descriptions and structured data, plus their tests. Remove any
 source-only claims for features now included in the release. Preserve the actual
 platform architectures, checksum links and unsigned / ad-hoc-signing and
 lack-of-notarization notices.
+
+### Automatic updates
+
+Update-enabled desktop builds check the public GitHub release feed shortly
+after launch and every six hours while running. Newer stable versions download
+in the background and are cryptographically verified, including the signed
+version, before becoming ready. Open **App updates** in the title bar or
+**Folio > Check for Updates** for status or a manual retry. A ready update
+installs only when you quit, after the existing unsaved-document/draft/job
+guards and recovery cleanup accept closing. Canceling quit leaves both the
+workspace and ready update in place. Folio does not restart itself after
+installation; the next launch uses the new version. Windows may show the
+installer's passive progress window or an OS elevation prompt.
+
+Checks contact GitHub for public release metadata and packages; they send no
+PDFs, document names, passwords, or recovery data. Document processing remains
+local. Offline checks, missing feeds, invalid signatures, and download failures
+leave the installed app unchanged and are visible in App updates. If installation
+fails, Folio stays open with an error; quit again to skip that update, or check
+again to retry. Closing during an incomplete download does not wait for it.
+Downloads are memory-only for the current run, limited to 512 MiB and 15 minutes.
+
+Automatic installation supports Windows x64 NSIS, macOS Apple Silicon apps,
+and Linux x64 AppImages. Debian packages use the system package manager.
+Development builds and unpublished architectures never auto-install. Prereleases
+are not selected by the stable feed. Existing 0.1.2 installers have no updater:
+install the first update-enabled release manually once. This code does not
+publish a new release or retrofit older binaries.
+
+Release maintainers must retain the updater signing key permanently. Only its
+public key is committed in `src-tauri/tauri.conf.json`; the private key belongs
+in the repository Actions secret `TAURI_SIGNING_PRIVATE_KEY`, with
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if password-protected. Keep an independent
+secure backup: GitHub cannot return a stored secret, and changing the key
+breaks the trust of existing installations. Never commit private keys or put
+them in downloadable artifacts. Tagged builds merge `tauri.release.conf.json`
+to generate detached signatures and the macOS update archive; ordinary PR
+builds need no private key. `scripts/prepare-release.mjs` verifies package
+signatures and version bindings against the committed public key, rejects
+missing/extra assets, and constructs the complete platform feed before the
+draft release is published. A missing/wrong signing key fails the release.
 
 ## What works
 
