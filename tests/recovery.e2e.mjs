@@ -266,11 +266,15 @@ try {
   evidence.checks.push("Theme/narrow dialog checks, Escape dismissal, opt-out deletion, no external requests or page errors, unchanged original source.");
   console.log(JSON.stringify({ output, ...evidence }, null, 2));
 } catch (error) {
-  if (page) {
-    await page.screenshot({ path: join(output, "failure.png") });
-    await writeFile(join(output, "failure.html"), await page.content());
+  evidence.failure = error.stack ?? String(error);
+  const diagnostics = [writeFile(join(output, "engine.log"), engine?.output ?? "")];
+  if (page && !page.isClosed()) diagnostics.push(
+    page.screenshot({ path: join(output, "failure.png"), timeout: 5000 }),
+    page.content().then((html) => writeFile(join(output, "failure.html"), html)),
+  );
+  for (const result of await Promise.allSettled(diagnostics)) {
+    if (result.status === "rejected") console.error("Could not capture failure evidence:", result.reason);
   }
-  await writeFile(join(output, "engine.log"), engine?.output ?? "");
   throw error;
 } finally {
   await browser?.close();
