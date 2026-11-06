@@ -194,6 +194,17 @@ to make a build pass; development builds do not require production signing
 secrets. The local `npm run bundle` command builds a macOS `.app` only; CI
 selects each platform's installer formats explicitly.
 
+Software updates are native-only. Keep updater download/verification separate
+from installation, and route every normal close/quit through the existing
+frontend and Rust document/draft/job guards before installing. Never call the
+updater's combined download-and-install API from a startup or timer callback.
+Development builds cannot auto-install. `updates.rs` tests lifecycle ordering;
+`tests/updates.test.ts` checks user-facing states; `tests/releaseUpdates.test.ts`
+exercises signed release assembly and tamper/version/missing-asset failures.
+Private signing keys are required only for tagged release packages, not PR
+builds. See [automatic updates](README.md#automatic-updates) for key custody,
+platform limits and the one-time upgrade boundary.
+
 ## Licensing
 
 By submitting original work for inclusion, you agree to license it under

@@ -19,6 +19,7 @@ struct DesktopState {
     pending_paths: Vec<PathBuf>,
     ui_ready: bool,
     allow_exit: bool,
+    closing: bool,
 }
 
 type SharedState = Mutex<DesktopState>;
@@ -47,6 +48,9 @@ mod paragraph_commands;
 #[path = "desktop_accessibility.rs"]
 mod accessibility_commands;
 
+#[path = "desktop_updates.rs"]
+mod update_commands;
+
 async fn with_state<T: Send + 'static>(
     app: AppHandle,
     action: impl FnOnce(&mut DesktopState) -> Result<T> + Send + 'static,
@@ -56,6 +60,11 @@ async fn with_state<T: Send + 'static>(
         let mut state = state
             .lock()
             .map_err(|_| Error::Invalid("Document state is unavailable. Restart Folio.".into()))?;
+        if state.closing {
+            return Err(Error::Invalid(
+                "Folio is closing. Wait for the update to finish.".into(),
+            ));
+        }
         let result = action(&mut state);
         state.workspace.sync_recovery();
         let recovery = state.workspace.recovery_status();
@@ -884,20 +893,36 @@ async fn save_document(
 }
 
 #[tauri::command]
-fn close_application(app: AppHandle, discard_changes: bool) -> std::result::Result<(), String> {
+async fn close_application(
+    app: AppHandle,
+    discard_changes: bool,
+) -> std::result::Result<(), String> {
     {
         let state = app.state::<SharedState>();
         let mut state = state
             .lock()
             .map_err(|_| "Document state is unavailable. Restart Folio.")?;
-        if state.workspace.has_unsaved_changes() && !discard_changes {
-            return Err("There are unsaved PDF tabs or pending drafts. Review them or explicitly discard all changes before quitting.".into());
+        if state.closing {
+            return Err("Folio is already closing.".into());
         }
-        state
-            .workspace
-            .clean_recovery_exit()
+        crate::updates::authorize_close(&mut state.workspace, discard_changes)
             .map_err(|error| error.to_string())?;
-        state.allow_exit = true;
+        state.closing = true;
+    }
+    if let Err(error) = update_commands::install_on_close(&app).await {
+        let state = app.state::<SharedState>();
+        if let Ok(mut state) = state.lock() {
+            state.closing = false;
+            state.workspace.resume_recovery_after_failed_exit();
+        }
+        return Err(error);
+    }
+    {
+        let state = app.state::<SharedState>();
+        state
+            .lock()
+            .map_err(|_| "Document state is unavailable. Restart Folio.")?
+            .allow_exit = true;
     }
     app.exit(0);
     Ok(())
@@ -918,7 +943,7 @@ async fn set_document_draft(
 fn protect_exit(app: &AppHandle) -> bool {
     let state = app.state::<SharedState>();
     match state.try_lock() {
-        Ok(state) => !state.allow_exit && state.workspace.has_unsaved_changes(),
+        Ok(state) => !state.allow_exit,
         Err(_) => true,
     }
 }
@@ -944,6 +969,14 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
                     comments: Some("An independent, local-first PDF workspace.".into()),
                     ..Default::default()
                 }),
+            )?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "check-updates",
+                "Check for Updates...",
+                true,
+                None::<&str>,
             )?,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::hide(app, None)?,
@@ -1050,6 +1083,8 @@ pub fn run() {
         .collect();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(update_commands::State::default())
         .manage(Mutex::new(DesktopState {
             pending_paths,
             ..Default::default()
@@ -1062,6 +1097,7 @@ pub fn run() {
                 .workspace
                 .configure_recovery(root);
             app.set_menu(menu(app.handle())?)?;
+            update_commands::initialize(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1131,6 +1167,8 @@ pub fn run() {
             redo_document,
             save_document,
             close_application,
+            update_commands::update_status,
+            update_commands::check_for_updates,
             set_document_draft,
             output_commands::begin_document_output,
             output_commands::output_render_bytes,
@@ -1166,6 +1204,13 @@ pub fn run() {
         ])
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
+            if id == "check-updates" {
+                if let Err(error) = update_commands::check_for_updates(app.clone()) {
+                    eprintln!("Could not start update check: {error}");
+                }
+                emit(app, "menu-action", id);
+                return;
+            }
             if [
                 "new",
                 "create-files",

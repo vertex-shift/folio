@@ -213,6 +213,11 @@ impl Workspace {
         Ok(())
     }
 
+    pub fn resume_recovery_after_failed_exit(&mut self) {
+        self.recovery_stopped = false;
+        self.sync_recovery();
+    }
+
     pub fn snapshot(&mut self) -> Result<WorkspaceInfo> {
         if !self.initialized {
             self.bootstrap()?;

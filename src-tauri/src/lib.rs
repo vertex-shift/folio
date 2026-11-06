@@ -23,6 +23,7 @@ pub mod recovery;
 pub mod redaction;
 pub mod signatures;
 pub mod text_edit;
+pub mod updates;
 pub mod workspace;
 mod writing;
 
