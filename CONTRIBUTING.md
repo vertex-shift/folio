@@ -156,6 +156,34 @@ x64, macOS Apple Silicon, and Linux x64. Fork pull requests may need a
 maintainer's approval before workflows run. A successful build is not a
 substitute for exercising the affected native workflow.
 
+The required **Linux (x64)** job also gates on two headless Chromium workflows:
+`npm run test:page-labels` and `npm run test:recovery`. These use synthetic PDFs,
+the real Rust preview engine, and the React/PDF.js UI, not mocked bridge calls.
+They cover opening, label authoring/navigation, page operations, download/reopen
+(including protected PDFs), and applied-edit crash recovery with draft guards
+and opt-out deletion. This intentionally bounded selection does not run the
+full OCR/language or every-feature browser matrix.
+
+To reproduce the selection locally after `npm ci`:
+
+```sh
+npx playwright install chromium
+cargo build --manifest-path src-tauri/Cargo.toml --no-default-features --features preview --bin folio-preview --locked
+```
+
+Run both npm commands above with `FOLIO_PAGE_LABELS_SKIP_BUILD=1` and
+`FOLIO_RECOVERY_SKIP_BUILD=1` in your environment to reuse that build. On Linux,
+`npx playwright install --with-deps chromium` also installs browser system
+dependencies. Each suite owns loopback ports, browser contexts, temporary
+storage and child processes; recovery storage never uses a real user profile.
+CI limits each suite to four minutes (with a ten-second forced-cleanup grace
+period), fails the required Linux job on errors or timeouts, and uploads
+`browser-workflow-evidence` on failure for seven days. The artifact includes
+runner logs and available synthetic PDFs, JSON results, screenshots, page HTML
+and engine logs; a hard timeout may leave only partial evidence. Locally,
+suite output prints its temporary evidence directory; set
+`FOLIO_PAGE_LABELS_EVIDENCE` / `FOLIO_RECOVERY_EVIDENCE` to choose another location.
+
 Only a pushed version tag publishes installers to GitHub Releases, after every
 platform build succeeds. Pull requests and manual builds cannot publish
 releases. See [Publishing a version](README.md#publishing-a-version) for version

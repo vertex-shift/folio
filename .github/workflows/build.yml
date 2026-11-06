@@ -139,6 +139,47 @@ jobs:
       - name: Test Rust document engine
         run: npm run test:rust -- --locked
 
+      - name: Install Chromium for browser workflow checks
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+
+      - name: Build shared browser preview engine
+        if: runner.os == 'Linux'
+        run: cargo build --manifest-path src-tauri/Cargo.toml --no-default-features --features preview --bin folio-preview --locked
+
+      - name: Check page-label browser workflow
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        env:
+          FOLIO_PAGE_LABELS_SKIP_BUILD: "1"
+          FOLIO_PAGE_LABELS_EVIDENCE: ${{ runner.temp }}/browser-workflows/page-labels
+        run: |
+          set -euo pipefail
+          mkdir -p "$FOLIO_PAGE_LABELS_EVIDENCE"
+          timeout --signal=TERM --kill-after=10s 4m \
+            node tests/pageLabels.e2e.mjs 2>&1 | tee "$FOLIO_PAGE_LABELS_EVIDENCE/runner.log"
+
+      - name: Check crash-recovery browser workflow
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        env:
+          FOLIO_RECOVERY_SKIP_BUILD: "1"
+          FOLIO_RECOVERY_EVIDENCE: ${{ runner.temp }}/browser-workflows/recovery
+        run: |
+          set -euo pipefail
+          mkdir -p "$FOLIO_RECOVERY_EVIDENCE"
+          timeout --signal=TERM --kill-after=10s 4m \
+            node tests/recovery.e2e.mjs 2>&1 | tee "$FOLIO_RECOVERY_EVIDENCE/runner.log"
+
+      - name: Upload browser workflow failure evidence
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: browser-workflow-evidence
+          path: ${{ runner.temp }}/browser-workflows/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Build application bundles
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"

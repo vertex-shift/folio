@@ -327,7 +327,15 @@ try {
   console.log(JSON.stringify({ passed: true, checks: evidence.checks, output }, null, 2));
 } catch (error) {
   evidence.failure = error.stack ?? String(error);
-  if (page && !page.isClosed()) evidence.lastPage = (await page.locator("body").innerText()).slice(0, 3500);
+  const diagnostics = [writeFile(join(output, "engine.log"), engine?.output ?? "")];
+  if (page && !page.isClosed()) diagnostics.push(
+    page.screenshot({ path: join(output, "failure.png"), timeout: 5000 }),
+    page.content().then((html) => writeFile(join(output, "failure.html"), html)),
+    page.locator("body").innerText({ timeout: 5000 }).then((text) => { evidence.lastPage = text.slice(0, 3500); }),
+  );
+  for (const result of await Promise.allSettled(diagnostics)) {
+    if (result.status === "rejected") console.error("Could not capture failure evidence:", result.reason);
+  }
   await writeFile(join(output, "page-label-failure.json"), JSON.stringify(evidence, null, 2) + "\n");
   console.error(JSON.stringify({ checks: evidence.checks, errors: evidence.errors, lastPage: evidence.lastPage }, null, 2));
   throw error;
