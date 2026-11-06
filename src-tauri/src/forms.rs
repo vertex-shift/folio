@@ -11,6 +11,7 @@ use crate::document::{Error, Result, invalid, numbers, page_bounds};
 
 pub mod designer;
 pub mod flatten;
+pub(crate) mod page_operations;
 
 const MAX_NODES: usize = 4096;
 const MAX_FIELDS: usize = 1024;

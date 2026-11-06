@@ -1101,14 +1101,17 @@ fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> 
             }
         }
         Edit::Rotate { page, degrees } => {
+            crate::forms::page_operations::check(document)?;
             if ![-90, 90, 180].contains(&degrees) {
                 return Err(invalid("Rotate by 90, -90, or 180 degrees."));
             }
             let id = page_id(document, page)?;
             let rotation = (page_rotation(document, id)? + degrees).rem_euclid(360);
             document.get_dictionary_mut(id)?.set("Rotate", rotation);
+            crate::forms::page_operations::check(document)?;
         }
         Edit::Move { from, to } => {
+            crate::forms::page_operations::check(document)?;
             let labels = crate::page_labels::Snapshot::capture(document)?;
             let mut order: Vec<_> = document.get_pages().values().copied().collect();
             if from >= order.len() || to >= order.len() || from == to {
@@ -1117,6 +1120,7 @@ fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> 
             let id = order.remove(from);
             order.insert(to, id);
             rebuild_page_tree(document, &order, labels)?;
+            crate::forms::page_operations::check(document)?;
         }
         Edit::Delete { page } => {
             let labels = crate::page_labels::Snapshot::capture(document)?;
@@ -1127,11 +1131,7 @@ fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> 
             if page >= order.len() {
                 return Err(invalid("That page is no longer in the document."));
             }
-            if has_form_fields(document)? {
-                return Err(invalid(
-                    "Removing pages from interactive forms is not supported yet. Use a flattened copy.",
-                ));
-            }
+            let form = crate::forms::page_operations::check_delete(document, order[page])?;
             let removed = order.remove(page);
             let replacement = order[page.min(order.len() - 1)];
             for object in document.objects.values_mut() {
@@ -1140,6 +1140,8 @@ fn apply_edit(document: &mut Document, edit: Edit, revision: u64) -> Result<()> 
             rebuild_page_tree(document, &order, labels)?;
             document.delete_object(removed);
             document.prune_objects();
+            form.verify(document)?;
+            crate::forms::page_operations::check(document)?;
         }
         Edit::Highlight {
             page,
